@@ -16,6 +16,7 @@ import com.slack.astra.util.JsonUtil;
 import com.slack.service.murron.trace.Trace;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.nio.ByteBuffer;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
@@ -92,6 +93,17 @@ public class SchemaAwareLogDocumentBuilderImpl implements DocumentBuilder {
     }
 
     String fieldName = keyPrefix.isBlank() || keyPrefix.isEmpty() ? key : keyPrefix + "." + key;
+
+    // Short-circuit: treat GEO_POINT value (double[]) as atomic — do not recurse into Map
+    if (schemaFieldType == Schema.SchemaFieldType.GEO_POINT) {
+      if (!fieldDefMap.containsKey(fieldName)) {
+        indexNewField(doc, fieldName, value, schemaFieldType, indexSignal);
+      } else {
+        indexTypedField(doc, fieldName, value, fieldDefMap.get(fieldName));
+      }
+      return;
+    }
+
     // Ingest nested map field recursively upto max nesting. After that index it as a string.
     if (value instanceof Map) {
       if (nestingDepth >= MAX_NESTING_DEPTH) {
@@ -592,6 +604,18 @@ public class SchemaAwareLogDocumentBuilderImpl implements DocumentBuilder {
             indexSignal,
             0);
         jsonMap.put(keyValue.getKey(), keyValue.getVBinary().toStringUtf8());
+      } else if (schemaFieldType == Schema.SchemaFieldType.GEO_POINT) {
+        try {
+          ByteBuffer buf = keyValue.getVBinary().asReadOnlyByteBuffer();
+          double lat = buf.getDouble();
+          double lon = buf.getDouble();
+          double[] latLon = {lat, lon};
+          addField(
+              doc, keyValue.getKey(), latLon, Schema.SchemaFieldType.GEO_POINT, "", indexSignal, 0);
+          jsonMap.put(keyValue.getKey(), Map.of("lat", lat, "lon", lon));
+        } catch (Exception e) {
+          LOG.warn("Failed to decode GEO_POINT field {} binary payload", keyValue.getKey(), e);
+        }
       } else {
         LOG.warn(
             "Skipping field with unknown field type {} with key {}",

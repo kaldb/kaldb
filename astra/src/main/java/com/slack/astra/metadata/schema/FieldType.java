@@ -17,6 +17,8 @@ import org.apache.lucene.document.FloatDocValuesField;
 import org.apache.lucene.document.FloatPoint;
 import org.apache.lucene.document.InetAddressPoint;
 import org.apache.lucene.document.IntPoint;
+import org.apache.lucene.document.LatLonDocValuesField;
+import org.apache.lucene.document.LatLonPoint;
 import org.apache.lucene.document.LongPoint;
 import org.apache.lucene.document.NumericDocValuesField;
 import org.apache.lucene.document.SortedDocValuesField;
@@ -332,6 +334,28 @@ public enum FieldType {
     public Schema.SchemaFieldType toSchemaFieldType() {
       return Schema.SchemaFieldType.BINARY;
     }
+  },
+  GEO_POINT("geo_point") {
+    @Override
+    public void addField(Document doc, String name, Object value, LuceneFieldDef fieldDef) {
+      double[] latLon = (double[]) value; // {lat, lon}
+      double lat = latLon[0];
+      double lon = latLon[1];
+      if (fieldDef.isIndexed) {
+        doc.add(new LatLonPoint(name, lat, lon));
+      }
+      if (fieldDef.isStored) {
+        doc.add(new StoredField(name, lat + "," + lon));
+      }
+      if (fieldDef.storeDocValue) {
+        doc.add(new LatLonDocValuesField(name, lat, lon));
+      }
+    }
+
+    @Override
+    public Schema.SchemaFieldType toSchemaFieldType() {
+      return Schema.SchemaFieldType.GEO_POINT;
+    }
   };
 
   public final String name;
@@ -362,6 +386,7 @@ public enum FieldType {
       case SHORT -> fieldType = SHORT;
       case BYTE -> fieldType = BYTE;
       case BINARY -> fieldType = BINARY;
+      case GEO_POINT -> fieldType = GEO_POINT;
       default ->
           throw new IllegalArgumentException("Unknown schema field type: " + schemaFieldType);
     }

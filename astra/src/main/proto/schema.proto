@@ -47,4 +47,5 @@ enum SchemaFieldType {
   // to help with backward compatibility
   // move to KEYWORD in the future
   STRING = 15;
+  GEO_POINT = 16;
 };

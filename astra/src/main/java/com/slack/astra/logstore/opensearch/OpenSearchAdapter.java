@@ -493,6 +493,8 @@ public class OpenSearchAdapter {
       return "byte";
     } else if (fieldType == FieldType.BINARY) {
       return "binary";
+    } else if (fieldType == FieldType.GEO_POINT) {
+      return "geo_point";
     } else {
       LOG.warn("Field type '{}' is not yet currently supported", fieldType);
       return null;

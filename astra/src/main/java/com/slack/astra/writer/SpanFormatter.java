@@ -5,6 +5,7 @@ import com.google.protobuf.ByteString;
 import com.google.protobuf.Timestamp;
 import com.slack.astra.proto.schema.Schema;
 import com.slack.service.murron.trace.Trace;
+import java.nio.ByteBuffer;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
@@ -104,6 +105,14 @@ public class SpanFormatter {
         case BINARY -> {
           tagBuilder.setFieldType(Schema.SchemaFieldType.BINARY);
           tagBuilder.setVBinary(ByteString.copyFrom(value.toString().getBytes()));
+        }
+        case GEO_POINT -> {
+          tagBuilder.setFieldType(Schema.SchemaFieldType.GEO_POINT);
+          Map<String, Object> geoMap = (Map<String, Object>) value;
+          double lat = ((Number) geoMap.get("lat")).doubleValue();
+          double lon = ((Number) geoMap.get("lon")).doubleValue();
+          ByteBuffer buf = ByteBuffer.allocate(16).putDouble(lat).putDouble(lon);
+          tagBuilder.setVBinary(ByteString.copyFrom(buf.array()));
         }
       }
       tagBuilder.setIndexSignal(indexSignal);
