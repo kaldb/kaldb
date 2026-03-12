@@ -110,7 +110,7 @@ fi
 # ------------------------------------------------------------------------------
 if [ "$CLEAN_BUILD" = true ]; then
   echo "🔨 Building Astra Docker image..."
-  docker build -t astra:latest --label astra-demo=true .
+  docker build -t slackhq/astra --label astra-demo=true .
 else
   echo "⚡ Using existing Astra Docker image (run with --clean to rebuild)."
 fi
@@ -134,7 +134,7 @@ wait_for_http "Preprocessor" "http://localhost:8086/health" 60 2
 echo "📡 Creating Kafka topic (if not exists)..."
 docker exec dep_kafka kafka-topics.sh \
   --create \
-  --topic test-topic-in \
+  --topic test-topic \
   --if-not-exists \
   --bootstrap-server localhost:9092 || true
 
@@ -168,7 +168,10 @@ echo "✅ Astra demo environment is ready!"
 echo "   - Manager UI:   http://localhost:8083"
 echo "   - Query API:    http://localhost:8081"
 echo "   - Grafana:      http://localhost:3000"
+echo "   - OpenSearch:   http://localhost:9200"
+echo "   - Dashboards:   http://localhost:5601"
 echo ""
-echo "To ingest sample data, run: ./ingest-demo-data.sh"
+echo "To ingest sample data, use the _bulk example in docs/topics/Getting-started.md"
+echo "or run tools/loadgen directly."
 echo "To stop and remove everything, run: ./clean-astra.sh"
 echo ""

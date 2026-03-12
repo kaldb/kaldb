@@ -3,7 +3,7 @@ package com.slack.astra.logstore.opensearch;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.slack.astra.metadata.schema.FieldType;
+import com.slack.astra.logstore.LogMessage;
 import com.slack.astra.metadata.schema.LuceneFieldDef;
 import java.io.IOException;
 import java.time.Instant;
@@ -33,6 +33,7 @@ import org.opensearch.index.mapper.MapperService;
 import org.opensearch.index.query.BoolQueryBuilder;
 import org.opensearch.index.query.QueryBuilder;
 import org.opensearch.index.query.QueryShardContext;
+import org.opensearch.index.query.TermQueryBuilder;
 import org.opensearch.index.similarity.SimilarityService;
 import org.opensearch.indices.fielddata.cache.IndicesFieldDataCache;
 import org.opensearch.search.aggregations.Aggregator;
@@ -111,7 +112,7 @@ public class OpenSearchAdapter {
 
   /**
    * Builds a Lucene query using the provided arguments, and the currently loaded schema. Uses
-   * Opensearch QueryBuilder's. TODO - use the dataset param in building query
+   * Opensearch QueryBuilder's.
    *
    * @see <a href="https://opensearch.org/docs/latest/query-dsl/full-text/query-string/">Query
    *     parsing OpenSearch docs</a>
@@ -119,14 +120,29 @@ public class OpenSearchAdapter {
    *     href="https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-query-string-query.html">Query
    *     parsing ES docs</a>
    */
-  public Query buildQuery(IndexSearcher indexSearcher, QueryBuilder queryBuilder)
+  public Query buildQuery(IndexSearcher indexSearcher, String dataset, QueryBuilder queryBuilder)
       throws IOException {
     QueryShardContext queryShardContext =
         buildQueryShardContext(AstraBigArrays.getInstance(), indexSearcher, mapperService);
 
-    if (queryBuilder != null) {
+    QueryBuilder scopedQueryBuilder = queryBuilder;
+    if (dataset != null && !dataset.isBlank() && !dataset.equals("_all") && !dataset.equals("*")) {
+      validateDatasetSelector(dataset);
+      BoolQueryBuilder datasetScopedQuery = new BoolQueryBuilder();
+      // Astra stores multiple logical indices in the same chunk today. The ingest path derives
+      // the logical index name from service_name, so scoped index searches must currently filter
+      // on service_name at query time to avoid cross-index leakage within a chunk.
+      datasetScopedQuery.filter(
+          new TermQueryBuilder(LogMessage.ReservedField.SERVICE_NAME.fieldName, dataset));
+      if (queryBuilder != null) {
+        datasetScopedQuery.must(queryBuilder);
+      }
+      scopedQueryBuilder = datasetScopedQuery;
+    }
+
+    if (scopedQueryBuilder != null) {
       try {
-        return queryBuilder.rewrite(queryShardContext).toQuery(queryShardContext);
+        return scopedQueryBuilder.rewrite(queryShardContext).toQuery(queryShardContext);
       } catch (Exception e) {
         LOG.error("Query parse exception", e);
         throw new IllegalArgumentException(e);
@@ -134,6 +150,17 @@ public class OpenSearchAdapter {
     }
     // TODO: Should this return null? Raise an error? Just return everything?
     return new BoolQueryBuilder().rewrite(queryShardContext).toQuery(queryShardContext);
+  }
+
+  private static void validateDatasetSelector(String dataset) {
+    if (dataset.indexOf(',') >= 0) {
+      throw new IllegalArgumentException(
+          "Multi-index dataset selectors are not supported: " + dataset);
+    }
+    if (dataset.indexOf('*') >= 0) {
+      throw new IllegalArgumentException(
+          "Wildcard dataset selectors are not supported: " + dataset);
+    }
   }
 
   /**
@@ -146,7 +173,7 @@ public class OpenSearchAdapter {
     // TreeMap here ensures the schema is sorted by natural order - to ensure multifields are
     // registered by their parent first, and then fields added second
     for (Map.Entry<String, LuceneFieldDef> entry : new TreeMap<>(chunkSchema).entrySet()) {
-      String fieldMapping = getFieldMapping(entry.getValue().fieldType);
+      String fieldMapping = entry.getValue().fieldType.toOpenSearchTypeName();
       try {
         if (fieldMapping != null) {
           tryRegisterField(
@@ -340,7 +367,7 @@ public class OpenSearchAdapter {
         LOG.trace("Skipping metadata field '{}'", fieldName);
       } else {
         ObjectNode child = new ObjectNode(JsonNodeFactory.instance);
-        child.put("type", getFieldMapping(entry.getValue().fieldType));
+        child.put("type", entry.getValue().fieldType.toOpenSearchTypeName());
         putAtPath(rootNode, child, entry.getKey());
       }
     }
@@ -455,47 +482,6 @@ public class OpenSearchAdapter {
       builder.endObject();
     } catch (Exception e) {
       LOG.error("Error building object", e);
-    }
-  }
-
-  /**
-   * Returns the corresponding OpenSearch field type as a string, given the Astra FieldType
-   * definition. todo - this probably should be moved into the respective FieldType enums directly
-   */
-  private String getFieldMapping(FieldType fieldType) {
-    if (fieldType == FieldType.TEXT) {
-      return "text";
-    } else if (fieldType == FieldType.STRING
-        || fieldType == FieldType.KEYWORD
-        || fieldType == FieldType.ID) {
-      return "keyword";
-    } else if (fieldType == FieldType.IP) {
-      return "ip";
-    } else if (fieldType == FieldType.DATE) {
-      return "date";
-    } else if (fieldType == FieldType.BOOLEAN) {
-      return "boolean";
-    } else if (fieldType == FieldType.DOUBLE) {
-      return "double";
-    } else if (fieldType == FieldType.FLOAT) {
-      return "float";
-    } else if (fieldType == FieldType.HALF_FLOAT) {
-      return "half_float";
-    } else if (fieldType == FieldType.INTEGER) {
-      return "integer";
-    } else if (fieldType == FieldType.LONG) {
-      return "long";
-    } else if (fieldType == FieldType.SCALED_LONG) {
-      return "scaled_long";
-    } else if (fieldType == FieldType.SHORT) {
-      return "short";
-    } else if (fieldType == FieldType.BYTE) {
-      return "byte";
-    } else if (fieldType == FieldType.BINARY) {
-      return "binary";
-    } else {
-      LOG.warn("Field type '{}' is not yet currently supported", fieldType);
-      return null;
     }
   }
 

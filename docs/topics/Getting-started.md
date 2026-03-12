@@ -12,12 +12,12 @@ project.
 ```bash
 docker build -t slackhq/astra .
 
-docker compose up
+docker compose up -d
 ```
 
 2. In Kafka container terminal, create input topic (preprocessor crashes if it does not exist before configuring manager in next step)
 ```bash
-kafka-topics.sh --create --topic test-topic-in --bootstrap-server localhost:9092
+kafka-topics.sh --create --topic test-topic --if-not-exists --bootstrap-server localhost:9092
 ```
 
 3. Run 2 curl commands to configure 1 partition
@@ -47,17 +47,38 @@ curl --location 'http://localhost:8086/_bulk' \
 ```
 
 5. Example curl to read data
-Note: This is similar to [ES _msearch](https://www.elastic.co/guide/en/elasticsearch/reference/7.17/search-multi-search.html) but `size`, `lte`, and `gte` are all currently required.
+Note: This is similar to [ES _msearch](https://www.elastic.co/guide/en/elasticsearch/reference/7.17/search-multi-search.html) but `size` is required, and the time window must be expressed as a `range` query on `@timestamp`.
 
 ```bash
 curl --location 'http://localhost:8081/_msearch' \
 --header 'Content-type: application/x-ndjson' \
 --data '{ "index": "test"}
-{"query" : {"match_all" : {}, "gte":1625156649889,"lte":2708540790265}, "size": 500}
+{"query":{"bool":{"must":[{"match_all":{}},{"range":{"@timestamp":{"gte":"2024-03-07T00:00:00Z","lte":"2100-01-01T00:00:00Z"}}}]}},"size":500}
 '
 ```
 
 Query via Grafana
 ```
 http://localhost:3000/explore
+```
+
+Query via OpenSearch Dashboards
+```
+http://localhost:5601/app/discover
+```
+
+In OpenSearch Dashboards, create a data view named `test` and set the time field to `@timestamp`.
+Dashboards queries Astra for user log data through the `astra_dashboards_gateway`, while
+Dashboards' own saved objects and UI state are stored in the `opensearch` container's persistent
+volume. This is the gateway model for Dashboards in this repo: the gateway is the single
+OpenSearch-compatible endpoint that Dashboards talks to, and it routes user-index log/search APIs
+to Astra while keeping Dashboards system-index traffic on OpenSearch. If you remove that
+OpenSearch volume, your Dashboards data views and saved searches are lost, but the Astra log data
+is unaffected.
+
+For a continuous synthetic stream, run `tools/loadgen` directly:
+
+```bash
+mvn -f tools/loadgen/pom.xml -DskipTests package
+INDEX=test BATCH_SIZE=25 INTERVAL_SEC=0.2 java -jar tools/loadgen/target/tools-loadgen.jar
 ```

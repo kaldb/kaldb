@@ -46,6 +46,7 @@ ingestion of logs. This helps us tackle the peak ingestion, and prioritize inges
 flowchart TD
     bulk{{bulk ingest}} -- http --> preprocessor
     grafana{{grafana}} -- http --> query
+    dashboards{{OpenSearch Dashboards}} -- http --> opensearch-gateway
 
     preprocessor -- kafka --> indexers
     preprocessor -- kafka --> recovery 
@@ -59,6 +60,8 @@ flowchart TD
     end
    
     
+    opensearch-gateway --> query
+    opensearch-gateway --> opensearch[(OpenSearch saved objects)]
     query --> indexers
     query --> cache
     subgraph cache
@@ -81,6 +84,20 @@ The Astra architecture largely follows an internal approach developed at Twitter
 [LogLens](https://blog.x.com/engineering/en_us/a/2016/observability-at-twitter-technical-overview-part-ii). A few key 
 differences with Astra to this architecture revolve around using S3 instead of HDFS, and leveraging OpenSearch for the 
 query engine. 
+
+## OpenSearch Dashboards gateway model
+
+Grafana remains Astra's first-class UI integration. For OpenSearch Dashboards, Astra uses a
+gateway model instead of pointing Dashboards straight at `astra_query`.
+
+In that model:
+
+- OpenSearch Dashboards talks to a single OpenSearch-compatible gateway endpoint
+- the gateway routes user log and search APIs to Astra query nodes
+- the gateway routes Dashboards system-index and saved-object traffic to OpenSearch
+
+This keeps Astra as the backend for user log data while leaving Dashboards' own application state
+in the storage model Dashboards expects.
 
 > "The LogLens service was designed around the following prioritizations [sic] — ease of onboarding, prioritizing availability of “live” logs over cost, prioritizing cost over availability for older logs, and the ability to operate the service reliably with limited developer investment."
 

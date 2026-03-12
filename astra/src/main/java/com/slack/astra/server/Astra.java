@@ -264,7 +264,8 @@ public class Astra {
           new ArmeriaService.Builder(serverPort, "astraQuery", meterRegistry)
               .withRequestTimeout(requestTimeout)
               .withTracing(astraConfig.getTracingConfig())
-              .withAnnotatedService(new ElasticsearchApiService(astraDistributedQueryService))
+              .withAnnotatedService(
+                  new ElasticsearchApiService(astraDistributedQueryService, astraConfig))
               .withAnnotatedService(new ZipkinService(tf))
               .withAnnotatedService(new GraphService(tf, graphConfig, meterRegistry))
               .withGrpcService(astraDistributedQueryService)
