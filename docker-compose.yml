@@ -1,3 +1,8 @@
+x-healthcheck-common: &healthcheck-common
+  interval: 5s
+  timeout: 5s
+  retries: 20
+
 services:
   zookeeper:
     image: zookeeper:3.9
@@ -43,6 +48,58 @@ services:
       GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
       GF_PATHS_PLUGINS: "/var/lib/grafana/plugins"
       GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS: "slack-astra-app,slack-astra-app-backend-datasource"
+
+  opensearch:
+    image: 'opensearchproject/opensearch:2.11.1'
+    container_name: dep_opensearch
+    environment:
+      - cluster.name=opensearch-local
+      - node.name=opensearch-node1
+      - discovery.type=single-node
+      - OPENSEARCH_JAVA_OPTS=-Xms256m -Xmx256m
+      - DISABLE_INSTALL_DEMO_CONFIG=true
+      - DISABLE_SECURITY_PLUGIN=true
+    volumes:
+      - opensearch-data1:/usr/share/opensearch/data
+    ports:
+      - '9200:9200'
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9200 >/dev/null || exit 1"]
+      <<: *healthcheck-common
+      start_period: 10s
+
+  opensearch_dashboards:
+    image: 'opensearchproject/opensearch-dashboards:2.11.1'
+    container_name: dep_opensearch_dashboards
+    ports:
+      - '5601:5601'
+    environment:
+      OPENSEARCH_HOSTS: '["http://astra_dashboards_gateway:9200"]'
+      DISABLE_SECURITY_DASHBOARDS_PLUGIN: "true"
+    depends_on:
+      astra_dashboards_gateway:
+        condition: service_healthy
+      opensearch:
+        condition: service_healthy
+
+  astra_dashboards_gateway:
+    build:
+      context: .
+      dockerfile: contrib/dashboards-gateway.Dockerfile
+    image: 'kaldb/dashboards-gateway:local'
+    container_name: dep_astra_dashboards_gateway
+    environment:
+      ASTRA_URL: 'http://astra-query:8081'
+      OPENSEARCH_URL: 'http://opensearch:9200'
+      LISTEN_PORT: '9200'
+      MAX_REQUEST_BYTES: '10485760'
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9200/_astra/gateway/health >/dev/null || exit 1"]
+      <<: *healthcheck-common
+      start_period: 5s
+    depends_on:
+      - astra_query
+      - opensearch
 
   s3:
     image: 'adobe/s3mock:2.1.29'
@@ -96,6 +153,10 @@ services:
       - S3_ENDPOINT=http://dep_s3:9090
     depends_on:
       - astra_preprocessor
+    networks:
+      default:
+        aliases:
+          - astra-index
 
   astra_manager:
     image: 'slackhq/astra'
@@ -131,6 +192,10 @@ services:
       - S3_ENDPOINT=http://dep_s3:9090
     depends_on:
       - astra_preprocessor
+    networks:
+      default:
+        aliases:
+          - astra-query
 
   astra_cache:
     image: 'slackhq/astra'
@@ -165,3 +230,6 @@ services:
       - S3_ENDPOINT=http://dep_s3:9090
     depends_on:
       - astra_preprocessor
+
+volumes:
+  opensearch-data1:

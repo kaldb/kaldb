@@ -5,6 +5,7 @@ import static com.slack.astra.bulkIngestApi.opensearch.BulkApiRequestParserTest.
 import static com.slack.astra.logstore.LuceneIndexStoreImpl.MESSAGES_FAILED_COUNTER;
 import static com.slack.astra.logstore.LuceneIndexStoreImpl.MESSAGES_RECEIVED_COUNTER;
 import static com.slack.astra.server.AstraConfig.DEFAULT_START_STOP_DURATION;
+import static com.slack.astra.testlib.MessageUtil.TEST_DATASET_NAME;
 import static com.slack.astra.testlib.MetricsUtil.getCount;
 import static com.slack.astra.writer.LogMessageWriterImplTest.consumerRecordWithValue;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -20,13 +21,18 @@ import com.adobe.testing.s3mock.junit5.S3MockExtension;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.io.Resources;
+import com.linecorp.armeria.client.WebClient;
 import com.linecorp.armeria.common.AggregatedHttpResponse;
 import com.linecorp.armeria.common.HttpResponse;
+import com.linecorp.armeria.server.Server;
 import com.slack.astra.bulkIngestApi.opensearch.BulkApiRequestParser;
 import com.slack.astra.chunkManager.IndexingChunkManager;
 import com.slack.astra.logstore.LogMessage;
 import com.slack.astra.logstore.search.AstraLocalQueryService;
+import com.slack.astra.metadata.dataset.DatasetMetadata;
+import com.slack.astra.metadata.dataset.DatasetMetadataStore;
 import com.slack.astra.metadata.schema.SchemaUtil;
+import com.slack.astra.proto.config.AstraConfigs;
 import com.slack.astra.proto.schema.Schema;
 import com.slack.astra.proto.service.AstraSearch;
 import com.slack.astra.server.AstraQueryServiceBase;
@@ -38,7 +44,6 @@ import com.slack.service.murron.trace.Trace;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.io.File;
 import java.io.IOException;
-import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
@@ -60,6 +65,9 @@ import org.opensearch.ingest.IngestDocument;
 @SuppressWarnings("UnstableApiUsage")
 public class ElasticsearchApiServiceTest {
   private static final String S3_TEST_BUCKET = "test-astra-logs";
+  private static final AstraConfigs.AstraConfig DEFAULT_ASTRA_CONFIG =
+      AstraConfigUtil.makeOpenSearchCompatibilityConfig();
+  private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
   @RegisterExtension
   public static final S3MockExtension S3_MOCK_EXTENSION =
@@ -92,7 +100,9 @@ public class ElasticsearchApiServiceTest {
     chunkManagerUtil.chunkManager.awaitRunning(DEFAULT_START_STOP_DURATION);
     AstraLocalQueryService<LogMessage> searcher =
         new AstraLocalQueryService<>(chunkManagerUtil.chunkManager, Duration.ofSeconds(3));
-    elasticsearchApiService = new ElasticsearchApiService(searcher);
+    elasticsearchApiService =
+        new ElasticsearchApiService(
+            searcher, DEFAULT_ASTRA_CONFIG, mock(DatasetMetadataStore.class));
   }
 
   @AfterEach
@@ -145,17 +155,15 @@ public class ElasticsearchApiServiceTest {
 
     // Fetch and parse mapping
     HttpResponse response =
-        elasticsearchApiService.mapping(
-            Optional.of("test"), Optional.of(0L), Optional.of(Long.MAX_VALUE));
+        elasticsearchApiService.mapping("test", Optional.of(0L), Optional.of(Long.MAX_VALUE));
 
     AggregatedHttpResponse aggregatedRes = response.aggregate().join();
     String body = aggregatedRes.content(StandardCharsets.UTF_8);
-    JsonNode jsonNode = new ObjectMapper().readTree(body);
+    JsonNode jsonNode = OBJECT_MAPPER.readTree(body);
     assertThat(jsonNode).isNotNull();
 
-    ObjectMapper objectMapper = new ObjectMapper();
     Map<String, Object> map =
-        objectMapper.convertValue(
+        OBJECT_MAPPER.convertValue(
             jsonNode.get("test").get("mappings").get("properties"), Map.class);
 
     Set<String> schemaKeys =
@@ -252,17 +260,15 @@ public class ElasticsearchApiServiceTest {
 
     // Fetch and parse mapping
     HttpResponse response =
-        elasticsearchApiService.mapping(
-            Optional.of("test"), Optional.of(0L), Optional.of(Long.MAX_VALUE));
+        elasticsearchApiService.mapping("test", Optional.of(0L), Optional.of(Long.MAX_VALUE));
 
     AggregatedHttpResponse aggregatedRes = response.aggregate().join();
     String body = aggregatedRes.content(StandardCharsets.UTF_8);
-    JsonNode jsonNode = new ObjectMapper().readTree(body);
+    JsonNode jsonNode = OBJECT_MAPPER.readTree(body);
     assertThat(jsonNode).isNotNull();
 
-    ObjectMapper objectMapper = new ObjectMapper();
     Map<String, Object> map =
-        objectMapper.convertValue(
+        OBJECT_MAPPER.convertValue(
             jsonNode.get("test").get("mappings").get("properties"), Map.class);
 
     Set<String> schemaKeys =
@@ -342,21 +348,19 @@ public class ElasticsearchApiServiceTest {
     chunkManagerUtil.chunkManager.getActiveChunk().commit();
 
     HttpResponse response =
-        elasticsearchApiService.mapping(
-            Optional.of("test"), Optional.of(0L), Optional.of(Long.MAX_VALUE));
+        elasticsearchApiService.mapping("test", Optional.of(0L), Optional.of(Long.MAX_VALUE));
 
     // handle response
     AggregatedHttpResponse aggregatedRes = response.aggregate().join();
     String body = aggregatedRes.content(StandardCharsets.UTF_8);
-    JsonNode jsonNode = new ObjectMapper().readTree(body);
+    JsonNode jsonNode = OBJECT_MAPPER.readTree(body);
     assertThat(jsonNode).isNotNull();
 
-    ObjectMapper objectMapper = new ObjectMapper();
     Map<String, Object> map =
-        objectMapper.convertValue(
+        OBJECT_MAPPER.convertValue(
             jsonNode.get("test").get("mappings").get("properties"), Map.class);
     assertThat(map).isNotNull();
-    assertThat(map.size()).isEqualTo(25);
+    assertThat(map.size()).isEqualTo(26);
   }
 
   // todo - test mapping
@@ -364,16 +368,13 @@ public class ElasticsearchApiServiceTest {
   public void testResultsAreReturnedForValidQuery() throws Exception {
     addMessagesToChunkManager(SpanUtil.makeSpansWithTimeDifference(1, 100, 1, Instant.now()));
 
-    String postBody =
-        Resources.toString(
-            Resources.getResource("elasticsearchApi/multisearch_query_500results.ndjson"),
-            Charset.defaultCharset());
+    String postBody = readResource("elasticsearchApi/multisearch_query_500results.ndjson");
     HttpResponse response = elasticsearchApiService.multiSearch(postBody);
 
     // handle response
     AggregatedHttpResponse aggregatedRes = response.aggregate().join();
     String body = aggregatedRes.content(StandardCharsets.UTF_8);
-    JsonNode jsonNode = new ObjectMapper().readTree(body);
+    JsonNode jsonNode = OBJECT_MAPPER.readTree(body);
 
     assertThat(aggregatedRes.status().code()).isEqualTo(200);
     assertThat(jsonNode.findValue("hits").get("hits").size()).isEqualTo(100);
@@ -401,16 +402,13 @@ public class ElasticsearchApiServiceTest {
   public void testSearchStringWithOneResult() throws Exception {
     addMessagesToChunkManager(SpanUtil.makeSpansWithTimeDifference(1, 100, 1, Instant.now()));
 
-    String postBody =
-        Resources.toString(
-            Resources.getResource("elasticsearchApi/multisearch_query_1results.ndjson"),
-            Charset.defaultCharset());
+    String postBody = readResource("elasticsearchApi/multisearch_query_1results.ndjson");
     HttpResponse response = elasticsearchApiService.multiSearch(postBody);
 
     // handle response
     AggregatedHttpResponse aggregatedRes = response.aggregate().join();
     String body = aggregatedRes.content(StandardCharsets.UTF_8);
-    JsonNode jsonNode = new ObjectMapper().readTree(body);
+    JsonNode jsonNode = OBJECT_MAPPER.readTree(body);
 
     assertThat(aggregatedRes.status().code()).isEqualTo(200);
     assertThat(jsonNode.findValue("hits").get("hits").size()).isEqualTo(1);
@@ -431,16 +429,13 @@ public class ElasticsearchApiServiceTest {
     addMessagesToChunkManager(SpanUtil.makeSpansWithTimeDifference(1, 100, 1, Instant.now()));
 
     // queries for 1 second duration in year 2056
-    String postBody =
-        Resources.toString(
-            Resources.getResource("elasticsearchApi/multisearch_query_0results.ndjson"),
-            Charset.defaultCharset());
+    String postBody = readResource("elasticsearchApi/multisearch_query_0results.ndjson");
     HttpResponse response = elasticsearchApiService.multiSearch(postBody);
 
     // handle response
     AggregatedHttpResponse aggregatedRes = response.aggregate().join();
     String body = aggregatedRes.content(StandardCharsets.UTF_8);
-    JsonNode jsonNode = new ObjectMapper().readTree(body);
+    JsonNode jsonNode = OBJECT_MAPPER.readTree(body);
 
     assertThat(aggregatedRes.status().code()).isEqualTo(200);
     assertThat(jsonNode.findValue("hits").get("hits").size()).isEqualTo(0);
@@ -450,16 +445,13 @@ public class ElasticsearchApiServiceTest {
   public void testResultSizeIsRespected() throws Exception {
     addMessagesToChunkManager(SpanUtil.makeSpansWithTimeDifference(1, 100, 1, Instant.now()));
 
-    String postBody =
-        Resources.toString(
-            Resources.getResource("elasticsearchApi/multisearch_query_10results.ndjson"),
-            Charset.defaultCharset());
+    String postBody = readResource("elasticsearchApi/multisearch_query_10results.ndjson");
     HttpResponse response = elasticsearchApiService.multiSearch(postBody);
 
     // handle response
     AggregatedHttpResponse aggregatedRes = response.aggregate().join();
     String body = aggregatedRes.content(StandardCharsets.UTF_8);
-    JsonNode jsonNode = new ObjectMapper().readTree(body);
+    JsonNode jsonNode = OBJECT_MAPPER.readTree(body);
 
     assertThat(aggregatedRes.status().code()).isEqualTo(200);
     assertThat(jsonNode.findValue("hits").get("hits").size()).isEqualTo(10);
@@ -484,26 +476,59 @@ public class ElasticsearchApiServiceTest {
   }
 
   @Test
+  public void testSingleSearchReturnsAttributeAggregation() throws Exception {
+    addMessagesToChunkManager(SpanUtil.makeSpansWithTimeDifference(1, 100, 1, Instant.now()));
+
+    String postBody =
+        """
+        {"size":0,"query":{"match_all":{}},"aggs":{"services":{"terms":{"field":"service_name","size":10}}}}
+        """;
+    HttpResponse response = elasticsearchApiService.search(TEST_DATASET_NAME, postBody);
+
+    AggregatedHttpResponse aggregatedRes = response.aggregate().join();
+    String body = aggregatedRes.content(StandardCharsets.UTF_8);
+    JsonNode jsonNode = OBJECT_MAPPER.readTree(body);
+
+    assertThat(aggregatedRes.status().code()).isEqualTo(200);
+    assertThat(jsonNode.get("aggregations").get("services").get("buckets").size()).isEqualTo(1);
+    assertThat(
+            jsonNode.get("aggregations").get("services").get("buckets").get(0).get("key").asText())
+        .isEqualTo(TEST_DATASET_NAME);
+    assertThat(
+            jsonNode
+                .get("aggregations")
+                .get("services")
+                .get("buckets")
+                .get(0)
+                .get("doc_count")
+                .asInt())
+        .isEqualTo(100);
+    assertThat(jsonNode.get("_shards").get("total").asInt()).isEqualTo(1);
+    assertThat(jsonNode.get("_shards").get("failed").asInt()).isEqualTo(0);
+  }
+
+  @Test
   public void testLargeSetOfQueries() throws Exception {
     addMessagesToChunkManager(SpanUtil.makeSpansWithTimeDifference(1, 100, 1, Instant.now()));
-    String postBody =
-        Resources.toString(
-            Resources.getResource("elasticsearchApi/multisearch_query_10results.ndjson"),
-            Charset.defaultCharset());
+    String postBody = readResource("elasticsearchApi/multisearch_query_10results.ndjson");
     AstraLocalQueryService<LogMessage> slowSearcher =
         spy(new AstraLocalQueryService<>(chunkManagerUtil.chunkManager, Duration.ofSeconds(5)));
 
     // warmup to load OpenSearch plugins
-    ElasticsearchApiService slowElasticsearchApiService = new ElasticsearchApiService(slowSearcher);
+    ElasticsearchApiService slowElasticsearchApiService =
+        new ElasticsearchApiService(
+            slowSearcher, DEFAULT_ASTRA_CONFIG, mock(DatasetMetadataStore.class));
     slowElasticsearchApiService.multiSearch(postBody);
 
-    slowElasticsearchApiService = new ElasticsearchApiService(slowSearcher);
+    slowElasticsearchApiService =
+        new ElasticsearchApiService(
+            slowSearcher, DEFAULT_ASTRA_CONFIG, mock(DatasetMetadataStore.class));
     HttpResponse response = slowElasticsearchApiService.multiSearch(postBody.repeat(100));
 
     // handle response
     AggregatedHttpResponse aggregatedRes = response.aggregate().join();
     String body = aggregatedRes.content(StandardCharsets.UTF_8);
-    JsonNode jsonNode = new ObjectMapper().readTree(body);
+    JsonNode jsonNode = OBJECT_MAPPER.readTree(body);
 
     assertThat(aggregatedRes.status().code()).isEqualTo(200);
 
@@ -513,16 +538,13 @@ public class ElasticsearchApiServiceTest {
 
   @Test
   public void testEmptySearchGrafana7() throws Exception {
-    String postBody =
-        Resources.toString(
-            Resources.getResource("elasticsearchApi/empty_search_grafana7.ndjson"),
-            Charset.defaultCharset());
+    String postBody = readResource("elasticsearchApi/empty_search_grafana7.ndjson");
     HttpResponse response = elasticsearchApiService.multiSearch(postBody);
 
     // handle response
     AggregatedHttpResponse aggregatedRes = response.aggregate().join();
     String body = aggregatedRes.content(StandardCharsets.UTF_8);
-    JsonNode jsonNode = new ObjectMapper().readTree(body);
+    JsonNode jsonNode = OBJECT_MAPPER.readTree(body);
 
     assertThat(aggregatedRes.status().code()).isEqualTo(200);
     assertThat(jsonNode.findValue("hits").get("hits").size()).isEqualTo(0);
@@ -530,16 +552,13 @@ public class ElasticsearchApiServiceTest {
 
   @Test
   public void testEmptySearchGrafana8() throws Exception {
-    String postBody =
-        Resources.toString(
-            Resources.getResource("elasticsearchApi/empty_search_grafana8.ndjson"),
-            Charset.defaultCharset());
+    String postBody = readResource("elasticsearchApi/empty_search_grafana8.ndjson");
     HttpResponse response = elasticsearchApiService.multiSearch(postBody);
 
     // handle response
     AggregatedHttpResponse aggregatedRes = response.aggregate().join();
     String body = aggregatedRes.content(StandardCharsets.UTF_8);
-    JsonNode jsonNode = new ObjectMapper().readTree(body);
+    JsonNode jsonNode = OBJECT_MAPPER.readTree(body);
 
     assertThat(aggregatedRes.status().code()).isEqualTo(200);
     assertThat(jsonNode.findValue("hits").get("hits").size()).isEqualTo(0);
@@ -548,10 +567,12 @@ public class ElasticsearchApiServiceTest {
   @Test
   public void testIndexMapping() throws IOException {
     AstraQueryServiceBase searcher = mock(AstraQueryServiceBase.class);
-    ElasticsearchApiService serviceUnderTest = new ElasticsearchApiService(searcher);
+    ElasticsearchApiService serviceUnderTest =
+        new ElasticsearchApiService(
+            searcher, DEFAULT_ASTRA_CONFIG, mock(DatasetMetadataStore.class));
 
     Instant start = Instant.now();
-    Instant end = start.minusSeconds(60);
+    Instant end = start.plusSeconds(60);
 
     when(searcher.getSchema(
             eq(
@@ -564,7 +585,7 @@ public class ElasticsearchApiServiceTest {
 
     HttpResponse response =
         serviceUnderTest.mapping(
-            Optional.of("foo"), Optional.of(start.toEpochMilli()), Optional.of(end.toEpochMilli()));
+            "foo", Optional.of(start.toEpochMilli()), Optional.of(end.toEpochMilli()));
     verify(searcher)
         .getSchema(
             eq(
@@ -577,7 +598,7 @@ public class ElasticsearchApiServiceTest {
     // handle response
     AggregatedHttpResponse aggregatedRes = response.aggregate().join();
     String body = aggregatedRes.content(StandardCharsets.UTF_8);
-    JsonNode jsonNode = new ObjectMapper().readTree(body);
+    JsonNode jsonNode = OBJECT_MAPPER.readTree(body);
 
     assertThat(aggregatedRes.status().code()).isEqualTo(200);
 
@@ -600,7 +621,179 @@ public class ElasticsearchApiServiceTest {
                   .isCloseTo(Instant.now().toEpochMilli(), Offset.offset(1000L));
               return AstraSearch.SchemaResult.newBuilder().build();
             });
-    serviceUnderTest.mapping(Optional.of("bar"), Optional.empty(), Optional.empty());
+    serviceUnderTest.mapping("bar", Optional.empty(), Optional.empty());
+  }
+
+  @Test
+  public void testClusterMetadataLooksLikeOpenSearch() throws Exception {
+    AstraQueryServiceBase searcher = mock(AstraQueryServiceBase.class);
+    ElasticsearchApiService serviceUnderTest =
+        new ElasticsearchApiService(
+            searcher, DEFAULT_ASTRA_CONFIG, mock(DatasetMetadataStore.class));
+
+    AggregatedHttpResponse aggregatedRes = serviceUnderTest.clusterMetadata().aggregate().join();
+    JsonNode jsonNode = OBJECT_MAPPER.readTree(aggregatedRes.content(StandardCharsets.UTF_8));
+
+    assertThat(aggregatedRes.status().code()).isEqualTo(200);
+    assertThat(jsonNode.get("cluster_name").asText()).isEqualTo("astra");
+    assertThat(jsonNode.get("version").get("number").asText()).isEqualTo("2.11.1");
+  }
+
+  @Test
+  public void testNodesInfoReturnsSingleCompatibleNode() throws Exception {
+    AstraQueryServiceBase searcher = mock(AstraQueryServiceBase.class);
+    ElasticsearchApiService serviceUnderTest =
+        new ElasticsearchApiService(
+            searcher, DEFAULT_ASTRA_CONFIG, mock(DatasetMetadataStore.class));
+
+    AggregatedHttpResponse aggregatedRes = serviceUnderTest.nodesInfo().aggregate().join();
+    JsonNode jsonNode = OBJECT_MAPPER.readTree(aggregatedRes.content(StandardCharsets.UTF_8));
+
+    assertThat(aggregatedRes.status().code()).isEqualTo(200);
+    assertThat(jsonNode.get("_nodes").get("total").asInt()).isEqualTo(1);
+    assertThat(jsonNode.get("nodes").get("localhost:8081").get("version").asText())
+        .isEqualTo("2.11.1");
+  }
+
+  @Test
+  public void testFieldCapabilitiesUsesSchema() throws Exception {
+    AstraQueryServiceBase searcher = mock(AstraQueryServiceBase.class);
+    ElasticsearchApiService serviceUnderTest =
+        new ElasticsearchApiService(
+            searcher, DEFAULT_ASTRA_CONFIG, mock(DatasetMetadataStore.class));
+
+    Instant start = Instant.now();
+    Instant end = start.plusSeconds(60);
+    when(searcher.getSchema(
+            eq(
+                AstraSearch.SchemaRequest.newBuilder()
+                    .setDataset("foo")
+                    .setStartTimeEpochMs(start.toEpochMilli())
+                    .setEndTimeEpochMs(end.toEpochMilli())
+                    .build())))
+        .thenReturn(
+            AstraSearch.SchemaResult.newBuilder()
+                .putFieldDefinition(
+                    "message",
+                    AstraSearch.SchemaDefinition.newBuilder()
+                        .setType(Schema.SchemaFieldType.TEXT)
+                        .build())
+                .putFieldDefinition(
+                    "service_name",
+                    AstraSearch.SchemaDefinition.newBuilder()
+                        .setType(Schema.SchemaFieldType.KEYWORD)
+                        .build())
+                .build());
+
+    AggregatedHttpResponse aggregatedRes =
+        serviceUnderTest
+            .fieldCapabilities(
+                "foo",
+                Optional.of(start.toEpochMilli()),
+                Optional.of(end.toEpochMilli()),
+                Optional.empty())
+            .aggregate()
+            .join();
+    JsonNode jsonNode = OBJECT_MAPPER.readTree(aggregatedRes.content(StandardCharsets.UTF_8));
+
+    assertThat(aggregatedRes.status().code()).isEqualTo(200);
+    assertThat(jsonNode.get("fields").get("message").has("text")).isTrue();
+    assertThat(jsonNode.get("fields").get("message").get("text").get("aggregatable").asBoolean())
+        .isFalse();
+    assertThat(jsonNode.get("fields").get("service_name").has("keyword")).isTrue();
+    assertThat(jsonNode.get("fields").get("@timestamp").has("date")).isTrue();
+  }
+
+  @Test
+  public void testResolveIndexReturnsExactDatasetMatch() throws Exception {
+    AstraQueryServiceBase searcher = mock(AstraQueryServiceBase.class);
+    DatasetMetadataStore datasetMetadataStore = mock(DatasetMetadataStore.class);
+    when(datasetMetadataStore.listSync())
+        .thenReturn(
+            List.of(datasetMetadata("bar"), datasetMetadata("foo"), datasetMetadata("foo_logs")));
+    ElasticsearchApiService serviceUnderTest =
+        new ElasticsearchApiService(searcher, DEFAULT_ASTRA_CONFIG, datasetMetadataStore);
+
+    AggregatedHttpResponse aggregatedRes = serviceUnderTest.resolveIndex("foo").aggregate().join();
+    JsonNode jsonNode = OBJECT_MAPPER.readTree(aggregatedRes.content(StandardCharsets.UTF_8));
+
+    assertThat(aggregatedRes.status().code()).isEqualTo(200);
+    assertThat(jsonNode.get("indices")).hasSize(1);
+    assertThat(jsonNode.get("indices").get(0).get("name").asText()).isEqualTo("foo");
+    assertThat(jsonNode.get("indices").get(0).get("attributes")).hasSize(1);
+    assertThat(jsonNode.get("indices").get(0).get("attributes").get(0).asText()).isEqualTo("open");
+    assertThat(jsonNode.get("aliases")).isEmpty();
+    assertThat(jsonNode.get("data_streams")).isEmpty();
+  }
+
+  @Test
+  public void testResolveIndexReturnsEmptyForWildcardSelector() throws Exception {
+    AstraQueryServiceBase searcher = mock(AstraQueryServiceBase.class);
+    DatasetMetadataStore datasetMetadataStore = mock(DatasetMetadataStore.class);
+    when(datasetMetadataStore.listSync())
+        .thenReturn(
+            List.of(datasetMetadata("bar"), datasetMetadata("foo"), datasetMetadata("foo_logs")));
+    ElasticsearchApiService serviceUnderTest =
+        new ElasticsearchApiService(searcher, DEFAULT_ASTRA_CONFIG, datasetMetadataStore);
+
+    AggregatedHttpResponse aggregatedRes = serviceUnderTest.resolveIndex("foo*").aggregate().join();
+    JsonNode jsonNode = OBJECT_MAPPER.readTree(aggregatedRes.content(StandardCharsets.UTF_8));
+
+    assertThat(aggregatedRes.status().code()).isEqualTo(200);
+    assertThat(jsonNode.get("indices")).isEmpty();
+    assertThat(jsonNode.get("aliases")).isEmpty();
+    assertThat(jsonNode.get("data_streams")).isEmpty();
+  }
+
+  @Test
+  public void testResolveIndexReturnsEmptyWhenNoDatasetMatches() throws Exception {
+    AstraQueryServiceBase searcher = mock(AstraQueryServiceBase.class);
+    DatasetMetadataStore datasetMetadataStore = mock(DatasetMetadataStore.class);
+    when(datasetMetadataStore.listSync()).thenReturn(List.of(datasetMetadata("foo")));
+    ElasticsearchApiService serviceUnderTest =
+        new ElasticsearchApiService(searcher, DEFAULT_ASTRA_CONFIG, datasetMetadataStore);
+
+    AggregatedHttpResponse aggregatedRes = serviceUnderTest.resolveIndex("bar").aggregate().join();
+    JsonNode jsonNode = OBJECT_MAPPER.readTree(aggregatedRes.content(StandardCharsets.UTF_8));
+
+    assertThat(aggregatedRes.status().code()).isEqualTo(200);
+    assertThat(jsonNode.get("indices")).isEmpty();
+    assertThat(jsonNode.get("aliases")).isEmpty();
+    assertThat(jsonNode.get("data_streams")).isEmpty();
+  }
+
+  @Test
+  public void testRootMappingCompatibilityEndpointIsAvailable() throws Exception {
+    AstraQueryServiceBase searcher = mock(AstraQueryServiceBase.class);
+    when(searcher.getSchema(any())).thenReturn(AstraSearch.SchemaResult.newBuilder().build());
+    ElasticsearchApiService serviceUnderTest =
+        new ElasticsearchApiService(
+            searcher, DEFAULT_ASTRA_CONFIG, mock(DatasetMetadataStore.class));
+
+    try (CompatibilityServer compatibilityServer = new CompatibilityServer(serviceUnderTest)) {
+      AggregatedHttpResponse aggregatedRes =
+          compatibilityServer.client().get("/_mapping").aggregate().join();
+
+      assertThat(aggregatedRes.status().code()).isEqualTo(200);
+    }
+  }
+
+  @Test
+  public void testRootAliasCompatibilityEndpointsAreAvailable() throws Exception {
+    AstraQueryServiceBase searcher = mock(AstraQueryServiceBase.class);
+    ElasticsearchApiService serviceUnderTest =
+        new ElasticsearchApiService(
+            searcher, DEFAULT_ASTRA_CONFIG, mock(DatasetMetadataStore.class));
+
+    try (CompatibilityServer compatibilityServer = new CompatibilityServer(serviceUnderTest)) {
+      AggregatedHttpResponse aliasRes =
+          compatibilityServer.client().get("/_alias").aggregate().join();
+      AggregatedHttpResponse namedAliasRes =
+          compatibilityServer.client().get("/_alias/test-alias").aggregate().join();
+
+      assertThat(aliasRes.status().code()).isEqualTo(200);
+      assertThat(namedAliasRes.status().code()).isEqualTo(200);
+    }
   }
 
   private void addMessagesToChunkManager(List<Trace.Span> messages) throws IOException {
@@ -611,5 +804,33 @@ public class ElasticsearchApiServiceTest {
       offset++;
     }
     chunkManager.getActiveChunk().commit();
+  }
+
+  private static String readResource(String resourcePath) throws IOException {
+    return Resources.toString(Resources.getResource(resourcePath), StandardCharsets.UTF_8);
+  }
+
+  private static DatasetMetadata datasetMetadata(String name) {
+    return new DatasetMetadata(name, "test-owner", 0, List.of(), name);
+  }
+
+  private static final class CompatibilityServer implements AutoCloseable {
+    private final Server server;
+    private final WebClient client;
+
+    private CompatibilityServer(ElasticsearchApiService serviceUnderTest) {
+      server = Server.builder().http(0).annotatedService(serviceUnderTest).build();
+      server.start().join();
+      client = WebClient.of("http://127.0.0.1:" + server.activeLocalPort());
+    }
+
+    private WebClient client() {
+      return client;
+    }
+
+    @Override
+    public void close() {
+      server.stop().join();
+    }
   }
 }

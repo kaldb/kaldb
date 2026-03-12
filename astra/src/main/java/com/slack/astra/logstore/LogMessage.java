@@ -57,7 +57,8 @@ public class LogMessage extends LogWireMessage {
     TRACE_ID("trace_id"),
     PARENT_ID("parent_id"),
     ID("id"),
-    ASTRA_INVALID_TIMESTAMP("astra_invalid_timestamp");
+    ASTRA_INVALID_TIMESTAMP("astra_invalid_timestamp"),
+    TIMESTAMP("@timestamp");
 
     public final String fieldName;
 

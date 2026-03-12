@@ -1,0 +1,136 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>com.slack.astra</groupId>
+    <artifactId>astra-parent</artifactId>
+    <version>0.1-SNAPSHOT</version>
+    <relativePath>../../pom.xml</relativePath>
+  </parent>
+
+  <artifactId>tools-dashboards-gateway</artifactId>
+  <packaging>jar</packaging>
+
+  <name>Astra Tools - Dashboards Gateway</name>
+  <description>OpenSearch Dashboards gateway for Astra-backed user search with OpenSearch saved objects.</description>
+
+  <properties>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <armeria.version>1.32.5</armeria.version>
+    <junit.jupiter.version>5.13.1</junit.jupiter.version>
+    <slf4j.version>1.7.36</slf4j.version>
+    <uberjar.name>tools-dashboards-gateway</uberjar.name>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>com.linecorp.armeria</groupId>
+      <artifactId>armeria</artifactId>
+      <version>${armeria.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-simple</artifactId>
+      <version>${slf4j.version}</version>
+    </dependency>
+
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <version>${junit.jupiter.version}</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>com.spotify.fmt</groupId>
+        <artifactId>fmt-maven-plugin</artifactId>
+        <version>2.27</version>
+        <configuration>
+          <sourceDirectory>src/main/java</sourceDirectory>
+          <testSourceDirectory>src/test/java</testSourceDirectory>
+          <verbose>true</verbose>
+          <filesNamePattern>.*\.java</filesNamePattern>
+          <skip>false</skip>
+          <skipSourceDirectory>false</skipSourceDirectory>
+          <skipTestSourceDirectory>false</skipTestSourceDirectory>
+          <skipSortingImports>false</skipSortingImports>
+          <style>google</style>
+        </configuration>
+        <dependencies>
+          <dependency>
+            <groupId>com.google.googlejavaformat</groupId>
+            <artifactId>google-java-format</artifactId>
+            <version>1.27.0</version>
+          </dependency>
+        </dependencies>
+        <executions>
+          <execution>
+            <goals>
+              <goal>format</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.14.0</version>
+        <configuration>
+          <release>${javac.target}</release>
+          <source>${javac.target}</source>
+          <target>${javac.target}</target>
+        </configuration>
+      </plugin>
+
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>3.5.3</version>
+        <configuration>
+          <trimStackTrace>false</trimStackTrace>
+        </configuration>
+      </plugin>
+
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-shade-plugin</artifactId>
+        <version>3.6.0</version>
+        <executions>
+          <execution>
+            <phase>package</phase>
+            <goals>
+              <goal>shade</goal>
+            </goals>
+            <configuration>
+              <finalName>${uberjar.name}</finalName>
+              <transformers>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                  <manifestEntries>
+                    <Main-Class>com.slack.astra.contrib.dashboardsgateway.DashboardsGatewayMain</Main-Class>
+                    <Multi-Release>true</Multi-Release>
+                  </manifestEntries>
+                </transformer>
+              </transformers>
+              <filters>
+                <filter>
+                  <artifact>*:*</artifact>
+                  <excludes>
+                    <exclude>META-INF/*.SF</exclude>
+                    <exclude>META-INF/*.DSA</exclude>
+                    <exclude>META-INF/*.RSA</exclude>
+                  </excludes>
+                </filter>
+              </filters>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>

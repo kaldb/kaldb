@@ -377,6 +377,14 @@ public enum FieldType {
     return name;
   }
 
+  public String toOpenSearchTypeName() {
+    return switch (this) {
+      case STRING, KEYWORD, ID -> "keyword";
+      case SCALED_LONG -> "long";
+      default -> name;
+    };
+  }
+
   public static boolean isTexty(FieldType fieldType) {
     return fieldType == TEXT || fieldType == STRING || fieldType == KEYWORD;
   }

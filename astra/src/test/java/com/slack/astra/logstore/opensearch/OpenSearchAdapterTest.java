@@ -1,14 +1,19 @@
 package com.slack.astra.logstore.opensearch;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import brave.Tracing;
 import com.google.common.collect.ImmutableMap;
 import com.slack.astra.logstore.LogMessage;
+import com.slack.astra.logstore.search.SearchResult;
 import com.slack.astra.metadata.schema.FieldType;
 import com.slack.astra.metadata.schema.LuceneFieldDef;
+import com.slack.astra.testlib.SpanUtil;
 import com.slack.astra.testlib.TemporaryLogStoreAndSearcherExtension;
 import com.slack.astra.util.QueryBuilderUtil;
 import java.io.IOException;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import org.apache.lucene.search.BooleanQuery;
@@ -18,10 +23,13 @@ import org.apache.lucene.search.IndexSortSortedNumericDocValuesRangeQuery;
 import org.apache.lucene.search.MatchAllDocsQuery;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.util.BytesRef;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
 import org.opensearch.index.mapper.Uid;
 import org.opensearch.index.query.BoolQueryBuilder;
+import org.opensearch.index.query.MatchAllQueryBuilder;
 import org.opensearch.index.query.QueryStringQueryBuilder;
 import org.opensearch.index.query.RangeQueryBuilder;
 import org.opensearch.search.aggregations.Aggregator;
@@ -31,6 +39,20 @@ import org.opensearch.search.aggregations.metrics.AvgAggregationBuilder;
 import org.opensearch.search.aggregations.metrics.InternalAvg;
 
 public class OpenSearchAdapterTest {
+  private static Tracing tracing;
+
+  @BeforeAll
+  public static void beforeAll() {
+    tracing = Tracing.newBuilder().build();
+  }
+
+  @AfterAll
+  public static void afterAll() {
+    if (tracing != null) {
+      tracing.close();
+      tracing = null;
+    }
+  }
 
   @RegisterExtension
   public TemporaryLogStoreAndSearcherExtension logStoreAndSearcherRule =
@@ -49,6 +71,14 @@ public class OpenSearchAdapterTest {
         new LuceneFieldDef(
             LogMessage.SystemField.TIME_SINCE_EPOCH.fieldName,
             FieldType.LONG.name,
+            false,
+            true,
+            true));
+    fieldDefBuilder.put(
+        LogMessage.ReservedField.SERVICE_NAME.fieldName,
+        new LuceneFieldDef(
+            LogMessage.ReservedField.SERVICE_NAME.fieldName,
+            FieldType.KEYWORD.name,
             false,
             true,
             true));
@@ -115,9 +145,95 @@ public class OpenSearchAdapterTest {
             .getLuceneSearcherManager()
             .acquire();
 
-    Query rangeQuery = openSearchAdapter.buildQuery(indexSearcher, boolQueryBuilder);
+    Query rangeQuery = openSearchAdapter.buildQuery(indexSearcher, "_all", boolQueryBuilder);
     assertThat(rangeQuery).isNotNull();
     assertThat(rangeQuery.toString()).isEqualTo("#_timesinceepoch:[1 TO 100]");
+  }
+
+  @Test
+  public void shouldScopeQueriesByDatasetUsingServiceName() throws Exception {
+    BoolQueryBuilder boolQueryBuilder =
+        new BoolQueryBuilder().filter(new RangeQueryBuilder("_timesinceepoch").gte(1).lte(100));
+    IndexSearcher indexSearcher =
+        logStoreAndSearcherRule
+            .logStore
+            .getAstraSearcherManager()
+            .getLuceneSearcherManager()
+            .acquire();
+
+    Query scopedQuery = openSearchAdapter.buildQuery(indexSearcher, "test", boolQueryBuilder);
+
+    assertThat(scopedQuery.toString()).contains("service_name:test");
+    assertThat(scopedQuery.toString()).contains("_timesinceepoch:[1 TO 100]");
+  }
+
+  @Test
+  public void shouldNotScopeQueriesForWildcardDatasets() throws Exception {
+    BoolQueryBuilder boolQueryBuilder =
+        new BoolQueryBuilder().filter(new RangeQueryBuilder("_timesinceepoch").gte(1).lte(100));
+    IndexSearcher indexSearcher =
+        logStoreAndSearcherRule
+            .logStore
+            .getAstraSearcherManager()
+            .getLuceneSearcherManager()
+            .acquire();
+
+    Query allDatasetQuery = openSearchAdapter.buildQuery(indexSearcher, "_all", boolQueryBuilder);
+    Query wildcardDatasetQuery = openSearchAdapter.buildQuery(indexSearcher, "*", boolQueryBuilder);
+
+    assertThat(allDatasetQuery.toString()).isEqualTo("#_timesinceepoch:[1 TO 100]");
+    assertThat(wildcardDatasetQuery.toString()).isEqualTo("#_timesinceepoch:[1 TO 100]");
+    assertThat(wildcardDatasetQuery.toString()).doesNotContain("service_name:");
+  }
+
+  @Test
+  public void shouldRejectCommaSeparatedDatasetSelectors() throws Exception {
+    IndexSearcher indexSearcher =
+        logStoreAndSearcherRule
+            .logStore
+            .getAstraSearcherManager()
+            .getLuceneSearcherManager()
+            .acquire();
+
+    assertThatThrownBy(
+            () ->
+                openSearchAdapter.buildQuery(indexSearcher, "foo,bar", new MatchAllQueryBuilder()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Multi-index dataset selectors are not supported");
+  }
+
+  @Test
+  public void shouldRejectWildcardDatasetSelectors() throws Exception {
+    IndexSearcher indexSearcher =
+        logStoreAndSearcherRule
+            .logStore
+            .getAstraSearcherManager()
+            .getLuceneSearcherManager()
+            .acquire();
+
+    assertThatThrownBy(
+            () -> openSearchAdapter.buildQuery(indexSearcher, "foo*", new MatchAllQueryBuilder()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Wildcard dataset selectors are not supported");
+  }
+
+  @Test
+  public void shouldFilterSearchResultsByDataset() throws Exception {
+    long baseMicros = Instant.now().toEpochMilli() * 1000;
+    logStoreAndSearcherRule.logStore.addMessage(
+        SpanUtil.makeSpan("trace-1", "id-1", "", baseMicros, 100, "foo-span", "foo", "INFO"));
+    logStoreAndSearcherRule.logStore.addMessage(
+        SpanUtil.makeSpan("trace-2", "id-2", "", baseMicros + 1, 100, "bar-span", "bar", "INFO"));
+    logStoreAndSearcherRule.logStore.commit();
+    logStoreAndSearcherRule.logStore.refresh();
+
+    SearchResult<LogMessage> searchResult =
+        logStoreAndSearcherRule.logSearcher.search("foo", 10, null, null, null);
+
+    assertThat(searchResult.hits).hasSize(1);
+    assertThat(searchResult.hits.get(0).getIndex()).isEqualTo("foo");
+    assertThat(searchResult.hits.get(0).getSource())
+        .containsEntry(LogMessage.ReservedField.SERVICE_NAME.fieldName, "foo");
   }
 
   @Test
@@ -132,7 +248,9 @@ public class OpenSearchAdapterTest {
             .acquire();
     Query idQuery =
         openSearchAdapter.buildQuery(
-            indexSearcher, new QueryStringQueryBuilder(String.format("%s:%s", idField, idValue)));
+            indexSearcher,
+            "_all",
+            new QueryStringQueryBuilder(String.format("%s:%s", idField, idValue)));
     BytesRef queryStrBytes = new BytesRef(Uid.encodeId("1").bytes);
     // idQuery.toString="#_id:([fe 1f])"
     // queryStrBytes.toString="[fe 1f]"
@@ -149,13 +267,13 @@ public class OpenSearchAdapterTest {
             .acquire();
     Query nullBothTimestamps =
         openSearchAdapter.buildQuery(
-            indexSearcher, QueryBuilderUtil.generateQueryBuilder("", null, null));
+            indexSearcher, "_all", QueryBuilderUtil.generateQueryBuilder("", null, null));
     // null for both timestamps with no query string should be optimized into a matchall
     assertThat(nullBothTimestamps).isInstanceOf(MatchAllDocsQuery.class);
 
     Query nullStartTimestamp =
         openSearchAdapter.buildQuery(
-            indexSearcher, QueryBuilderUtil.generateQueryBuilder("a", null, 100L));
+            indexSearcher, "_all", QueryBuilderUtil.generateQueryBuilder("a", null, 100L));
     assertThat(nullStartTimestamp).isInstanceOf(BooleanQuery.class);
 
     Optional<IndexSortSortedNumericDocValuesRangeQuery> filterNullStartQuery =
@@ -177,7 +295,7 @@ public class OpenSearchAdapterTest {
 
     Query nullEndTimestamp =
         openSearchAdapter.buildQuery(
-            indexSearcher, QueryBuilderUtil.generateQueryBuilder("", 100L, null));
+            indexSearcher, "_all", QueryBuilderUtil.generateQueryBuilder("", 100L, null));
     Optional<IndexSortSortedNumericDocValuesRangeQuery> filterNullEndQuery =
         ((BooleanQuery) nullEndTimestamp)
             .clauses().stream()
