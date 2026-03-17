@@ -25,7 +25,17 @@ import org.slf4j.LoggerFactory;
 final class DashboardsGatewayService implements HttpService {
   private static final Logger LOG = LoggerFactory.getLogger(DashboardsGatewayService.class);
   private static final Set<String> HOP_BY_HOP_HEADERS =
-      Set.of("connection", "content-length", "host", "transfer-encoding");
+      Set.of(
+          "connection",
+          "content-length",
+          "host",
+          "keep-alive",
+          "proxy-authenticate",
+          "proxy-authorization",
+          "te",
+          "trailer",
+          "transfer-encoding",
+          "upgrade");
   private static final DashboardsGatewayRouting ROUTING = new DashboardsGatewayRouting();
 
   private final GatewayConfig config;
