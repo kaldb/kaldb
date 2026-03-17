@@ -378,6 +378,7 @@ public class ElasticsearchApiService {
                     requestedFields))));
   }
 
+  // Schema discovery defaults to the last hour when callers do not provide an explicit range.
   private SchemaTimeRange resolveSchemaTimeRange(
       Optional<Long> startTimeEpochMs, Optional<Long> endTimeEpochMs) {
     Instant now = Instant.now();
