@@ -31,11 +31,14 @@ final class DashboardsGatewayRouting {
   // Returns a synthetic response for paths handled locally, without forwarding to any upstream.
   // Armeria automatically strips the body for HEAD requests.
   Optional<HttpResponse> syntheticResponse(String path) {
-    byte[] body = null;
-    if (path.equals(SECURITY_ACCOUNT_PATH)) body = SECURITY_ACCOUNT_RESPONSE;
-    else if (path.equals(HEALTH_PATH)) body = HEALTH_RESPONSE;
-    if (body == null) return Optional.empty();
-    return Optional.of(HttpResponse.of(HttpStatus.OK, MediaType.JSON_UTF_8, body));
+    if (path.equals(SECURITY_ACCOUNT_PATH)) {
+      return Optional.of(
+          HttpResponse.of(HttpStatus.OK, MediaType.JSON_UTF_8, SECURITY_ACCOUNT_RESPONSE));
+    }
+    if (path.equals(HEALTH_PATH)) {
+      return Optional.of(HttpResponse.of(HttpStatus.OK, MediaType.JSON_UTF_8, HEALTH_RESPONSE));
+    }
+    return Optional.empty();
   }
 
   Upstream selectUpstream(String path) {
