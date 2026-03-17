@@ -31,7 +31,12 @@ record GatewayConfig(
   }
 
   private static URI parseUri(Map<String, String> environment, String envVar, String defaultValue) {
-    return URI.create(environment.getOrDefault(envVar, defaultValue));
+    String rawValue = environment.getOrDefault(envVar, defaultValue);
+    try {
+      return URI.create(rawValue);
+    } catch (IllegalArgumentException e) {
+      throw new IllegalArgumentException("Invalid URI for " + envVar + ": " + rawValue, e);
+    }
   }
 
   private static int parseIntEnv(Map<String, String> environment, String envVar, int defaultValue) {
