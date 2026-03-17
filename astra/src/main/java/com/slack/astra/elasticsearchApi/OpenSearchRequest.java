@@ -12,7 +12,9 @@ import com.google.common.collect.Iterators;
 import com.slack.astra.logstore.LogMessage;
 import com.slack.astra.logstore.opensearch.OpenSearchAdapter;
 import com.slack.astra.proto.service.AstraSearch;
+import java.time.DateTimeException;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -79,10 +81,11 @@ public class OpenSearchRequest {
         Object from = rangeQueryBuilder.from();
         Object to = rangeQueryBuilder.to();
         String format = rangeQueryBuilder.format();
+        String timeZone = rangeQueryBuilder.timeZone();
 
         dateRangeCount++;
-        dateRangeStart = toEpochMillis(from, format, false);
-        dateRangeEnd = toEpochMillis(to, format, true);
+        dateRangeStart = toEpochMillis(from, format, timeZone, false);
+        dateRangeEnd = toEpochMillis(to, format, timeZone, true);
       }
     }
 
@@ -346,7 +349,7 @@ public class OpenSearchRequest {
     return aggsNode.toString();
   }
 
-  private static Long toEpochMillis(Object value, String format, boolean roundUp) {
+  private static Long toEpochMillis(Object value, String format, String timeZone, boolean roundUp) {
     if (value == null) {
       return null;
     }
@@ -357,14 +360,15 @@ public class OpenSearchRequest {
       return null;
     }
 
-    return parseStringDateRangeValue(stringValue, format, roundUp);
+    return parseStringDateRangeValue(stringValue, format, timeZone, roundUp);
   }
 
-  private static long parseStringDateRangeValue(String value, String format, boolean roundUp) {
+  private static long parseStringDateRangeValue(
+      String value, String format, String timeZone, boolean roundUp) {
     String dateFormat = resolveDateFormat(format);
     try {
-      return parseWithDateMath(value, dateFormat, roundUp);
-    } catch (OpenSearchParseException parseFailure) {
+      return parseWithDateMath(value, dateFormat, timeZone, roundUp);
+    } catch (OpenSearchParseException | DateTimeException parseFailure) {
       return tryParseEpochMillisString(value)
           .or(() -> tryParseIsoInstant(value))
           .orElseThrow(() -> invalidDateRange(value, dateFormat, parseFailure));
@@ -375,12 +379,20 @@ public class OpenSearchRequest {
     return (format == null || format.isBlank()) ? DEFAULT_DATE_FORMAT : format;
   }
 
-  private static long parseWithDateMath(String value, String dateFormat, boolean roundUp) {
+  private static long parseWithDateMath(
+      String value, String dateFormat, String timeZone, boolean roundUp) {
     LongSupplier now = System::currentTimeMillis;
     return DateFormatter.forPattern(dateFormat)
         .toDateMathParser()
-        .parse(value, now, roundUp, ZoneOffset.UTC)
+        .parse(value, now, roundUp, resolveTimeZone(timeZone))
         .toEpochMilli();
+  }
+
+  private static ZoneId resolveTimeZone(String timeZone) {
+    if (timeZone == null || timeZone.isBlank()) {
+      return ZoneOffset.UTC;
+    }
+    return ZoneId.of(timeZone);
   }
 
   private static Optional<Long> tryParseEpochMillisString(String value) {
@@ -400,7 +412,7 @@ public class OpenSearchRequest {
   }
 
   private static InvalidDateRangeException invalidDateRange(
-      String value, String dateFormat, OpenSearchParseException cause) {
+      String value, String dateFormat, Exception cause) {
     return new InvalidDateRangeException(
         String.format("Unable to parse date range value '%s' with format '%s'", value, dateFormat),
         cause);

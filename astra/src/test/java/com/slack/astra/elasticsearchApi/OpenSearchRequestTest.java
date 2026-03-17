@@ -10,6 +10,7 @@ import com.slack.astra.proto.service.AstraSearch;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.Iterator;
 import java.util.List;
@@ -235,6 +236,65 @@ public class OpenSearchRequestTest {
     AstraSearch.SearchRequest request = parsedRequestList.get(0);
     assertThat(request.getStartTimeEpochMs()).isEqualTo(1726766654000L);
     assertThat(request.getEndTimeEpochMs()).isEqualTo(1726768454000L);
+  }
+
+  @Test
+  public void testGetDateRangeFromStringValueWithTimeZone() throws Exception {
+    String searchBody =
+        """
+        {
+          "size": 5,
+          "query": {
+            "range": {
+              "@timestamp": {
+                "gte": "2026-03-10T00:00:00",
+                "lte": "2026-03-10T01:00:00",
+                "time_zone": "-08:00"
+              }
+            }
+          }
+        }
+        """;
+
+    OpenSearchRequest openSearchRequest = new OpenSearchRequest();
+    AstraSearch.SearchRequest request =
+        openSearchRequest.parseSingleSearchRequest("test", searchBody);
+
+    assertThat(request.getStartTimeEpochMs())
+        .isEqualTo(OffsetDateTime.parse("2026-03-10T00:00:00-08:00").toInstant().toEpochMilli());
+    assertThat(request.getEndTimeEpochMs())
+        .isEqualTo(
+            OffsetDateTime.parse("2026-03-10T01:00:00.999-08:00").toInstant().toEpochMilli());
+  }
+
+  @Test
+  public void testGetDateMathRangeFromStringValueWithTimeZone() throws Exception {
+    String searchBody =
+        """
+        {
+          "size": 5,
+          "query": {
+            "range": {
+              "@timestamp": {
+                "gte": "2026-03-10||/d",
+                "lte": "2026-03-10||/d",
+                "format": "strict_date_optional_time",
+                "time_zone": "-08:00"
+              }
+            }
+          }
+        }
+        """;
+
+    OpenSearchRequest openSearchRequest = new OpenSearchRequest();
+    AstraSearch.SearchRequest request =
+        openSearchRequest.parseSingleSearchRequest("test", searchBody);
+
+    assertThat(request.getStartTimeEpochMs())
+        .isEqualTo(OffsetDateTime.parse("2026-03-10T00:00:00-08:00").toInstant().toEpochMilli());
+    assertThat(request.getEndTimeEpochMs())
+        .isEqualTo(
+            OffsetDateTime.parse("2026-03-10T23:59:59.999-08:00").toInstant().toEpochMilli());
   }
 
   @Test
