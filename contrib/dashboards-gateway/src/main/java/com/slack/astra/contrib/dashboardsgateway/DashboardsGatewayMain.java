@@ -27,7 +27,18 @@ public final class DashboardsGatewayMain {
         config.astraUri(),
         config.openSearchUri(),
         config.maxRequestBytes());
-    server.start().join();
-    server.whenClosed().join();
+    try {
+      server.start().join();
+    } catch (RuntimeException e) {
+      LOG.error("Failed to start dashboards gateway", e);
+      throw e;
+    }
+
+    try {
+      server.whenClosed().join();
+    } catch (RuntimeException e) {
+      LOG.error("Dashboards gateway terminated with an error", e);
+      throw e;
+    }
   }
 }
