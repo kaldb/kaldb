@@ -18,9 +18,9 @@ record GatewayConfig(
         parseUri(environment, "ASTRA_URL", "http://astra-query:8081"),
         parseUri(environment, "OPENSEARCH_URL", "http://opensearch:9200"),
         environment.getOrDefault("LISTEN_HOST", "0.0.0.0"),
-        Integer.parseInt(environment.getOrDefault("LISTEN_PORT", "9200")),
-        Duration.ofSeconds(Long.parseLong(environment.getOrDefault("REQUEST_TIMEOUT_SEC", "30"))),
-        Integer.parseInt(environment.getOrDefault("MAX_REQUEST_BYTES", "10485760")));
+        parseIntEnv(environment, "LISTEN_PORT", 9200),
+        Duration.ofSeconds(parseLongEnv(environment, "REQUEST_TIMEOUT_SEC", 30L)),
+        parseIntEnv(environment, "MAX_REQUEST_BYTES", 10485760));
   }
 
   URI uriFor(Upstream upstream) {
@@ -32,5 +32,24 @@ record GatewayConfig(
 
   private static URI parseUri(Map<String, String> environment, String envVar, String defaultValue) {
     return URI.create(environment.getOrDefault(envVar, defaultValue));
+  }
+
+  private static int parseIntEnv(Map<String, String> environment, String envVar, int defaultValue) {
+    String rawValue = environment.getOrDefault(envVar, Integer.toString(defaultValue));
+    try {
+      return Integer.parseInt(rawValue);
+    } catch (NumberFormatException e) {
+      throw new IllegalArgumentException("Invalid integer for " + envVar + ": " + rawValue, e);
+    }
+  }
+
+  private static long parseLongEnv(
+      Map<String, String> environment, String envVar, long defaultValue) {
+    String rawValue = environment.getOrDefault(envVar, Long.toString(defaultValue));
+    try {
+      return Long.parseLong(rawValue);
+    } catch (NumberFormatException e) {
+      throw new IllegalArgumentException("Invalid long for " + envVar + ": " + rawValue, e);
+    }
   }
 }
