@@ -93,7 +93,8 @@ gateway model instead of pointing Dashboards straight at `astra_query`.
 In that model:
 
 - OpenSearch Dashboards talks to a single OpenSearch-compatible gateway endpoint
-- the gateway routes user log and search APIs to Astra query nodes
+- the gateway routes Astra-backed user data APIs to Astra query nodes, including search, mapping,
+  alias, and field-capabilities requests
 - the gateway routes Dashboards system-index and saved-object traffic to OpenSearch
 
 This keeps Astra as the backend for user log data while leaving Dashboards' own application state
