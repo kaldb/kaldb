@@ -565,7 +565,7 @@ public class ElasticsearchApiServiceTest {
         new ElasticsearchApiService(searcher, DEFAULT_ASTRA_CONFIG);
 
     Instant start = Instant.now();
-    Instant end = start.minusSeconds(60);
+    Instant end = start.plusSeconds(60);
 
     when(searcher.getSchema(
             eq(
