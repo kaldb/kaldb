@@ -58,12 +58,14 @@ curl --location 'http://localhost:8081/_msearch' \
 ```
 
 Query via Grafana
-```
+
+```text
 http://localhost:3000/explore
 ```
 
 Query via OpenSearch Dashboards
-```
+
+```text
 http://localhost:5601/app/discover
 ```
 
