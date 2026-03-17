@@ -68,13 +68,15 @@ http://localhost:5601/app/discover
 ```
 
 In OpenSearch Dashboards, create a data view named `test` and set the time field to `@timestamp`.
-Dashboards queries Astra for user log data through the `astra_dashboards_gateway`, while
-Dashboards' own saved objects and UI state are stored in the `opensearch` container's persistent
-volume. This is the gateway model for Dashboards in this repo: the gateway is the single
-OpenSearch-compatible endpoint that Dashboards talks to, and it routes user-index log/search APIs
-to Astra while keeping Dashboards system-index traffic on OpenSearch. If you remove that
-OpenSearch volume, your Dashboards data views and saved searches are lost, but the Astra log data
-is unaffected.
+
+- Dashboards queries Astra for user log data through the `astra_dashboards_gateway`.
+- Dashboards' own saved objects and UI state are stored in the `opensearch` container's persistent
+  volume.
+- The gateway is the single OpenSearch-compatible endpoint that Dashboards talks to.
+- The gateway routes user-index log/search APIs to Astra while keeping Dashboards system-index
+  traffic on OpenSearch.
+- If you remove the OpenSearch volume, your Dashboards data views and saved searches are lost, but
+  the Astra log data is unaffected.
 
 For a continuous synthetic stream, run `tools/loadgen` directly:
 
