@@ -14,6 +14,7 @@ import com.linecorp.armeria.common.RequestHeadersBuilder;
 import com.linecorp.armeria.server.HttpService;
 import com.linecorp.armeria.server.ServiceRequestContext;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Locale;
 import java.util.Map;
@@ -24,6 +25,10 @@ import org.slf4j.LoggerFactory;
 
 final class DashboardsGatewayService implements HttpService {
   private static final Logger LOG = LoggerFactory.getLogger(DashboardsGatewayService.class);
+  private static final byte[] GATEWAY_UPSTREAM_ERROR_RESPONSE =
+      "gateway upstream request failed\n".getBytes(StandardCharsets.UTF_8);
+  private static final byte[] GATEWAY_REQUEST_PROCESSING_ERROR_RESPONSE =
+      "gateway request processing failed\n".getBytes(StandardCharsets.UTF_8);
   private static final Set<String> HOP_BY_HOP_HEADERS =
       Set.of(
           "connection",
@@ -123,28 +128,18 @@ final class DashboardsGatewayService implements HttpService {
         });
   }
 
-  private static HttpResponse gatewayErrorResponse(URI upstreamUri, Throwable throwable) {
-    String errorMessage =
-        "gateway error forwarding to %s: %s%n"
-            .formatted(
-                upstreamUri.getAuthority(),
-                throwable.getMessage() == null
-                    ? throwable.getClass().getName()
-                    : throwable.getMessage());
-    LOG.error(errorMessage, throwable);
-    return HttpResponse.of(HttpStatus.BAD_GATEWAY, MediaType.PLAIN_TEXT_UTF_8, errorMessage);
+  static HttpResponse gatewayErrorResponse(URI upstreamUri, Throwable throwable) {
+    LOG.error("Gateway error forwarding to {}", upstreamUri, throwable);
+    return HttpResponse.of(
+        HttpStatus.BAD_GATEWAY, MediaType.PLAIN_TEXT_UTF_8, GATEWAY_UPSTREAM_ERROR_RESPONSE);
   }
 
-  private static HttpResponse requestProcessingErrorResponse(String path, Throwable throwable) {
-    String errorMessage =
-        "gateway error processing %s: %s%n"
-            .formatted(
-                path,
-                throwable.getMessage() == null
-                    ? throwable.getClass().getName()
-                    : throwable.getMessage());
-    LOG.error(errorMessage, throwable);
-    return HttpResponse.of(HttpStatus.BAD_GATEWAY, MediaType.PLAIN_TEXT_UTF_8, errorMessage);
+  static HttpResponse requestProcessingErrorResponse(String path, Throwable throwable) {
+    LOG.error("Gateway error processing {}", path, throwable);
+    return HttpResponse.of(
+        HttpStatus.BAD_GATEWAY,
+        MediaType.PLAIN_TEXT_UTF_8,
+        GATEWAY_REQUEST_PROCESSING_ERROR_RESPONSE);
   }
 
   private static HttpResponse payloadTooLargeResponse(String path, int maxRequestBytes) {
