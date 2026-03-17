@@ -15,10 +15,11 @@ The query service is a stateless service that contains no data. It executes the 
 The query service exposes an OpenSearch API over HTTP so existing UIs like Grafana and
 OpenSearch-compatible frontends can query the data in Astra.
 
-For OpenSearch Dashboards specifically, the architecture uses a
-gateway in front of Astra query. Dashboards sends all traffic to that gateway, which forwards
-user-index log/search requests to Astra and keeps Dashboards' own hidden-index metadata traffic on
-OpenSearch.
+For OpenSearch Dashboards specifically, the architecture uses a gateway in front of Astra query:
+
+* Dashboards sends all traffic to that gateway.
+* The gateway forwards user-index log/search requests to Astra.
+* The gateway keeps Dashboards' own hidden-index metadata traffic on OpenSearch.
 
 ### Search protocol
 
@@ -34,4 +35,3 @@ For every search request:
 ### Build & deploy
 Query nodes can safely be scaled up or down depending on query load, and require no special considerations around
 deployment speed or updating configurations.
-
