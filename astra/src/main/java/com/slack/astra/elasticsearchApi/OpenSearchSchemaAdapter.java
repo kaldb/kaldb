@@ -92,8 +92,32 @@ record RequestedFields(boolean matchAll, List<Pattern> patterns) {
   }
 
   private static Pattern globPattern(String fieldPattern) {
-    String regex =
-        "^" + Pattern.quote(fieldPattern).replace("\\Q*\\E", ".*").replace("\\Q?\\E", ".") + "$";
-    return Pattern.compile(regex);
+    StringBuilder regex = new StringBuilder("^");
+    StringBuilder literal = new StringBuilder();
+    for (int i = 0; i < fieldPattern.length(); i++) {
+      char c = fieldPattern.charAt(i);
+      switch (c) {
+        case '*' -> {
+          appendQuotedLiteral(regex, literal);
+          regex.append(".*");
+        }
+        case '?' -> {
+          appendQuotedLiteral(regex, literal);
+          regex.append(".");
+        }
+        default -> literal.append(c);
+      }
+    }
+    appendQuotedLiteral(regex, literal);
+    regex.append("$");
+    return Pattern.compile(regex.toString());
+  }
+
+  private static void appendQuotedLiteral(StringBuilder regex, StringBuilder literal) {
+    if (literal.length() == 0) {
+      return;
+    }
+    regex.append(Pattern.quote(literal.toString()));
+    literal.setLength(0);
   }
 }
