@@ -14,7 +14,7 @@ final class DashboardsGatewayRouting {
   static final String HEALTH_PATH = "/_astra/gateway/health";
   private static final String SECURITY_ACCOUNT_PATH = "/_plugins/_security/api/account";
   private static final Set<String> ASTRA_INDEX_APIS =
-      Set.of("_alias", "_field_caps", "_mapping", "_msearch", "_search");
+      Set.of("_alias", "_field_caps", "_mapping", "_search");
   private static final byte[] SECURITY_ACCOUNT_RESPONSE =
       """
       {"user_name":"admin","backend_roles":[],"roles":[],"tenants":{},"custom_attribute_names":[]}

@@ -20,10 +20,11 @@ class DashboardsGatewayRoutingTest {
   @Test
   void routesUserSearchesToAstra() {
     assertEquals(Upstream.ASTRA, ROUTING.selectUpstream("/test/_search"));
-    assertEquals(Upstream.ASTRA, ROUTING.selectUpstream("/test/_msearch"));
+    assertEquals(Upstream.OPENSEARCH, ROUTING.selectUpstream("/test/_msearch"));
     assertEquals(Upstream.ASTRA, ROUTING.selectUpstream("/*%3A*/_search"));
     // Root-level variants should also go to Astra
     assertEquals(Upstream.ASTRA, ROUTING.selectUpstream("/_search"));
+    assertEquals(Upstream.ASTRA, ROUTING.selectUpstream("/_msearch"));
     assertEquals(Upstream.ASTRA, ROUTING.selectUpstream("/_mapping"));
     assertEquals(Upstream.ASTRA, ROUTING.selectUpstream("/_alias"));
     assertEquals(Upstream.ASTRA, ROUTING.selectUpstream("/_alias/my-alias"));
