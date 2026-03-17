@@ -64,6 +64,17 @@ public class OpenSearchRequest {
   }
 
   private static class DateRangeQueryBuilderVistor implements QueryBuilderVisitor {
+    private static final QueryBuilderVisitor DISABLED_VISITOR =
+        new QueryBuilderVisitor() {
+          @Override
+          public void accept(QueryBuilder qb) {}
+
+          @Override
+          public QueryBuilderVisitor getChildVisitor(BooleanClause.Occur occur) {
+            return this;
+          }
+        };
+
     private int dateRangeCount;
     private Long dateRangeStart;
     private Long dateRangeEnd;
@@ -91,7 +102,10 @@ public class OpenSearchRequest {
 
     @Override
     public QueryBuilderVisitor getChildVisitor(BooleanClause.Occur occur) {
-      return this;
+      return switch (occur) {
+        case MUST, FILTER -> this;
+        case SHOULD, MUST_NOT -> DISABLED_VISITOR;
+      };
     }
   }
 

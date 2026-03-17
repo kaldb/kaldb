@@ -723,4 +723,82 @@ public class OpenSearchRequestTest {
     assertThat(request.getStartTimeEpochMs()).isEqualTo(0L);
     assertThat(request.getEndTimeEpochMs()).isEqualTo(MAX_TIME);
   }
+
+  @Test
+  public void testSingleShouldTimeRangeDoesNotSilentlyNarrowChunkSelection() throws Exception {
+    String searchBody =
+        """
+        {
+          "size": 5,
+          "query": {
+            "bool": {
+              "must": [
+                {
+                  "query_string": {
+                    "query": "level:ERROR"
+                  }
+                }
+              ],
+              "should": [
+                {
+                  "range": {
+                    "@timestamp": {
+                      "gte": "2026-03-10T12:00:00.000Z",
+                      "lte": "2026-03-10T13:00:00.000Z"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+        """;
+
+    OpenSearchRequest openSearchRequest = new OpenSearchRequest();
+    AstraSearch.SearchRequest request =
+        openSearchRequest.parseSingleSearchRequest("test", searchBody);
+
+    assertThat(request.getQuery())
+        .isEqualTo(OBJECT_MAPPER.readTree(searchBody).get("query").toString());
+    assertThat(request.getStartTimeEpochMs()).isEqualTo(0L);
+    assertThat(request.getEndTimeEpochMs()).isEqualTo(MAX_TIME);
+  }
+
+  @Test
+  public void testSingleMustNotTimeRangeDoesNotSilentlyNarrowChunkSelection() throws Exception {
+    String searchBody =
+        """
+        {
+          "size": 5,
+          "query": {
+            "bool": {
+              "must": [
+                {
+                  "match_all": {}
+                }
+              ],
+              "must_not": [
+                {
+                  "range": {
+                    "@timestamp": {
+                      "gte": "2026-03-10T12:00:00.000Z",
+                      "lte": "2026-03-10T13:00:00.000Z"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+        """;
+
+    OpenSearchRequest openSearchRequest = new OpenSearchRequest();
+    AstraSearch.SearchRequest request =
+        openSearchRequest.parseSingleSearchRequest("test", searchBody);
+
+    assertThat(request.getQuery())
+        .isEqualTo(OBJECT_MAPPER.readTree(searchBody).get("query").toString());
+    assertThat(request.getStartTimeEpochMs()).isEqualTo(0L);
+    assertThat(request.getEndTimeEpochMs()).isEqualTo(MAX_TIME);
+  }
 }
