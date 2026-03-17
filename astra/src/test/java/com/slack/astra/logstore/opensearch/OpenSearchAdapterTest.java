@@ -23,6 +23,7 @@ import org.apache.lucene.search.IndexSortSortedNumericDocValuesRangeQuery;
 import org.apache.lucene.search.MatchAllDocsQuery;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.util.BytesRef;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
@@ -38,10 +39,19 @@ import org.opensearch.search.aggregations.metrics.AvgAggregationBuilder;
 import org.opensearch.search.aggregations.metrics.InternalAvg;
 
 public class OpenSearchAdapterTest {
+  private static Tracing tracing;
 
   @BeforeAll
   public static void beforeAll() {
-    Tracing.newBuilder().build();
+    tracing = Tracing.newBuilder().build();
+  }
+
+  @AfterAll
+  public static void afterAll() {
+    if (tracing != null) {
+      tracing.close();
+      tracing = null;
+    }
   }
 
   @RegisterExtension
@@ -208,7 +218,7 @@ public class OpenSearchAdapterTest {
   }
 
   @Test
-  public void shouldReturnOnlyMatchingDatasetWhenQueryBuilderIsNull() throws Exception {
+  public void shouldFilterSearchResultsByDataset() throws Exception {
     long baseMicros = Instant.now().toEpochMilli() * 1000;
     logStoreAndSearcherRule.logStore.addMessage(
         SpanUtil.makeSpan("trace-1", "id-1", "", baseMicros, 100, "foo-span", "foo", "INFO"));
