@@ -1,3 +1,8 @@
+x-healthcheck-common: &healthcheck-common
+  interval: 5s
+  timeout: 5s
+  retries: 20
+
 services:
   zookeeper:
     image: zookeeper:3.9
@@ -60,9 +65,7 @@ services:
       - '9200:9200'
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:9200 >/dev/null || exit 1"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
+      <<: *healthcheck-common
       start_period: 10s
 
   opensearch_dashboards:
@@ -92,9 +95,7 @@ services:
       MAX_REQUEST_BYTES: '10485760'
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:9200/_astra/gateway/health >/dev/null || exit 1"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
+      <<: *healthcheck-common
       start_period: 5s
     depends_on:
       - astra_query
