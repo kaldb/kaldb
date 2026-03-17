@@ -117,6 +117,9 @@ public class OpenSearchRequest {
     // https://www.elastic.co/guide/en/elasticsearch/reference/current/search-multi-search.html#search-multi-search-api-desc
 
     List<String> lines = postBody.lines().toList();
+    if ((lines.size() & 1) != 0) {
+      throw new IllegalArgumentException("NDJSON body has an unmatched header line");
+    }
     List<AstraSearch.SearchRequest> searchRequests = new ArrayList<>(lines.size() / 2);
 
     for (int i = 0; i < lines.size(); i += 2) {
