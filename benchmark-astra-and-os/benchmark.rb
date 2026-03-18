@@ -263,14 +263,18 @@ iterations.times do |iteration|
         [timing, [failed, fail_message.join(', ')], raw_out]
       end
       # comparing results between astra and os:
-      _astra,_os = timings.map(&:last).map{|json|
-        JSON.parse(json).dig("responses", 0, "hits", "hits").
-           map {|hit| hit["_source"]["total_amount"]}.sort} rescue [[100],[100]]
-           # map {|hit|DateTime.parse hit["_source"]["dropoff_datetime"]}.sort}
-      # puts "no match astra: #{_astra.size} #{_astra} os: #{_os.size} #{_os}" if _astra != _os
+      _astra, _os = timings.map(&:last).map { |json|
+        parsed = JSON.parse(json) rescue nil
+        next nil unless parsed
+        hits = parsed.dig("responses", 0, "hits", "hits")
+        next nil unless hits
+        hits.map { |hit| hit["_source"]["total_amount"] }.sort
+      }
       stats << [name, *stat_output(count, timings, ->(c,o) {o})]
       print output_line count, timings, ->(c,o) { o }
-      if _astra != _os
+      if _astra.nil? || _os.nil?
+        puts " comparison skipped (parse error)"
+      elsif _astra != _os
         puts " no match astra: #{_astra.size} #{_astra.first}..#{_astra.last} os: #{_os.size} #{_os.first}..#{_os.last}"
       else
         puts
