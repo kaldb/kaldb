@@ -1,4 +1,4 @@
-#!/bin/zsh
+#!/usr/bin/env bash
 set -eu
 # Generate files to load into the bulk ingest APIs.
 # --------------------------------------------------

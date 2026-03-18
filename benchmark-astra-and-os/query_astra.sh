@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 set -eu
 
 curl -s --fail -X POST -H 'Content-Type: application/json' \
