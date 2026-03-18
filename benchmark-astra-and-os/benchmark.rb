@@ -195,7 +195,8 @@ current_time = Time.now
 Dir.mkdir("output") unless Dir.exist?("output")
 Dir.mkdir("output/#{current_time.strftime "%Y-%m-%d-%H-%M-%S"}") unless Dir.exist?("output/#{current_time.strftime "%Y-%m-%d-%H-%M-%S"}")
 
-iterations = ARGV.first.to_i || 1
+iterations = (ARGV.first || 1).to_i
+iterations = 1 if iterations <= 0
 iterations.times do |iteration|
   puts
   puts
