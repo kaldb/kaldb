@@ -265,7 +265,8 @@ public class Astra {
               .withRequestTimeout(requestTimeout)
               .withTracing(astraConfig.getTracingConfig())
               .withAnnotatedService(
-                  new ElasticsearchApiService(astraDistributedQueryService, astraConfig))
+                  new ElasticsearchApiService(
+                      astraDistributedQueryService, astraConfig, datasetMetadataStore))
               .withAnnotatedService(new ZipkinService(tf))
               .withAnnotatedService(new GraphService(tf, graphConfig, meterRegistry))
               .withGrpcService(astraDistributedQueryService)

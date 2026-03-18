@@ -26,6 +26,7 @@ class DashboardsGatewayRoutingTest {
     assertEquals(Upstream.ASTRA, ROUTING.selectUpstream("/_search"));
     assertEquals(Upstream.ASTRA, ROUTING.selectUpstream("/_msearch"));
     assertEquals(Upstream.ASTRA, ROUTING.selectUpstream("/_mapping"));
+    assertEquals(Upstream.ASTRA, ROUTING.selectUpstream("/_resolve/index/test"));
     assertEquals(Upstream.ASTRA, ROUTING.selectUpstream("/_alias"));
     assertEquals(Upstream.ASTRA, ROUTING.selectUpstream("/_alias/my-alias"));
     // Scroll contexts live in OpenSearch

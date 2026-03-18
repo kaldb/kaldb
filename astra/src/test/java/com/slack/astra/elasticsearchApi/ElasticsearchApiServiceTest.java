@@ -27,6 +27,8 @@ import com.slack.astra.bulkIngestApi.opensearch.BulkApiRequestParser;
 import com.slack.astra.chunkManager.IndexingChunkManager;
 import com.slack.astra.logstore.LogMessage;
 import com.slack.astra.logstore.search.AstraLocalQueryService;
+import com.slack.astra.metadata.dataset.DatasetMetadata;
+import com.slack.astra.metadata.dataset.DatasetMetadataStore;
 import com.slack.astra.metadata.schema.SchemaUtil;
 import com.slack.astra.proto.config.AstraConfigs;
 import com.slack.astra.proto.schema.Schema;
@@ -96,7 +98,9 @@ public class ElasticsearchApiServiceTest {
     chunkManagerUtil.chunkManager.awaitRunning(DEFAULT_START_STOP_DURATION);
     AstraLocalQueryService<LogMessage> searcher =
         new AstraLocalQueryService<>(chunkManagerUtil.chunkManager, Duration.ofSeconds(3));
-    elasticsearchApiService = new ElasticsearchApiService(searcher, DEFAULT_ASTRA_CONFIG);
+    elasticsearchApiService =
+        new ElasticsearchApiService(
+            searcher, DEFAULT_ASTRA_CONFIG, mock(DatasetMetadataStore.class));
   }
 
   @AfterEach
@@ -357,7 +361,7 @@ public class ElasticsearchApiServiceTest {
         OBJECT_MAPPER.convertValue(
             jsonNode.get("test").get("mappings").get("properties"), Map.class);
     assertThat(map).isNotNull();
-    assertThat(map.size()).isEqualTo(25);
+    assertThat(map.size()).isEqualTo(26);
   }
 
   // todo - test mapping
@@ -513,10 +517,13 @@ public class ElasticsearchApiServiceTest {
 
     // warmup to load OpenSearch plugins
     ElasticsearchApiService slowElasticsearchApiService =
-        new ElasticsearchApiService(slowSearcher, DEFAULT_ASTRA_CONFIG);
+        new ElasticsearchApiService(
+            slowSearcher, DEFAULT_ASTRA_CONFIG, mock(DatasetMetadataStore.class));
     slowElasticsearchApiService.multiSearch(postBody);
 
-    slowElasticsearchApiService = new ElasticsearchApiService(slowSearcher, DEFAULT_ASTRA_CONFIG);
+    slowElasticsearchApiService =
+        new ElasticsearchApiService(
+            slowSearcher, DEFAULT_ASTRA_CONFIG, mock(DatasetMetadataStore.class));
     HttpResponse response = slowElasticsearchApiService.multiSearch(postBody.repeat(100));
 
     // handle response
@@ -562,7 +569,8 @@ public class ElasticsearchApiServiceTest {
   public void testIndexMapping() throws IOException {
     AstraQueryServiceBase searcher = mock(AstraQueryServiceBase.class);
     ElasticsearchApiService serviceUnderTest =
-        new ElasticsearchApiService(searcher, DEFAULT_ASTRA_CONFIG);
+        new ElasticsearchApiService(
+            searcher, DEFAULT_ASTRA_CONFIG, mock(DatasetMetadataStore.class));
 
     Instant start = Instant.now();
     Instant end = start.plusSeconds(60);
@@ -621,7 +629,8 @@ public class ElasticsearchApiServiceTest {
   public void testClusterMetadataLooksLikeOpenSearch() throws Exception {
     AstraQueryServiceBase searcher = mock(AstraQueryServiceBase.class);
     ElasticsearchApiService serviceUnderTest =
-        new ElasticsearchApiService(searcher, DEFAULT_ASTRA_CONFIG);
+        new ElasticsearchApiService(
+            searcher, DEFAULT_ASTRA_CONFIG, mock(DatasetMetadataStore.class));
 
     AggregatedHttpResponse aggregatedRes = serviceUnderTest.clusterMetadata().aggregate().join();
     JsonNode jsonNode = OBJECT_MAPPER.readTree(aggregatedRes.content(StandardCharsets.UTF_8));
@@ -635,7 +644,8 @@ public class ElasticsearchApiServiceTest {
   public void testNodesInfoReturnsSingleCompatibleNode() throws Exception {
     AstraQueryServiceBase searcher = mock(AstraQueryServiceBase.class);
     ElasticsearchApiService serviceUnderTest =
-        new ElasticsearchApiService(searcher, DEFAULT_ASTRA_CONFIG);
+        new ElasticsearchApiService(
+            searcher, DEFAULT_ASTRA_CONFIG, mock(DatasetMetadataStore.class));
 
     AggregatedHttpResponse aggregatedRes = serviceUnderTest.nodesInfo().aggregate().join();
     JsonNode jsonNode = OBJECT_MAPPER.readTree(aggregatedRes.content(StandardCharsets.UTF_8));
@@ -650,7 +660,8 @@ public class ElasticsearchApiServiceTest {
   public void testFieldCapabilitiesUsesSchema() throws Exception {
     AstraQueryServiceBase searcher = mock(AstraQueryServiceBase.class);
     ElasticsearchApiService serviceUnderTest =
-        new ElasticsearchApiService(searcher, DEFAULT_ASTRA_CONFIG);
+        new ElasticsearchApiService(
+            searcher, DEFAULT_ASTRA_CONFIG, mock(DatasetMetadataStore.class));
 
     Instant start = Instant.now();
     Instant end = start.plusSeconds(60);
@@ -694,6 +705,67 @@ public class ElasticsearchApiServiceTest {
     assertThat(jsonNode.get("fields").get("@timestamp").has("date")).isTrue();
   }
 
+  @Test
+  public void testResolveIndexReturnsExactDatasetMatch() throws Exception {
+    AstraQueryServiceBase searcher = mock(AstraQueryServiceBase.class);
+    DatasetMetadataStore datasetMetadataStore = mock(DatasetMetadataStore.class);
+    when(datasetMetadataStore.listSync())
+        .thenReturn(
+            List.of(datasetMetadata("bar"), datasetMetadata("foo"), datasetMetadata("foo_logs")));
+    ElasticsearchApiService serviceUnderTest =
+        new ElasticsearchApiService(searcher, DEFAULT_ASTRA_CONFIG, datasetMetadataStore);
+
+    AggregatedHttpResponse aggregatedRes =
+        serviceUnderTest.resolveIndex(Optional.of("foo")).aggregate().join();
+    JsonNode jsonNode = OBJECT_MAPPER.readTree(aggregatedRes.content(StandardCharsets.UTF_8));
+
+    assertThat(aggregatedRes.status().code()).isEqualTo(200);
+    assertThat(jsonNode.get("indices")).hasSize(1);
+    assertThat(jsonNode.get("indices").get(0).get("name").asText()).isEqualTo("foo");
+    assertThat(jsonNode.get("indices").get(0).get("attributes")).hasSize(1);
+    assertThat(jsonNode.get("indices").get(0).get("attributes").get(0).asText()).isEqualTo("open");
+    assertThat(jsonNode.get("aliases")).isEmpty();
+    assertThat(jsonNode.get("data_streams")).isEmpty();
+  }
+
+  @Test
+  public void testResolveIndexReturnsEmptyForWildcardSelector() throws Exception {
+    AstraQueryServiceBase searcher = mock(AstraQueryServiceBase.class);
+    DatasetMetadataStore datasetMetadataStore = mock(DatasetMetadataStore.class);
+    when(datasetMetadataStore.listSync())
+        .thenReturn(
+            List.of(datasetMetadata("bar"), datasetMetadata("foo"), datasetMetadata("foo_logs")));
+    ElasticsearchApiService serviceUnderTest =
+        new ElasticsearchApiService(searcher, DEFAULT_ASTRA_CONFIG, datasetMetadataStore);
+
+    AggregatedHttpResponse aggregatedRes =
+        serviceUnderTest.resolveIndex(Optional.of("foo*")).aggregate().join();
+    JsonNode jsonNode = OBJECT_MAPPER.readTree(aggregatedRes.content(StandardCharsets.UTF_8));
+
+    assertThat(aggregatedRes.status().code()).isEqualTo(200);
+    assertThat(jsonNode.get("indices")).isEmpty();
+    assertThat(jsonNode.get("aliases")).isEmpty();
+    assertThat(jsonNode.get("data_streams")).isEmpty();
+  }
+
+  @Test
+  public void testResolveIndexReturnsEmptyWhenNoDatasetMatches() throws Exception {
+    AstraQueryServiceBase searcher = mock(AstraQueryServiceBase.class);
+    DatasetMetadataStore datasetMetadataStore = mock(DatasetMetadataStore.class);
+    when(datasetMetadataStore.listSync()).thenReturn(List.of(datasetMetadata("foo")));
+    ElasticsearchApiService serviceUnderTest =
+        new ElasticsearchApiService(searcher, DEFAULT_ASTRA_CONFIG, datasetMetadataStore);
+
+    AggregatedHttpResponse aggregatedRes =
+        serviceUnderTest.resolveIndex(Optional.of("bar")).aggregate().join();
+    JsonNode jsonNode = OBJECT_MAPPER.readTree(aggregatedRes.content(StandardCharsets.UTF_8));
+
+    assertThat(aggregatedRes.status().code()).isEqualTo(200);
+    assertThat(jsonNode.get("indices")).isEmpty();
+    assertThat(jsonNode.get("aliases")).isEmpty();
+    assertThat(jsonNode.get("data_streams")).isEmpty();
+  }
+
   private void addMessagesToChunkManager(List<Trace.Span> messages) throws IOException {
     IndexingChunkManager<LogMessage> chunkManager = chunkManagerUtil.chunkManager;
     int offset = 1;
@@ -706,5 +778,9 @@ public class ElasticsearchApiServiceTest {
 
   private static String readResource(String resourcePath) throws IOException {
     return Resources.toString(Resources.getResource(resourcePath), StandardCharsets.UTF_8);
+  }
+
+  private static DatasetMetadata datasetMetadata(String name) {
+    return new DatasetMetadata(name, "test-owner", 0, List.of(), name);
   }
 }

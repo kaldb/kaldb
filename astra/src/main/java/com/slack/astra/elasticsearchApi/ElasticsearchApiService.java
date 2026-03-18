@@ -22,6 +22,8 @@ import com.slack.astra.elasticsearchApi.searchResponse.HitsMetadata;
 import com.slack.astra.elasticsearchApi.searchResponse.SearchResponseHit;
 import com.slack.astra.elasticsearchApi.searchResponse.SearchResponseMetadata;
 import com.slack.astra.logstore.opensearch.OpenSearchInternalAggregation;
+import com.slack.astra.metadata.dataset.DatasetMetadata;
+import com.slack.astra.metadata.dataset.DatasetMetadataStore;
 import com.slack.astra.proto.config.AstraConfigs;
 import com.slack.astra.proto.service.AstraSearch;
 import com.slack.astra.server.AstraQueryServiceBase;
@@ -33,6 +35,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.StructuredTaskScope;
 import org.opensearch.search.aggregations.InternalAggregation;
@@ -58,15 +61,19 @@ public class ElasticsearchApiService {
   private final AstraQueryServiceBase searcher;
   private final CompatibilityMetadata compatibilityMetadata;
   private final OpenSearchSchemaAdapter openSearchSchemaAdapter;
+  private final DatasetMetadataStore datasetMetadataStore;
 
   private final OpenSearchRequest openSearchRequest = new OpenSearchRequest();
   private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
   public ElasticsearchApiService(
-      AstraQueryServiceBase searcher, AstraConfigs.AstraConfig astraConfig) {
+      AstraQueryServiceBase searcher,
+      AstraConfigs.AstraConfig astraConfig,
+      DatasetMetadataStore datasetMetadataStore) {
     this.searcher = searcher;
     this.openSearchSchemaAdapter = new OpenSearchSchemaAdapter(searcher);
     this.compatibilityMetadata = CompatibilityMetadata.fromConfig(astraConfig);
+    this.datasetMetadataStore = Objects.requireNonNull(datasetMetadataStore);
   }
 
   /** Returns metadata about the cluster */
@@ -302,6 +309,31 @@ public class ElasticsearchApiService {
         JsonUtil.writeAsString(Map.of(resolvedIndexName, Map.of("aliases", Map.of()))));
   }
 
+  /** Returns concrete index names for Dashboards data-view resolution */
+  @Get
+  @Path("/_resolve/index/:indexName")
+  public HttpResponse resolveIndex(@Param("indexName") Optional<String> indexName)
+      throws IOException {
+    List<ResolvedIndex> indices = indexName.map(this::resolveIndices).orElse(List.of());
+    return HttpResponse.of(
+        HttpStatus.OK,
+        MediaType.JSON_UTF_8,
+        JsonUtil.writeAsString(new ResolveIndexResponse(indices, List.of(), List.of())));
+  }
+
+  private List<ResolvedIndex> resolveIndices(String indexPattern) {
+    if (indexPattern.isBlank()) {
+      return List.of();
+    }
+
+    return datasetMetadataStore.listSync().stream()
+        .map(DatasetMetadata::getName)
+        .filter(indexPattern::equals)
+        .findFirst()
+        .map(name -> List.of(new ResolvedIndex(name, List.of("open"))))
+        .orElse(List.of());
+  }
+
   /** Returns field capabilities for data views */
   @Get
   @Blocking
@@ -446,6 +478,14 @@ public class ElasticsearchApiService {
   }
 
   private record SchemaTimeRange(long startTimeEpochMs, long endTimeEpochMs) {}
+
+  private record ResolveIndexResponse(
+      @JsonProperty("indices") List<ResolvedIndex> indices,
+      @JsonProperty("aliases") List<Object> aliases,
+      @JsonProperty("data_streams") List<Object> dataStreams) {}
+
+  private record ResolvedIndex(
+      @JsonProperty("name") String name, @JsonProperty("attributes") List<String> attributes) {}
 
   private record NodesInfoResponse(
       @JsonProperty("_nodes") NodeStats nodeStats,

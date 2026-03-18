@@ -58,6 +58,7 @@ final class DashboardsGatewayRouting {
         || path.startsWith("/_field_caps")
         || path.startsWith("/_search")
         || path.startsWith("/_mapping")
+        || path.startsWith("/_resolve/index")
         || path.equals("/_alias")
         || path.startsWith("/_alias/")) {
       return Upstream.ASTRA;
