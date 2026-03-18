@@ -8,6 +8,7 @@ bazel-*
 out/
 benchmarks/jmh-output/
 dependency-reduced-pom.xml
+.venv/
 
 # Mac
 .DS_STORE
