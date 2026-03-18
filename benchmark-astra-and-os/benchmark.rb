@@ -28,6 +28,100 @@ def run_jq jq_query, out
   end.strip
 end
 
+# Compare responses between Astra and OpenSearch, aware of known format differences.
+# Returns an array of mismatch descriptions (empty = all good).
+def compare_responses(astra_json, os_json, query_str, requested_size)
+  notes = []
+  if astra_json.nil? || os_json.nil?
+    notes << "comparison skipped (parse error)"
+    return notes
+  end
+
+  astra_resp = astra_json.dig("responses", 0)
+  os_resp = os_json.dig("responses", 0)
+  unless astra_resp && os_resp
+    notes << "comparison skipped (missing response)"
+    return notes
+  end
+
+  has_aggs = query_str.include?('"aggs"')
+  has_sort = query_str.include?('"sort"')
+
+  # Compare hit counts (both should return the requested size, or fewer if not enough docs)
+  astra_hit_ct = (astra_resp.dig("hits", "hits") || []).size
+  os_hit_ct = (os_resp.dig("hits", "hits") || []).size
+  if astra_hit_ct != os_hit_ct
+    notes << "hit count: astra=#{astra_hit_ct} os=#{os_hit_ct}"
+  end
+
+  # Compare hit documents only when there's an explicit sort order.
+  # Without explicit sort, Astra and OS return different documents (different default ordering).
+  if has_sort && requested_size > 0
+    astra_vals = (astra_resp.dig("hits", "hits") || []).map { |h| h.dig("_source", "total_amount") }
+    os_vals = (os_resp.dig("hits", "hits") || []).map { |h| h.dig("_source", "total_amount") }
+    if astra_vals != os_vals
+      notes << "sorted hits differ"
+    end
+  end
+
+  # Compare aggregation results
+  if has_aggs
+    astra_aggs = astra_resp["aggregations"]
+    os_aggs = os_resp["aggregations"]
+    if astra_aggs.nil? && os_aggs.nil?
+      # both nil, fine
+    elsif astra_aggs.nil? || os_aggs.nil?
+      notes << "aggs: #{ astra_aggs.nil? ? 'astra missing' : 'os missing' }"
+    else
+      agg_diffs = compare_aggs(astra_aggs, os_aggs)
+      notes.concat(agg_diffs) if agg_diffs.any?
+    end
+  end
+
+  notes
+end
+
+# Recursively compare aggregation structures.
+# Compares bucket counts and doc_counts; tolerates key ordering differences.
+def compare_aggs(astra_aggs, os_aggs)
+  diffs = []
+  # Find all aggregation names (top-level keys in the aggregation object)
+  all_keys = ((astra_aggs.keys rescue []) | (os_aggs.keys rescue [])).sort
+  all_keys.each do |key|
+    a = astra_aggs[key] rescue nil
+    o = os_aggs[key] rescue nil
+    if a.nil?
+      diffs << "agg '#{key}' missing from astra"
+      next
+    end
+    if o.nil?
+      diffs << "agg '#{key}' missing from os"
+      next
+    end
+
+    # Compare bucket counts
+    a_buckets = a["buckets"] if a.is_a?(Hash)
+    o_buckets = o["buckets"] if o.is_a?(Hash)
+    if a_buckets.is_a?(Array) && o_buckets.is_a?(Array)
+      if a_buckets.size != o_buckets.size
+        diffs << "agg '#{key}' bucket count: astra=#{a_buckets.size} os=#{o_buckets.size}"
+      else
+        # Compare doc_counts per bucket
+        a_buckets.zip(o_buckets).each_with_index do |(ab, ob), i|
+          a_dc = ab["doc_count"] rescue nil
+          o_dc = ob["doc_count"] rescue nil
+          if a_dc != o_dc
+            a_key = ab["key_as_string"] || ab["key"] rescue "?"
+            diffs << "agg '#{key}' bucket #{a_key}: doc_count astra=#{a_dc} os=#{o_dc}"
+            break # report first mismatch only
+          end
+        end
+      end
+    end
+  end
+  diffs
+end
+
 ports = { "astra" => 8080, "os" => 9200 }
 
 curls = { "astra" => "curl -s --fail -H 'Content-Type: application/json' \
@@ -263,21 +357,16 @@ iterations.times do |iteration|
         [timing, [failed, fail_message.join(', ')], raw_out]
       end
       # comparing results between astra and os:
-      _astra, _os = timings.map(&:last).map { |json|
-        parsed = JSON.parse(json) rescue nil
-        next nil unless parsed
-        hits = parsed.dig("responses", 0, "hits", "hits")
-        next nil unless hits
-        hits.map { |hit| hit["_source"]["total_amount"] }.sort
+      parsed_responses = timings.map(&:last).map { |json|
+        JSON.parse(json) rescue nil
       }
       stats << [name, *stat_output(count, timings, ->(c,o) {o})]
       print output_line count, timings, ->(c,o) { o }
-      if _astra.nil? || _os.nil?
-        puts " comparison skipped (parse error)"
-      elsif _astra != _os
-        puts " no match astra: #{_astra.size} #{_astra.first}..#{_astra.last} os: #{_os.size} #{_os.first}..#{_os.last}"
-      else
+      comparison_notes = compare_responses(parsed_responses[0], parsed_responses[1], query, count)
+      if comparison_notes.empty?
         puts
+      else
+        puts " #{comparison_notes.join('; ')}"
       end
     end
   end
