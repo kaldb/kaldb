@@ -122,11 +122,14 @@ def compare_aggs(astra_aggs, os_aggs)
   diffs
 end
 
-ports = { "astra" => 8080, "os" => 9200 }
+ports = { "astra" => ENV.fetch("ASTRA_QUERY_PORT", "8080").to_i,
+          "os" => ENV.fetch("OS_PORT", "9200").to_i }
+os_scheme = ENV.fetch("OS_SCHEME", "https")
+os_auth = os_scheme == "https" ? "-ku admin:$OS_PW" : ""
 
 curls = { "astra" => "curl -s --fail -H 'Content-Type: application/json' \
   'http://localhost:#{ports["astra"]}/_msearch' --data-binary ",
-          "os" => "curl -s --fail -ku admin:$OS_PW 'https://localhost:#{ports["os"]}/_msearch' \
+          "os" => "curl -s --fail #{os_auth} '#{os_scheme}://localhost:#{ports["os"]}/_msearch' \
   -H 'Content-Type: application/json' --data-binary "
 }
 
