@@ -1,6 +1,6 @@
 services:
   zookeeper:
-    image: 'bitnami/zookeeper:3.6.3'
+    image: 'zookeeper:3.9'
     container_name: dep_zookeeper
     ports:
       - '2181:2181'
@@ -8,7 +8,7 @@ services:
       - ALLOW_ANONYMOUS_LOGIN=yes
 
   kafka:
-    image: 'bitnami/kafka:3.2.3'
+    image: 'bitnamilegacy/kafka:3.2.3'
     container_name: dep_kafka
     ports:
       - '9092:9092'
@@ -110,8 +110,8 @@ services:
       - NODE_ROLES=INDEX
       - ASTRA_INDEX_SERVER_ADDRESS=astra_index
       - INDEXER_MAX_MESSAGES_PER_CHUNK=165346700
-      - INDEXER_MAX_BYTES_PER_CHUNK=800000000
-      - INDEXER_MAX_TIME_PER_CHUNK_SECONDS=120
+      - INDEXER_MAX_BYTES_PER_CHUNK=80000000000
+      - INDEXER_MAX_TIME_PER_CHUNK_SECONDS=36000
       - ASTRA_INDEX_REQUEST_TIMEOUT_MS=4200000
       - ASTRA_INDEX_DEFAULT_QUERY_TIMEOUT_MS=3600000
       # Shared settings
