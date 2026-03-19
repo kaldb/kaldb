@@ -21,7 +21,9 @@ import com.slack.astra.elasticsearchApi.searchResponse.HitsMetadata;
 import com.slack.astra.elasticsearchApi.searchResponse.SearchResponseHit;
 import com.slack.astra.elasticsearchApi.searchResponse.SearchResponseMetadata;
 import com.slack.astra.logstore.LogMessage;
+import com.slack.astra.logstore.opensearch.AstraBigArrays;
 import com.slack.astra.logstore.opensearch.OpenSearchInternalAggregation;
+import com.slack.astra.logstore.opensearch.ScriptServiceProvider;
 import com.slack.astra.logstore.search.SearchResultUtils;
 import com.slack.astra.metadata.schema.FieldType;
 import com.slack.astra.proto.service.AstraSearch;
@@ -38,6 +40,7 @@ import java.util.Optional;
 import java.util.TreeMap;
 import java.util.concurrent.StructuredTaskScope;
 import org.opensearch.search.aggregations.InternalAggregation;
+import org.opensearch.search.aggregations.pipeline.PipelineAggregator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -163,6 +166,16 @@ public class ElasticsearchApiService {
     InternalAggregation internalAggregations =
         OpenSearchInternalAggregation.fromByteArray(byteInput.toByteArray());
     if (internalAggregations != null) {
+      // Apply final reduction at the HTTP boundary so auto_date_histogram buckets
+      // get coarsened to the requested target count.
+      InternalAggregation.ReduceContext reduceContext =
+          InternalAggregation.ReduceContext.forFinalReduction(
+              AstraBigArrays.getInstance(),
+              ScriptServiceProvider.getInstance(),
+              (s) -> {},
+              PipelineAggregator.PipelineTree.EMPTY);
+      internalAggregations =
+          internalAggregations.reduce(List.of(internalAggregations), reduceContext);
       return objectMapper.readTree(internalAggregations.toString());
     }
     return null;
