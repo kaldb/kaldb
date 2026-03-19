@@ -103,9 +103,6 @@ public class LogIndexSearcherImpl implements LogIndexSearcher<LogMessage> {
 
     ensureNonEmptyString(dataset, "dataset should be a non-empty string");
     ensureTrue(howMany >= 0, "hits requested should not be negative.");
-    ensureTrue(
-        howMany > 0 || aggregatorFactoriesBuilder != null,
-        "Hits or aggregation should be requested.");
 
     ScopedSpan span = Tracing.currentTracer().startScopedSpan("LogIndexSearcherImpl.search");
     span.tag("dataset", dataset);
