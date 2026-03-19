@@ -254,9 +254,13 @@ queries = {
 }
 
 stats = []
-stats << [:name, :count, :astra_ms, :astra_asterisk, :astra_asterisk_why, :os_ms, :os_asterisk, :os_asterisk_why]
+stats << [:name, :count, :astra_ms, :astra_asterisk, :astra_asterisk_why, :os_ms, :os_asterisk, :os_asterisk_why, :comparison_notes]
 
-def color_code ratio
+def color_code ratio, mismatch: false
+  if mismatch
+    # gray background with "!" to indicate results didn't match — ratio is unreliable
+    return "\033[97;90m!#{ratio.round(2).to_s.ljust(4)}\033[0m"
+  end
   # red 41
   # green 42
   num = if ratio == 1
@@ -283,9 +287,11 @@ at_exit do
   puts "#{" "*56}size #{stats_group_by.values.find{|v|v}.map{|r|r[1]}.uniq.map(&:to_s).map{|i|i.sub(/000$/,'k').rjust 5}.join()}"
 
   stats_group_by.each do |name, rows|
-    rows = rows.group_by{|r|r[1]}.map {|count, rows| r = rows[0]; [r[0], r[1], rows.map{|x|x[2]}.sum.to_f/rows.size, r[3], r[4], rows.map{|x|x[5]}.sum.to_f/rows.size, r[6], r[7]]}.sort_by{|r|r[1]}
-    puts "#{name.to_s.ljust 60} #{rows.map{|r|color_code(r[2].to_f / r[5])}.join ''}"
+    rows = rows.group_by{|r|r[1]}.map {|count, rows| r = rows[0]; [r[0], r[1], rows.map{|x|x[2]}.sum.to_f/rows.size, r[3], r[4], rows.map{|x|x[5]}.sum.to_f/rows.size, r[6], r[7], rows.any?{|x|x[8]&.any?}]}.sort_by{|r|r[1]}
+    puts "#{name.to_s.ljust 60} #{rows.map{|r|color_code(r[2].to_f / r[5], mismatch: r[8])}.join ''}"
   end
+  puts
+  puts "Legend: ratio = astra_ms/os_ms. >1 = OS faster (red), <1 = Astra faster (green), ! = results differ (ratio unreliable)"
 end
 
 current_time = Time.now
@@ -363,9 +369,9 @@ iterations.times do |iteration|
       parsed_responses = timings.map(&:last).map { |json|
         JSON.parse(json) rescue nil
       }
-      stats << [name, *stat_output(count, timings, ->(c,o) {o})]
-      print output_line count, timings, ->(c,o) { o }
       comparison_notes = compare_responses(parsed_responses[0], parsed_responses[1], query, count)
+      stats << [name, *stat_output(count, timings, ->(c,o) {o}), comparison_notes]
+      print output_line count, timings, ->(c,o) { o }
       if comparison_notes.empty?
         puts
       else
