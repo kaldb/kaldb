@@ -310,7 +310,7 @@ def verify_resolve_exact_only(dashboards_url: str, index_name: str) -> None:
 def ingest_smoke_fixture(smoke_run_id: str) -> None:
     run_repo_command(
         [str(SCRIPT_DIR / "ingest-ui-smoke-fixture.sh")],
-        env={"SMOKE_RUN_ID": smoke_run_id},
+        env={"SMOKE_RUN_ID": smoke_run_id, "USE_DOCKER_EXEC": "1"},
     )
 
 

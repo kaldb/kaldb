@@ -142,14 +142,14 @@ docker exec dep_kafka kafka-topics.sh \
   --bootstrap-server localhost:9092 || true
 
 # CreateDatasetMetadata
-echo "🧩 Creating dataset metadata via Manager API..."
+echo "🧩 Creating exact-match dataset metadata via Manager API..."
 curl -sS -XPOST \
   -H 'content-type: application/json; charset=utf-8; protocol=gRPC' \
   'http://localhost:8083/slack.proto.astra.ManagerApiService/CreateDatasetMetadata' \
   -d '{
     "name": "test",
     "owner": "test@email.com",
-    "serviceNamePattern": "_all"
+    "serviceNamePattern": "test"
   }' || echo "CreateDatasetMetadata may have already been applied."
 
 # UpdatePartitionAssignment
