@@ -10,6 +10,7 @@ set -euo pipefail
 #
 # Options:
 #   --index NAME   Target index name
+#   --skip-build   Skip local Docker image builds
 #   --skip-up      Skip docker compose startup/recreate steps
 #   --help         Show this help message
 # ---------------------------------------------------------------------------
@@ -18,12 +19,14 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 INDEX="${INDEX:-nyc_taxis_demo_$(date -u +%Y%m%d_%H%M%S)}"
+SKIP_BUILD=false
 SKIP_UP=false
 
 while [[ $# -gt 0 ]]; do
   case $1 in
     --index)   INDEX="$2"; shift 2 ;;
     --index=*) INDEX="${1#*=}"; shift ;;
+    --skip-build) SKIP_BUILD=true; shift ;;
     --skip-up) SKIP_UP=true; shift ;;
     --help)
       cat <<'EOF'
@@ -35,6 +38,7 @@ Usage:
 
 Options:
   --index NAME   Target index name
+  --skip-build   Skip local Docker image builds
   --skip-up      Skip docker compose startup/recreate steps
   --help         Show this help message
 EOF
@@ -79,6 +83,14 @@ wait_for_http() {
 }
 
 if [[ "$SKIP_UP" != "true" ]]; then
+  if [[ "$SKIP_BUILD" != "true" ]]; then
+    echo "Building local Astra image ..."
+    (cd "$REPO_DIR" && docker build -t slackhq/astra .)
+
+    echo "Building local dashboards gateway image ..."
+    (cd "$REPO_DIR" && docker build -t kaldb/dashboards-gateway:local -f contrib/dashboards-gateway.Dockerfile .)
+  fi
+
   echo "Starting local demo stack ..."
   (cd "$REPO_DIR" && docker compose up -d)
 

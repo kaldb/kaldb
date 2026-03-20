@@ -12,6 +12,7 @@ bash scripts/run-nyc-taxi-demo.sh
 
 That wrapper:
 
+- builds the local `slackhq/astra` and `kaldb/dashboards-gateway:local` images
 - starts the local stack
 - recreates the indexer so the one-chunk setting is definitely active
 - ingests the taxi data into a fresh timestamped index name by default
