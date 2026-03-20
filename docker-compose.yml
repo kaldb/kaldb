@@ -130,7 +130,7 @@ services:
       - ASTRA_ZK_CONNECTION_STRING=zookeeper:2181
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
       - ZIPKIN_TRACING_ENDPOINT=http://openzipkin:9411/api/v2/spans
-      - S3_ENDPOINT=http://dep_s3:9090
+      - S3_ENDPOINT=http://s3:9090
     depends_on:
       - zookeeper
       - kafka
@@ -146,11 +146,15 @@ services:
       # Node specific settings
       - NODE_ROLES=INDEX
       - ASTRA_INDEX_SERVER_ADDRESS=astra_index
+      - INDEXER_MAX_MESSAGES_PER_CHUNK=${INDEXER_MAX_MESSAGES_PER_CHUNK:-1000000}
+      - INDEXER_MAX_BYTES_PER_CHUNK=${INDEXER_MAX_BYTES_PER_CHUNK:-1000000000}
+      - INDEXER_MAX_TIME_PER_CHUNK_SECONDS=${INDEXER_MAX_TIME_PER_CHUNK_SECONDS:-86400}
+      - INDEXER_CREATE_RECOVERY_TASKS_ON_START=false
       # Shared settings
       - ASTRA_ZK_CONNECTION_STRING=zookeeper:2181
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
       - ZIPKIN_TRACING_ENDPOINT=http://openzipkin:9411/api/v2/spans
-      - S3_ENDPOINT=http://dep_s3:9090
+      - S3_ENDPOINT=http://s3:9090
     depends_on:
       - astra_preprocessor
     networks:
@@ -171,7 +175,7 @@ services:
       - ASTRA_ZK_CONNECTION_STRING=zookeeper:2181
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
       - ZIPKIN_TRACING_ENDPOINT=http://openzipkin:9411/api/v2/spans
-      - S3_ENDPOINT=http://dep_s3:9090
+      - S3_ENDPOINT=http://s3:9090
     depends_on:
       - astra_preprocessor
 
@@ -189,7 +193,7 @@ services:
       - ASTRA_ZK_CONNECTION_STRING=zookeeper:2181
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
       - ZIPKIN_TRACING_ENDPOINT=http://openzipkin:9411/api/v2/spans
-      - S3_ENDPOINT=http://dep_s3:9090
+      - S3_ENDPOINT=http://s3:9090
     depends_on:
       - astra_preprocessor
     networks:
@@ -210,7 +214,7 @@ services:
       - ASTRA_ZK_CONNECTION_STRING=zookeeper:2181
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
       - ZIPKIN_TRACING_ENDPOINT=http://openzipkin:9411/api/v2/spans
-      - S3_ENDPOINT=http://dep_s3:9090
+      - S3_ENDPOINT=http://s3:9090
     depends_on:
       - astra_preprocessor
 
@@ -227,7 +231,7 @@ services:
       - ASTRA_ZK_CONNECTION_STRING=zookeeper:2181
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
       - ZIPKIN_TRACING_ENDPOINT=http://openzipkin:9411/api/v2/spans
-      - S3_ENDPOINT=http://dep_s3:9090
+      - S3_ENDPOINT=http://s3:9090
     depends_on:
       - astra_preprocessor
 

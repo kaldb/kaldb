@@ -68,24 +68,24 @@ default_search_source() {
 
 SEARCH_SOURCE="$(default_search_source)"
 
-# --- Trips over time (date histogram) ---
-log "  trips over time ..."
+# --- Trips over time (hourly date histogram) ---
+log "  trips by hour ..."
 VIS="$(jq -nc '{
-  title: "Trips over time",
+  title: "Trips by hour",
   type: "line",
   params: {
     addLegend: true, addTooltip: true, legendPosition: "right",
-    categoryAxes: [{id:"cat1",type:"category",position:"bottom",show:true,style:{},scale:{type:"linear"},labels:{show:true,truncate:100},title:{text:"Date"}}],
+    categoryAxes: [{id:"cat1",type:"category",position:"bottom",show:true,style:{},scale:{type:"linear"},labels:{show:true,truncate:100},title:{text:"Hour"}}],
     valueAxes: [{id:"val1",name:"Count",type:"value",position:"left",show:true,style:{},scale:{type:"linear",mode:"normal"},labels:{show:true},title:{text:"Trip count"}}],
     seriesParams: [{show:true,type:"line",mode:"normal",data:{id:"1",label:"Count"},valueAxis:"val1",drawLinesBetweenPoints:true,showCircles:false}],
     grid:{categoryLines:false}
   },
   aggs: [
     {id:"1",enabled:true,type:"count",schema:"metric",params:{}},
-    {id:"2",enabled:true,type:"date_histogram",schema:"segment",params:{field:"@timestamp",interval:"1d",min_doc_count:1}}
+    {id:"2",enabled:true,type:"date_histogram",schema:"segment",params:{field:"@timestamp",interval:"1h",min_doc_count:1}}
   ]
 }')"
-post_saved_object "visualization" "nyc-trips-over-time" "$(make_vis "Trips over time" "$VIS" "$SEARCH_SOURCE")"
+post_saved_object "visualization" "nyc-trips-over-time" "$(make_vis "Trips by hour" "$VIS" "$SEARCH_SOURCE")"
 
 # --- Fare by payment type (bar chart) ---
 log "  fare by payment type ..."
@@ -149,30 +149,30 @@ VIS="$(jq -nc '{
 }')"
 post_saved_object "visualization" "nyc-tip-by-rate-code" "$(make_vis "Avg tip by rate code" "$VIS" "$SEARCH_SOURCE")"
 
-# --- Trip distance over time (line, avg per day) ---
-log "  avg trip distance over time ..."
+# --- Trip distance over time (line, avg per hour) ---
+log "  avg trip distance by hour ..."
 VIS="$(jq -nc '{
-  title: "Avg trip distance over time",
+  title: "Avg trip distance by hour",
   type: "line",
   params: {addLegend:true,addTooltip:true,legendPosition:"right",
-    categoryAxes:[{id:"cat1",type:"category",position:"bottom",show:true,style:{},scale:{type:"linear"},labels:{show:true,truncate:100},title:{text:"Date"}}],
+    categoryAxes:[{id:"cat1",type:"category",position:"bottom",show:true,style:{},scale:{type:"linear"},labels:{show:true,truncate:100},title:{text:"Hour"}}],
     valueAxes:[{id:"val1",name:"Distance",type:"value",position:"left",show:true,style:{},scale:{type:"linear",mode:"normal"},labels:{show:true},title:{text:"Avg distance (mi)"}}],
     seriesParams:[{show:true,type:"line",mode:"normal",data:{id:"1",label:"Avg distance"},valueAxis:"val1",drawLinesBetweenPoints:true,showCircles:false}],
     grid:{categoryLines:false}},
   aggs: [
     {id:"1",enabled:true,type:"avg",schema:"metric",params:{field:"trip_distance"}},
-    {id:"2",enabled:true,type:"date_histogram",schema:"segment",params:{field:"@timestamp",interval:"1w",min_doc_count:1}}
+    {id:"2",enabled:true,type:"date_histogram",schema:"segment",params:{field:"@timestamp",interval:"1h",min_doc_count:1}}
   ]
 }')"
-post_saved_object "visualization" "nyc-distance-over-time" "$(make_vis "Avg trip distance over time" "$VIS" "$SEARCH_SOURCE")"
+post_saved_object "visualization" "nyc-distance-over-time" "$(make_vis "Avg trip distance by hour" "$VIS" "$SEARCH_SOURCE")"
 
 # ---- 3. Saved search (raw log browser) ----
 log "  raw trip log search ..."
 post_saved_object "search" "nyc-raw-trips" "$(jq -nc --arg idx "$INDEX" '{
   attributes: {
     title: "NYC Taxi Trips (raw)",
-    description: "Browse individual taxi trip records",
-    columns: ["pickup_datetime","dropoff_datetime","passenger_count","trip_distance","fare_amount","tip_amount","total_amount","payment_type","vendor_id"],
+    description: "Browse individual taxi trip records in the synthetic recent timeline",
+    columns: ["@timestamp","pickup_datetime","dropoff_datetime","passenger_count","trip_distance","fare_amount","tip_amount","total_amount","payment_type","vendor_id"],
     sort: [["@timestamp","desc"]],
     kibanaSavedObjectMeta: {
       searchSourceJSON: "{\"query\":{\"query\":\"\",\"language\":\"lucene\"},\"filter\":[],\"indexRefName\":\"kibanaSavedObjectMeta.searchSourceJSON.index\"}"
@@ -201,13 +201,13 @@ post_saved_object "dashboard" "nyc-taxi-demo" "$(jq -nc \
   '{
     attributes: {
       title: "NYC Taxi Trips",
-      description: "Demo dashboard for NYC taxi trip data (2015)",
+      description: "Demo dashboard for NYC taxi trip data remapped into the current day window with a short future buffer",
       hits: 0,
       optionsJSON: "{\"useMargins\":true,\"hidePanelTitles\":false}",
       panelsJSON: $panels,
       timeRestore: true,
-      timeTo: "2015-12-31T23:59:59Z",
-      timeFrom: "2015-01-01T00:00:00Z",
+      timeTo: "now+1h",
+      timeFrom: "now/d",
       kibanaSavedObjectMeta: {
         searchSourceJSON: "{\"query\":{\"query\":\"\",\"language\":\"lucene\"},\"filter\":[]}"
       }
@@ -230,11 +230,11 @@ Done! Dashboard links:
   Raw trip search:        $DASHBOARDS_URL/app/discover#/view/nyc-raw-trips
 
 Panels:
-  1. Trips over time           (daily count)
+  1. Trips by hour             (hourly count)
   2. Avg fare by payment type  (bar chart)
   3. Trips by passenger count  (pie chart)
   4. Total revenue by vendor   (horizontal bar)
   5. Avg tip by rate code      (table with distance & total)
-  6. Avg trip distance / week  (line chart)
+  6. Avg trip distance / hour  (line chart)
   7. Raw trip records           (saved search)
 EOF
