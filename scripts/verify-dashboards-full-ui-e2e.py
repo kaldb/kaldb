@@ -326,6 +326,7 @@ def ingest_smoke_fixture(
             "SMOKE_RUN_ID": smoke_run_id,
             "TARGET_INDEX_NAME": dataset_name,
             "NOISE_INDEX_NAME": noise_dataset_name,
+            "USE_DOCKER_EXEC": "1"
         },
     )
 

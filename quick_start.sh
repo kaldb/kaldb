@@ -106,13 +106,16 @@ else
 fi
 
 # ------------------------------------------------------------------------------
-# Step 3. Build Astra image if necessary
+# Step 3. Build local images if necessary
 # ------------------------------------------------------------------------------
 if [ "$CLEAN_BUILD" = true ]; then
   echo "🔨 Building Astra Docker image..."
   docker build -t slackhq/astra --label astra-demo=true .
+  echo "🔨 Rebuilding Dashboards gateway image..."
+  docker compose build astra_dashboards_gateway
 else
   echo "⚡ Using existing Astra Docker image (run with --clean to rebuild)."
+  echo "⚡ Using existing Dashboards gateway image (run with --clean to rebuild)."
 fi
 
 # ------------------------------------------------------------------------------
@@ -139,14 +142,14 @@ docker exec dep_kafka kafka-topics.sh \
   --bootstrap-server localhost:9092 || true
 
 # CreateDatasetMetadata
-echo "🧩 Creating dataset metadata via Manager API..."
+echo "🧩 Creating exact-match dataset metadata via Manager API..."
 curl -sS -XPOST \
   -H 'content-type: application/json; charset=utf-8; protocol=gRPC' \
   'http://localhost:8083/slack.proto.astra.ManagerApiService/CreateDatasetMetadata' \
   -d '{
     "name": "test",
     "owner": "test@email.com",
-    "serviceNamePattern": "_all"
+    "serviceNamePattern": "test"
   }' || echo "CreateDatasetMetadata may have already been applied."
 
 # UpdatePartitionAssignment
