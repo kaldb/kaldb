@@ -324,6 +324,7 @@ def ingest_smoke_fixture(
         [str(SCRIPT_DIR / "ingest-ui-smoke-fixture.sh")],
         env={
             "SMOKE_RUN_ID": smoke_run_id,
+            "USE_DOCKER_EXEC": "1",
             "TARGET_INDEX_NAME": dataset_name,
             "NOISE_INDEX_NAME": noise_dataset_name,
         },

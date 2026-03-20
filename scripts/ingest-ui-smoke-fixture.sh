@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-USE_DOCKER_EXEC="${USE_DOCKER_EXEC:-0}"
+DEFAULT_USE_DOCKER_EXEC=0
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  DEFAULT_USE_DOCKER_EXEC=1
+fi
+USE_DOCKER_EXEC="${USE_DOCKER_EXEC:-$DEFAULT_USE_DOCKER_EXEC}"
 SMOKE_RUN_ID="${SMOKE_RUN_ID:-ui-smoke-$(date -u +%s)-$$}"
 TARGET_INDEX_NAME="${TARGET_INDEX_NAME:-test}"
 NOISE_INDEX_NAME="${NOISE_INDEX_NAME:-ui-test}"
@@ -27,7 +31,21 @@ run_curl() {
 
 iso_at_offset() {
   local offset_secs="$1"
-  date -u -d "@$(($(date -u +%s) + offset_secs))" '+%Y-%m-%dT%H:%M:%SZ'
+  local epoch_secs
+  epoch_secs="$(($(date -u +%s) + offset_secs))"
+
+  if date -u -r "$epoch_secs" '+%Y-%m-%dT%H:%M:%SZ' >/dev/null 2>&1; then
+    date -u -r "$epoch_secs" '+%Y-%m-%dT%H:%M:%SZ'
+    return
+  fi
+
+  if date -u -d "@$epoch_secs" '+%Y-%m-%dT%H:%M:%SZ' >/dev/null 2>&1; then
+    date -u -d "@$epoch_secs" '+%Y-%m-%dT%H:%M:%SZ'
+    return
+  fi
+
+  echo "ERROR: unable to format UTC timestamp for epoch $epoch_secs" >&2
+  exit 1
 }
 
 write_fixture() {
