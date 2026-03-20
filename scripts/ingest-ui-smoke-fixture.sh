@@ -3,6 +3,8 @@ set -euo pipefail
 
 USE_DOCKER_EXEC="${USE_DOCKER_EXEC:-0}"
 SMOKE_RUN_ID="${SMOKE_RUN_ID:-ui-smoke-$(date -u +%s)-$$}"
+TARGET_INDEX_NAME="${TARGET_INDEX_NAME:-test}"
+NOISE_INDEX_NAME="${NOISE_INDEX_NAME:-ui-test}"
 TMP_TEST_FIXTURE=""
 TMP_UI_TEST_FIXTURE=""
 
@@ -87,10 +89,12 @@ Usage:
 Environment:
   USE_DOCKER_EXEC=1   Send the bulk request through the Dashboards container.
   SMOKE_RUN_ID=...    Override the generated smoke fixture id.
+  TARGET_INDEX_NAME=...  Override the target dataset/index name (default: test).
+  NOISE_INDEX_NAME=...   Override the noise dataset/index name (default: ui-test).
 
 What it writes:
-  - 2 docs to index test
-  - 2 docs to index ui-test
+  - 2 docs to the target dataset/index
+  - 2 docs to the noise dataset/index
 
 Each document includes:
   - @timestamp
@@ -109,7 +113,7 @@ EOF
 
   write_fixture \
     "$TMP_TEST_FIXTURE" \
-    "test" \
+    "$TARGET_INDEX_NAME" \
     "test-ui-1-$SMOKE_RUN_ID" \
     "test-ui-2-$SMOKE_RUN_ID" \
     "Test dataset log one" \
@@ -125,7 +129,7 @@ EOF
 
   write_fixture \
     "$TMP_UI_TEST_FIXTURE" \
-    "ui-test" \
+    "$NOISE_INDEX_NAME" \
     "ui-test-ui-1-$SMOKE_RUN_ID" \
     "ui-test-ui-2-$SMOKE_RUN_ID" \
     "UI test dataset log one" \

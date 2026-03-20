@@ -118,6 +118,16 @@ def parse_args() -> argparse.Namespace:
         default="",
         help="Optional fixed smoke_run id for the fixture",
     )
+    parser.add_argument(
+        "--dataset-name",
+        default="test",
+        help="Exact dataset/index name used for the main Dashboards data view (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--noise-dataset-name",
+        default="ui-test",
+        help="Exact dataset/index name used for noise/leakage checks (default: %(default)s)",
+    )
     return parser.parse_args()
 
 
@@ -307,10 +317,16 @@ def verify_resolve_exact_only(dashboards_url: str, index_name: str) -> None:
         )
 
 
-def ingest_smoke_fixture(smoke_run_id: str) -> None:
+def ingest_smoke_fixture(
+    smoke_run_id: str, dataset_name: str, noise_dataset_name: str
+) -> None:
     run_repo_command(
         [str(SCRIPT_DIR / "ingest-ui-smoke-fixture.sh")],
-        env={"SMOKE_RUN_ID": smoke_run_id},
+        env={
+            "SMOKE_RUN_ID": smoke_run_id,
+            "TARGET_INDEX_NAME": dataset_name,
+            "NOISE_INDEX_NAME": noise_dataset_name,
+        },
     )
 
 
@@ -318,7 +334,7 @@ def gateway_search(index_name: str, body: dict[str, object]) -> dict[str, object
     return run_gateway_command(f"/{index_name}/_search", body=body, method="POST")
 
 
-def wait_for_gateway_hits(smoke_run_id: str) -> None:
+def wait_for_gateway_hits(smoke_run_id: str, dataset_name: str) -> None:
     body = {
         "size": 5,
         "query": {
@@ -332,17 +348,19 @@ def wait_for_gateway_hits(smoke_run_id: str) -> None:
         "sort": [{"@timestamp": {"order": "desc"}}],
     }
     for _ in range(30):
-        response = gateway_search("test", body)
+        response = gateway_search(dataset_name, body)
         total = int(
             response.get("hits", {}).get("total", {}).get("value", 0)  # type: ignore[union-attr]
         )
         if total >= 2:
             return
         time.sleep(2)
-    raise RuntimeError("Fixture never became searchable through the Dashboards gateway")
+    raise RuntimeError(
+        f"Fixture never became searchable through the Dashboards gateway for {dataset_name!r}"
+    )
 
 
-def verify_gateway_behavior(smoke_run_id: str) -> None:
+def verify_gateway_behavior(smoke_run_id: str, dataset_name: str) -> None:
     query_body = {
         "size": 5,
         "query": {
@@ -355,21 +373,25 @@ def verify_gateway_behavior(smoke_run_id: str) -> None:
         },
         "sort": [{"@timestamp": {"order": "desc"}}],
     }
-    response = gateway_search("test", query_body)
+    response = gateway_search(dataset_name, query_body)
     hits = response.get("hits", {}).get("hits", [])
     total = int(response.get("hits", {}).get("total", {}).get("value", 0))  # type: ignore[union-attr]
     unique_indices = sorted({hit.get("_index") for hit in hits if isinstance(hit, dict)})
     if total < 2:
-        raise RuntimeError(f"Expected at least 2 gateway hits for test, got {total}")
-    if unique_indices != ["test"]:
-        raise RuntimeError(f"Expected only test docs through gateway, got {unique_indices}")
+        raise RuntimeError(
+            f"Expected at least 2 gateway hits for {dataset_name!r}, got {total}"
+        )
+    if unique_indices != [dataset_name]:
+        raise RuntimeError(
+            f"Expected only {dataset_name!r} docs through gateway, got {unique_indices}"
+        )
 
     agg_body = {
         "size": 0,
         "query": query_body["query"],
         "aggs": {"levels": {"terms": {"field": "level", "size": 10}}},
     }
-    agg_response = gateway_search("test", agg_body)
+    agg_response = gateway_search(dataset_name, agg_body)
     buckets = agg_response.get("aggregations", {}).get("levels", {}).get("buckets", [])
     simplified = [
         {"key": bucket.get("key"), "doc_count": bucket.get("doc_count")}
@@ -379,7 +401,7 @@ def verify_gateway_behavior(smoke_run_id: str) -> None:
     expected = [{"key": "ERROR", "doc_count": 1}, {"key": "INFO", "doc_count": 1}]
     if simplified != expected:
         raise RuntimeError(
-            f"Expected test terms(level) buckets {expected}, got {simplified}"
+            f"Expected {dataset_name!r} terms(level) buckets {expected}, got {simplified}"
         )
 
 
@@ -629,6 +651,9 @@ def main() -> int:
     args = parse_args()
     smoke_run_id = args.smoke_run_id or f"dashboards-ui-e2e-{int(time.time())}"
 
+    if args.dataset_name == args.noise_dataset_name:
+        raise RuntimeError("--dataset-name and --noise-dataset-name must be different")
+
     if args.clean:
         args.start = True
 
@@ -645,18 +670,18 @@ def main() -> int:
     if dashboards_status(args.dashboards_url) not in {"green", "available"}:
         raise RuntimeError("Dashboards is not green")
 
-    ensure_exact_dataset(args.manager_url, "test", args.owner)
-    ensure_exact_dataset(args.manager_url, "ui-test", args.owner)
-    verify_resolve_exact_only(args.dashboards_url, "test")
+    ensure_exact_dataset(args.manager_url, args.dataset_name, args.owner)
+    ensure_exact_dataset(args.manager_url, args.noise_dataset_name, args.owner)
+    verify_resolve_exact_only(args.dashboards_url, args.dataset_name)
 
     log(f"Ingesting smoke fixture with smoke_run {smoke_run_id!r}")
-    ingest_smoke_fixture(smoke_run_id)
-    wait_for_gateway_hits(smoke_run_id)
-    verify_gateway_behavior(smoke_run_id)
+    ingest_smoke_fixture(smoke_run_id, args.dataset_name, args.noise_dataset_name)
+    wait_for_gateway_hits(smoke_run_id, args.dataset_name)
+    verify_gateway_behavior(smoke_run_id, args.dataset_name)
 
     run_index_pattern_creation_workflow(
         dashboards_url=args.dashboards_url,
-        index_pattern="test",
+        index_pattern=args.dataset_name,
         time_field="@timestamp",
         delete_existing=True,
         headless=args.headless,
@@ -670,9 +695,11 @@ def main() -> int:
         logger=lambda message: log(f"data-view: {message}"),
     )
 
-    matches = find_index_patterns(args.dashboards_url, "test")
+    matches = find_index_patterns(args.dashboards_url, args.dataset_name)
     if len(matches) != 1:
-        raise RuntimeError(f"Expected exactly one Dashboards data view titled 'test', got {len(matches)}")
+        raise RuntimeError(
+            f"Expected exactly one Dashboards data view titled {args.dataset_name!r}, got {len(matches)}"
+        )
     data_view_id = matches[0]["id"]
     log(f"Using Dashboards data view id {data_view_id}")
 
@@ -694,7 +721,10 @@ def main() -> int:
         wait = selenium["WebDriverWait"](driver, args.timeout_seconds)
         log("Opening Discover with the UI-created data view")
         assert_discover_ui(driver, args.dashboards_url, data_view_id, smoke_run_id, wait)
-        log("Discover UI showed the expected test logs without ui-test leakage")
+        log(
+            "Discover UI showed the expected target logs without "
+            f"{args.noise_dataset_name!r} leakage"
+        )
         log("Opening dashboard backed by the UI-created data view")
         assert_dashboard_ui(driver, args.dashboards_url, dashboard_id, wait)
         log("Dashboard UI showed the expected aggregation results")
