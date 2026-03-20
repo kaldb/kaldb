@@ -106,13 +106,16 @@ else
 fi
 
 # ------------------------------------------------------------------------------
-# Step 3. Build Astra image if necessary
+# Step 3. Build local images if necessary
 # ------------------------------------------------------------------------------
 if [ "$CLEAN_BUILD" = true ]; then
   echo "🔨 Building Astra Docker image..."
   docker build -t slackhq/astra --label astra-demo=true .
+  echo "🔨 Rebuilding Dashboards gateway image..."
+  docker compose build astra_dashboards_gateway
 else
   echo "⚡ Using existing Astra Docker image (run with --clean to rebuild)."
+  echo "⚡ Using existing Dashboards gateway image (run with --clean to rebuild)."
 fi
 
 # ------------------------------------------------------------------------------
