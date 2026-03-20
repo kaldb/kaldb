@@ -2,6 +2,21 @@
 
 This note explains the demo-related changes in the repo and what problem each one solves.
 
+## Quick start
+
+For a customer-facing setup, the simplest path is now:
+
+```bash
+bash scripts/run-nyc-taxi-demo.sh
+```
+
+That wrapper:
+
+- starts the local stack
+- recreates the indexer so the one-chunk setting is definitely active
+- ingests the taxi data into a fresh timestamped index name by default
+- creates the Dashboards saved objects against that index
+
 ## Current demo path
 
 The current preferred demo path is:
@@ -18,27 +33,7 @@ Why this path:
 - It avoids the rollover/S3/cache machinery entirely for the demo.
 - It removes most of the Astra-side code churn.
 
-## Change 1: Historical timestamp validation
-
-File:
-
-- `astra/src/main/java/com/slack/astra/writer/SpanFormatter.java`
-
-What it was:
-
-- A separate committed experiment in `9e4f65af` widened Astra's "too far in the past" guard from 7 days to 20 years.
-
-Why it existed:
-
-- The original taxi docs are from January 2015.
-- Without rewriting those timestamps, Astra would replace them with `Instant.now()`.
-
-Status now:
-
-- Not required for the current demo path because the ingest script rewrites `@timestamp` into a recent one-day window.
-- The commit still exists in history, but it is no longer part of the preferred solution.
-
-## Change 2: Historical partition fix
+## Change 1: Historical partition fix
 
 Files that were touched during an abandoned path:
 
@@ -56,7 +51,7 @@ Status now:
 - Removed from the worktree.
 - Not needed for the current demo path because the ingested timestamps are rewritten into the recent window after dataset creation.
 
-## Change 3: S3 custom endpoint fix
+## Change 2: S3 custom endpoint fix
 
 Files that were touched during an abandoned path:
 
@@ -72,7 +67,7 @@ Status now:
 - Removed from the worktree.
 - Not needed for the current demo path because the demo stays on the live indexer chunk and does not depend on rollover.
 
-## Change 4: Demo compose settings
+## Change 3: Demo compose settings
 
 File:
 
@@ -98,7 +93,7 @@ Status:
 
 - Kept.
 
-## Change 5: Ingest script cleanup
+## Change 4: Ingest script cleanup
 
 File:
 
