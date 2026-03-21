@@ -253,7 +253,7 @@ query_time_filtered_state() {
 
 get_dataset_state() {
   local response
-  response="$(manager_post_json "slack.proto.astra.ManagerApiService/ListDatasetMetadata" '{}')"
+  response="$(manager_post_json "slack.proto.astra.ManagerApiService/ListDatasetMetadata" '{}')" || return 1
   python3 -c '
 import json
 import sys
@@ -302,11 +302,16 @@ wait_for_time_filtered_query() {
 # ---- Inspect the input file ----
 raw_total_lines=$(gunzip -c "$DATA_FILE" | wc -l)
 IFS='|' read -r total_lines total_docs SOURCE_START_ISO SOURCE_END_ISO <<<"$(dataset_stream_summary)"
-readarray -t timeline_parts < <(build_recent_timeline)
-DEST_START_MS="${timeline_parts[0]}"
-DEST_END_MS="${timeline_parts[1]}"
-QUERY_TIME_FROM="${timeline_parts[2]}"
-QUERY_TIME_TO="${timeline_parts[3]}"
+{
+  IFS= read -r DEST_START_MS
+  IFS= read -r DEST_END_MS
+  IFS= read -r QUERY_TIME_FROM
+  IFS= read -r QUERY_TIME_TO
+} < <(build_recent_timeline)
+if [[ -z "${DEST_START_MS:-}" || -z "${DEST_END_MS:-}" || -z "${QUERY_TIME_FROM:-}" || -z "${QUERY_TIME_TO:-}" ]]; then
+  echo "ERROR: failed to compute the recent demo timeline." >&2
+  exit 1
+fi
 batch_lines=$(( BATCH_SIZE * 2 ))
 total_batches=$(( (total_lines + batch_lines - 1) / batch_lines ))
 if [[ -z "$EXPECTED_VISIBLE_DOCS" ]]; then

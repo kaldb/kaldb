@@ -66,7 +66,17 @@ default_search_source() {
   jq -nc '{query:{query:"",language:"lucene"},filter:[],indexRefName:"kibanaSavedObjectMeta.searchSourceJSON.index"}'
 }
 
+dashboard_search_source() {
+  jq -nc '{query:{query:"",language:"lucene"},filter:[]}'
+}
+
+dashboard_options_json() {
+  jq -nc '{useMargins:true,hidePanelTitles:false}'
+}
+
 SEARCH_SOURCE="$(default_search_source)"
+DASHBOARD_SEARCH_SOURCE="$(dashboard_search_source)"
+DASHBOARD_OPTIONS_JSON="$(dashboard_options_json)"
 
 # --- Trips over time (hourly date histogram) ---
 log "  trips by hour ..."
@@ -168,14 +178,14 @@ post_saved_object "visualization" "nyc-distance-over-time" "$(make_vis "Avg trip
 
 # ---- 3. Saved search (raw log browser) ----
 log "  raw trip log search ..."
-post_saved_object "search" "nyc-raw-trips" "$(jq -nc --arg idx "$INDEX" '{
+post_saved_object "search" "nyc-raw-trips" "$(jq -nc --arg idx "$INDEX" --arg search_source "$SEARCH_SOURCE" '{
   attributes: {
     title: "NYC Taxi Trips (raw)",
     description: "Browse individual taxi trip records in the synthetic recent timeline",
     columns: ["@timestamp","pickup_datetime","dropoff_datetime","passenger_count","trip_distance","fare_amount","tip_amount","total_amount","payment_type","vendor_id"],
     sort: [["@timestamp","desc"]],
     kibanaSavedObjectMeta: {
-      searchSourceJSON: "{\"query\":{\"query\":\"\",\"language\":\"lucene\"},\"filter\":[],\"indexRefName\":\"kibanaSavedObjectMeta.searchSourceJSON.index\"}"
+      searchSourceJSON: $search_source
     }
   },
   references: [
@@ -198,18 +208,20 @@ PANELS_JSON='[
 
 post_saved_object "dashboard" "nyc-taxi-demo" "$(jq -nc \
   --arg panels "$PANELS_JSON" \
+  --arg options_json "$DASHBOARD_OPTIONS_JSON" \
+  --arg search_source "$DASHBOARD_SEARCH_SOURCE" \
   '{
     attributes: {
       title: "NYC Taxi Trips",
       description: "Demo dashboard for NYC taxi trip data remapped into the current day window with a short future buffer",
       hits: 0,
-      optionsJSON: "{\"useMargins\":true,\"hidePanelTitles\":false}",
+      optionsJSON: $options_json,
       panelsJSON: $panels,
       timeRestore: true,
       timeTo: "now+1h",
       timeFrom: "now/d",
       kibanaSavedObjectMeta: {
-        searchSourceJSON: "{\"query\":{\"query\":\"\",\"language\":\"lucene\"},\"filter\":[]}"
+        searchSourceJSON: $search_source
       }
     },
     references: [
