@@ -388,7 +388,7 @@ public class ManagerApiGrpcTest {
     assertThat(firstAssignment.getPartitionConfigsList().get(0).getPartitionsList())
         .isEqualTo(List.of("1", "2"));
     assertThat(firstAssignment.getPartitionConfigsList().get(0).getStartTimeEpochMs())
-        .isGreaterThanOrEqualTo(nowMs);
+        .isEqualTo(1L);
     assertThat(firstAssignment.getPartitionConfigsList().get(0).getEndTimeEpochMs())
         .isEqualTo(MAX_TIME);
 

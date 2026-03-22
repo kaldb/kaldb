@@ -87,10 +87,10 @@ managerConfig:
   replicaCreationServiceConfig:
     schedulePeriodMins: ${ASTRA_MANAGER_REPLICAS_PERIOD_MINS:-15}
     replicaLifespanMins: ${ASTRA_MANAGER_REPLICA_LIFESPAN_MINS:-1440}
-    replicaSets: [${ASTRA_MANAGER_REPLICA_SETS:-rep1}]
+    replicaSets: [${ASTRA_MANAGER_CREATION_REPLICA_SETS:-rep1}]
   replicaAssignmentServiceConfig:
     schedulePeriodMins: ${ASTRA_MANAGER_CACHE_SLOT_PERIOD_MINS:-15}
-    replicaSets: [${ASTRA_MANAGER_REPLICA_SETS:-rep1}]
+    replicaSets: [${ASTRA_MANAGER_ASSIGNMENT_REPLICA_SETS:-rep1}]
     maxConcurrentPerNode: ${ASTRA_MANAGER_MAX_CONCURRENT_ASSIGNMENTS_PER_NODE:-2}
   replicaEvictionServiceConfig:
     schedulePeriodMins: ${ASTRA_MANAGER_REPLICA_EVICT_PERIOD_MINS:-15}
@@ -105,12 +105,12 @@ managerConfig:
     schedulePeriodMins: ${ASTRA_MANAGER_REPLICA_RESTORE_PERIOD_MINS:-15}
     maxReplicasPerRequest: ${ASTRA_MANAGER_REPLICA_RESTORE_MAX_REPLICAS_PER_REQUEST:-200}
     replicaLifespanMins: ${ASTRA_MANAGER_REPLICA_RESTORE_LIFESPAN_MINS:-60}
-    replicaSets: [${ASTRA_MANAGER_REPLICA_SETS:-rep1}]
+    replicaSets: [${ASTRA_MANAGER_RESTORE_REPLICA_SETS:-rep1}]
   cacheNodeSearchabilityServiceConfig:
     schedulePeriodMins: ${ASTRA_MANAGER_SEARCHABILITY_PERIOD_MINS:-1}
   cacheNodeAssignmentServiceConfig:
     schedulePeriodMins: ${ASTRA_MANAGER_ASSIGNMENT_PERIOD_MINS:-15}
-    replicaSets: [${ASTRA_MANAGER_REPLICA_SETS:-rep1}]
+    replicaSets: [${ASTRA_MANAGER_ASSIGNMENT_REPLICA_SETS:-rep1}]
     maxConcurrentPerNode: ${ASTRA_MANAGER_MAX_CONCURRENT_ASSIGNMENTS_PER_NODE:-2}
   clusterMonitorServiceConfig:
     schedulePeriodMins: ${ASTRA_MANAGER_CLUSTER_MONITOR_PERIOD_MINS:-15}

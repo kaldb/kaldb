@@ -42,6 +42,7 @@ import org.slf4j.LoggerFactory;
  */
 public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplBase {
   private static final Logger LOG = LoggerFactory.getLogger(ManagerApiGrpc.class);
+  private static final long INITIAL_PARTITION_START_TIME_EPOCH_MS = 1L;
   private final DatasetMetadataStore datasetMetadataStore;
   private final SnapshotMetadataStore snapshotMetadataStore;
   public static final long MAX_TIME = Long.MAX_VALUE;
@@ -328,7 +329,8 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
    * Returns a new list of dataset partition metadata, with the provided partition IDs as the
    * current active assignment. This finds the current active assignment (end time of max long),
    * sets it to the current time, and then appends a new dataset partition assignment starting from
-   * current time + 1 to max long.
+   * current time + 1 to max long. The first ever partition assignment starts at epoch 1 so
+   * historical backfills remain queryable and restorable.
    */
   private static ImmutableList<DatasetPartitionMetadata> addNewPartition(
       List<DatasetPartitionMetadata> existingPartitions, List<String> newPartitionIdsList) {
@@ -369,8 +371,12 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
       builder.add(updatedPreviousActivePartition);
     }
 
+    long newPartitionStartTime =
+        previousActiveDatasetPartition.isPresent() || !remainingDatasetPartitions.isEmpty()
+            ? partitionCutoverTime + 1
+            : INITIAL_PARTITION_START_TIME_EPOCH_MS;
     DatasetPartitionMetadata newPartitionMetadata =
-        new DatasetPartitionMetadata(partitionCutoverTime + 1, MAX_TIME, newPartitionIdsList);
+        new DatasetPartitionMetadata(newPartitionStartTime, MAX_TIME, newPartitionIdsList);
     return builder.add(newPartitionMetadata).build();
   }
 

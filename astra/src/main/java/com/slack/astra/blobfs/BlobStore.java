@@ -7,6 +7,7 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Objects;
@@ -36,9 +37,7 @@ import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.services.s3.paginators.ListObjectsV2Publisher;
 import software.amazon.awssdk.transfer.s3.S3TransferManager;
-import software.amazon.awssdk.transfer.s3.model.CompletedDirectoryDownload;
 import software.amazon.awssdk.transfer.s3.model.CompletedDirectoryUpload;
-import software.amazon.awssdk.transfer.s3.model.DownloadDirectoryRequest;
 import software.amazon.awssdk.transfer.s3.model.DownloadRequest;
 import software.amazon.awssdk.transfer.s3.model.UploadDirectoryRequest;
 
@@ -116,32 +115,28 @@ public class BlobStore {
     assert !destinationDirectory.toFile().exists() || destinationDirectory.toFile().isDirectory();
 
     try {
-      CompletedDirectoryDownload download =
-          transferManager
-              .downloadDirectory(
-                  DownloadDirectoryRequest.builder()
-                      .bucket(bucketName)
-                      .destination(destinationDirectory)
-                      .listObjectsV2RequestTransformer(l -> l.prefix(prefix))
-                      .build())
-              .completionFuture()
-              .get();
+      Files.createDirectories(destinationDirectory);
+      List<String> objectKeys = listFiles(prefix);
+      for (String objectKey : objectKeys) {
+        String relativePath =
+            objectKey.startsWith(prefix + "/")
+                ? objectKey.substring(prefix.length() + 1)
+                : objectKey.substring(prefix.length());
+        if (relativePath.isEmpty()) {
+          continue;
+        }
 
-      if (!download.failedTransfers().isEmpty()) {
-        // Log each failed transfer with its exception
-        download
-            .failedTransfers()
-            .forEach(
-                failedFileUpload ->
-                    LOG.error(
-                        "Error attempting to download file from S3", failedFileUpload.exception()));
-
-        throw new IllegalStateException(
-            String.format(
-                "Some files failed to download - failed to download %s files.",
-                download.failedTransfers().size()));
+        Path destinationPath = destinationDirectory.resolve(relativePath);
+        if (destinationPath.getParent() != null) {
+          Files.createDirectories(destinationPath.getParent());
+        }
+        s3AsyncClient
+            .getObject(
+                GetObjectRequest.builder().bucket(bucketName).key(objectKey).build(),
+                AsyncResponseTransformer.toFile(destinationPath))
+            .get();
       }
-    } catch (ExecutionException | InterruptedException e) {
+    } catch (IOException | ExecutionException | InterruptedException e) {
       throw new RuntimeException(e);
     }
   }

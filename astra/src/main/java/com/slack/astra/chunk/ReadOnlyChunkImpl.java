@@ -470,15 +470,22 @@ public class ReadOnlyChunkImpl<T> implements Chunk<T> {
       SearchMetadataStore searchMetadataStore,
       SearchContext cacheSearchContext,
       String snapshotName) {
-    CacheNodeMetadata cacheNodeMetadata =
-        this.cacheNodeMetadataStore.getSync(getCacheNodeAssignment().cacheNodeId);
+    boolean searchable = true;
+    CacheNodeAssignment cacheNodeAssignment = getCacheNodeAssignment();
+    if (cacheNodeAssignment != null) {
+      CacheNodeMetadata cacheNodeMetadata =
+          this.cacheNodeMetadataStore.getSync(cacheNodeAssignment.cacheNodeId);
+      if (cacheNodeMetadata != null && cacheNodeMetadata.searchable != null) {
+        searchable = cacheNodeMetadata.searchable;
+      }
+    }
     SearchMetadata metadata =
         new SearchMetadata(
             SearchMetadata.generateSearchContextSnapshotId(
                 snapshotName, cacheSearchContext.hostname),
             snapshotName,
             cacheSearchContext.toUrl(),
-            cacheNodeMetadata.searchable);
+            searchable);
     searchMetadataStore.createSync(metadata);
     return metadata;
   }
