@@ -28,12 +28,51 @@ post_saved_object() {
 
 log() { printf '%s\n' "$*"; }
 
+urlencode() {
+  jq -rn --arg value "$1" '$value|@uri'
+}
+
+fetch_index_pattern_fields() {
+  local encoded_index encoded_meta_fields
+
+  encoded_index="$(urlencode "$INDEX")"
+  encoded_meta_fields="$(jq -rn '["_source","_id","_type","_index","_score"]|@json|@uri')"
+
+  curl -sS \
+    -H 'osd-xsrf: true' \
+    "$DASHBOARDS_URL/api/index_patterns/_fields_for_wildcard?pattern=$encoded_index&meta_fields=$encoded_meta_fields" \
+    | jq -c '
+        .fields
+        | map(
+            . + {
+              count: 0,
+              scripted: false
+            }
+          )
+      '
+}
+
+require_index_pattern_field() {
+  local fields_json="$1"
+  local field_name="$2"
+
+  printf '%s' "$fields_json" \
+    | jq -e --arg field_name "$field_name" 'any(.[]; .name == $field_name)' >/dev/null
+}
+
 # ---- 1. Index pattern ----
 log "Creating index pattern '$INDEX' ..."
-post_saved_object "index-pattern" "$INDEX" "$(jq -nc --arg idx "$INDEX" '{
+INDEX_PATTERN_FIELDS="$(fetch_index_pattern_fields)"
+if ! require_index_pattern_field "$INDEX_PATTERN_FIELDS" "fare_amount"; then
+  echo "ERROR: Dashboards did not resolve the expected field 'fare_amount' for index '$INDEX'." >&2
+  exit 1
+fi
+
+post_saved_object "index-pattern" "$INDEX" "$(jq -nc --arg idx "$INDEX" --arg fields "$INDEX_PATTERN_FIELDS" '{
   attributes: {
     title: $idx,
-    timeFieldName: "@timestamp"
+    timeFieldName: "@timestamp",
+    fields: $fields
   }
 }')"
 
