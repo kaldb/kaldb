@@ -17,6 +17,7 @@ import com.linecorp.armeria.server.brave.BraveService;
 import com.linecorp.armeria.server.docs.DocService;
 import com.linecorp.armeria.server.encoding.DecodingService;
 import com.linecorp.armeria.server.encoding.EncodingService;
+import com.linecorp.armeria.server.file.FileService;
 import com.linecorp.armeria.server.grpc.GrpcService;
 import com.linecorp.armeria.server.grpc.GrpcServiceBuilder;
 import com.linecorp.armeria.server.healthcheck.HealthCheckService;
@@ -120,6 +121,18 @@ public class ArmeriaService extends AbstractIdleService {
         spanHandlers.add(AsyncZipkinSpanHandler.create(sender));
       }
 
+      return this;
+    }
+
+    public Builder withStaticFiles(String urlPrefix, String classpathPrefix) {
+      if (urlPrefix == null || !urlPrefix.startsWith("/")) {
+        throw new IllegalArgumentException("urlPrefix must start with '/'");
+      }
+      if (classpathPrefix == null || classpathPrefix.contains("..")) {
+        throw new IllegalArgumentException("Invalid classpathPrefix");
+      }
+      serverBuilder.serviceUnder(
+          urlPrefix, FileService.of(ClassLoader.getSystemClassLoader(), classpathPrefix));
       return this;
     }
 

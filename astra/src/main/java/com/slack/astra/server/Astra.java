@@ -363,6 +363,7 @@ public class Astra {
                       snapshotMetadataStore,
                       replicaRestoreService,
                       fieldRedactionMetadataStore))
+              .withStaticFiles("/admin", "admin-ui/")
               .build();
       services.add(armeriaService);
 

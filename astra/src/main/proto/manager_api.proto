@@ -13,6 +13,8 @@ service ManagerApiService {
   rpc GetDatasetMetadata(GetDatasetMetadataRequest) returns (DatasetMetadata) {}
   // ListDatasets returns all available datasets from the metadata store
   rpc ListDatasetMetadata(ListDatasetMetadataRequest) returns (ListDatasetMetadataResponse) {}
+  // DeleteDataset deletes an existing dataset by name
+  rpc DeleteDatasetMetadata(DeleteDatasetMetadataRequest) returns (DatasetMetadata) {}
 
   // UpdatePartitionAssignment allocates a new partition assignment for a dataset. If a rate and a list of
   // partition_ids are provided, it will use it use the list of partition ids as the current allocation
@@ -62,6 +64,12 @@ message UpdateDatasetMetadataRequest {
 
 // GetDatasetMetadataRequest represents a request to fetch an existing dataset
 message GetDatasetMetadataRequest {
+  // Must be an exact string name match
+  string name = 1;
+}
+
+// DeleteDatasetMetadataRequest represents a request to delete an existing dataset
+message DeleteDatasetMetadataRequest {
   // Must be an exact string name match
   string name = 1;
 }
