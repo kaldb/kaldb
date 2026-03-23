@@ -15,7 +15,7 @@ set -euo pipefail
 #   ./quick-start.sh --clean   # Full rebuild from scratch
 #
 # After you're done, you can clean everything up with:
-#   ./clean-astra.sh
+#   ./clean-demo.sh
 # ------------------------------------------------------------------------------
 
 # ------------------------------------------------------------------------------
@@ -75,7 +75,7 @@ for arg in "$@"; do
       echo "  ./quick-start.sh --clean   # Full rebuild from scratch"
       echo ""
       echo "To clean up everything afterwards:"
-      echo "  ./clean-astra.sh"
+      echo "  ./clean-demo.sh"
       echo ""
       exit 0
       ;;
@@ -176,5 +176,5 @@ echo "   - Dashboards:   http://localhost:5601"
 echo ""
 echo "To ingest sample data, use the _bulk example in docs/topics/Getting-started.md"
 echo "or run tools/loadgen directly."
-echo "To stop and remove everything, run: ./clean-astra.sh"
+echo "To stop and remove everything, run: ./clean-demo.sh"
 echo ""

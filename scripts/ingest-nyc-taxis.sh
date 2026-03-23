@@ -18,7 +18,8 @@ set -euo pipefail
 # one-day window, and sends the result to the preprocessor bulk API in batches.
 #
 # Prerequisites:
-#   - Astra stack running (preprocessor on port 8086, manager on 8083)
+#   - Astra stack running (preprocessor on port 8086, indexer on 8080,
+#     manager on 8083, query on 8081)
 # ---------------------------------------------------------------------------
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -30,9 +31,12 @@ INDEX="${INDEX:-nyc_taxis}"
 BULK_URL="${BULK_URL:-http://localhost:8086/_bulk}"
 MANAGER_URL="${MANAGER_URL:-http://localhost:8083}"
 QUERY_URL="${QUERY_URL:-http://localhost:8081}"
+INDEXER_URL="${INDEXER_URL:-http://localhost:8080}"
 EXPECTED_VISIBLE_DOCS="${EXPECTED_VISIBLE_DOCS:-}"
 QUERY_READY_ATTEMPTS="${QUERY_READY_ATTEMPTS:-90}"
 DEST_END_BUFFER_MINS="${DEST_END_BUFFER_MINS:-30}"
+PRE_INGEST_STABILITY_CHECKS="${PRE_INGEST_STABILITY_CHECKS:-3}"
+PRE_INGEST_STABILITY_SLEEP_SECS="${PRE_INGEST_STABILITY_SLEEP_SECS:-2}"
 DRY_RUN=false
 
 while [[ $# -gt 0 ]]; do
@@ -213,6 +217,61 @@ manager_post_json() {
   return 1
 }
 
+health_ready_once() {
+  local url="$1"
+  local response=""
+
+  response="$(curl -fsS "$url" 2>/dev/null || true)"
+  [[ "$response" == *'"healthy":true'* ]]
+}
+
+query_is_astra_once() {
+  local response=""
+
+  response="$(curl -fsS "$QUERY_URL/" 2>/dev/null || true)"
+  [[ "$response" == *'"build_type":"astra"'* ]]
+}
+
+bulk_endpoint_health_url() {
+  printf '%s/health\n' "${BULK_URL%/_bulk}"
+}
+
+require_stable_ingest_dependencies() {
+  local checks="${1:-$PRE_INGEST_STABILITY_CHECKS}"
+  local sleep_secs="${2:-$PRE_INGEST_STABILITY_SLEEP_SECS}"
+  local bulk_health_url
+  local check_num
+
+  bulk_health_url="$(bulk_endpoint_health_url)"
+  for check_num in $(seq 1 "$checks"); do
+    health_ready_once "$bulk_health_url" || {
+      echo "ERROR: bulk target '$BULK_URL' does not resolve to a healthy Astra preprocessor endpoint." >&2
+      echo "  expected health URL: $bulk_health_url" >&2
+      return 1
+    }
+    health_ready_once "$MANAGER_URL/health" || {
+      echo "ERROR: manager is not healthy at $MANAGER_URL/health" >&2
+      return 1
+    }
+    health_ready_once "$INDEXER_URL/health" || {
+      echo "ERROR: indexer is not healthy at $INDEXER_URL/health" >&2
+      return 1
+    }
+    health_ready_once "$QUERY_URL/health" || {
+      echo "ERROR: query is not healthy at $QUERY_URL/health" >&2
+      return 1
+    }
+    query_is_astra_once || {
+      echo "ERROR: query endpoint '$QUERY_URL' does not identify as Astra." >&2
+      return 1
+    }
+
+    if (( check_num < checks )); then
+      sleep "$sleep_secs"
+    fi
+  done
+}
+
 query_match_all_state() {
   curl -sS -H 'Content-Type: application/json' -X POST "$QUERY_URL/$INDEX/_search" --data-binary @- <<'EOF' \
     | python3 -c 'import json,sys; payload=json.load(sys.stdin); buckets=payload.get("aggregations",{}).get("per_day",{}).get("buckets",[]); total=sum(bucket.get("doc_count",0) for bucket in buckets); print(f"{payload.get("_shards",{}).get("total",0)}|{total}")'
@@ -323,6 +382,11 @@ if [[ "$DRY_RUN" == "true" ]]; then
   stream_ndjson | head -20
   exit 0
 fi
+
+echo "Verifying Astra ingest path before sending data ..."
+require_stable_ingest_dependencies
+echo "  bulk target:  $BULK_URL"
+echo "  query target: $QUERY_URL"
 
 # ---- Ensure the dataset exists ----
 echo "Ensuring dataset '$INDEX' exists ..."
