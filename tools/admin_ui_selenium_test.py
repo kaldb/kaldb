@@ -24,6 +24,7 @@ import sys
 import time
 from pathlib import Path
 from urllib.parse import quote, urlsplit, urlunsplit
+from uuid import uuid4
 
 
 DEFAULT_TIMEOUT_SECONDS = 20
@@ -165,7 +166,7 @@ def run_test(args: argparse.Namespace) -> None:
     wait = WebDriverWait(driver, args.timeout)
 
     base_url = normalize_admin_url(args.base_url)
-    suffix = str(int(time.time()))
+    suffix = uuid4().hex
     dataset_name = f"selenium-dataset-{suffix}"
     dataset_owner = f"selenium-owner-{suffix}"
     updated_owner = f"selenium-owner-updated-{suffix}"
