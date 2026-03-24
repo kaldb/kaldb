@@ -358,7 +358,11 @@ def run_test(args: argparse.Namespace) -> None:
         if confirm_button.is_enabled():
             fail("Danger confirmation button should start disabled")
         confirm_input.send_keys("wrong-name")
-        time.sleep(0.2)
+        wait.until(
+            lambda d: d.find_element(By.ID, "danger-confirm-input").get_attribute("value")
+            == "wrong-name"
+            and not d.find_element(By.ID, "danger-confirm-ok").is_enabled()
+        )
         if confirm_button.is_enabled():
             fail("Danger confirmation button enabled for the wrong dataset name")
         confirm_input.clear()
