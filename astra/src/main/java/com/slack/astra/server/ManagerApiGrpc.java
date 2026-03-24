@@ -130,17 +130,15 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
       StreamObserver<Metadata.DatasetMetadata> responseObserver) {
 
     try {
-      DatasetMetadata datasetToDelete;
-      try {
-        datasetToDelete = datasetMetadataStore.getSync(request.getName());
-      } catch (Exception e) {
-        LOG.warn("Dataset not found during delete: {}", request.getName(), e);
+      if (!datasetMetadataStore.hasSync(request.getName())) {
+        LOG.warn("Dataset not found during delete: {}", request.getName());
         responseObserver.onError(
             Status.NOT_FOUND
                 .withDescription("Dataset not found: " + request.getName())
                 .asException());
         return;
       }
+      DatasetMetadata datasetToDelete = datasetMetadataStore.getSync(request.getName());
 
       List<SnapshotMetadata> snapshotsForDataset =
           calculateRequiredSnapshots(

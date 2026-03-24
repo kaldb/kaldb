@@ -668,6 +668,30 @@ public class ManagerApiGrpcTest {
   }
 
   @Test
+  public void shouldReturnUnknownWhenDeleteExistenceCheckFails() {
+    String datasetName = "datasetWithDeleteStoreError";
+    String errorString = "deleteHasSyncError";
+
+    doThrow(new InternalMetadataStoreException(errorString))
+        .when(datasetMetadataStore)
+        .hasSync(eq(datasetName));
+
+    StatusRuntimeException deleteError =
+        (StatusRuntimeException)
+            catchThrowable(
+                () ->
+                    managerApiStub.deleteDatasetMetadata(
+                        ManagerApi.DeleteDatasetMetadataRequest.newBuilder()
+                            .setName(datasetName)
+                            .build()));
+
+    assertThat(deleteError.getStatus().getCode()).isEqualTo(Status.UNKNOWN.getCode());
+    assertThat(deleteError.getStatus().getDescription()).isEqualTo(errorString);
+
+    assertThat(AstraMetadataTestUtils.listSyncUncached(datasetMetadataStore)).isEmpty();
+  }
+
+  @Test
   public void shouldRejectDeletingDatasetWhenSnapshotsReferenceItsPartitions() {
     String datasetNameToDelete = "datasetWithReferencedPartitions";
     String otherDatasetName = "otherDataset";
