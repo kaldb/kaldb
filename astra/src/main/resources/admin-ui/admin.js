@@ -366,7 +366,12 @@
       var body = {
         name: form.elements.name.value,
         throughput_bytes: throughputInput === "" || isNaN(parsedThroughput) ? -1 : parsedThroughput,
-        partition_ids: ids ? ids.split(",").map(function (s) { return s.trim(); }) : [],
+        partition_ids: ids
+          ? ids
+              .split(",")
+              .map(function (s) { return s.trim(); })
+              .filter(function (s) { return s.length > 0; })
+          : [],
       };
 
       apiCall("UpdatePartitionAssignment", body)
