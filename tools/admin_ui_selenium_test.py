@@ -218,7 +218,7 @@ def run_test(args: argparse.Namespace) -> None:
                 return
             before = current_grid_page_marker(driver, grid_id)
             prev_button.click()
-            wait.until(lambda d: current_grid_page_marker(d, grid_id) != before)
+            wait.until(lambda d, b=before: current_grid_page_marker(d, grid_id) != b)
 
     def find_grid_row(grid_id: str, text: str):
         move_grid_to_first_page(grid_id)
@@ -233,7 +233,7 @@ def run_test(args: argparse.Namespace) -> None:
 
             before = current_grid_page_marker(driver, grid_id)
             next_button.click()
-            wait.until(lambda d: current_grid_page_marker(d, grid_id) != before)
+            wait.until(lambda d, b=before: current_grid_page_marker(d, grid_id) != b)
 
     def wait_for_grid_row(grid_id: str, text: str) -> None:
         wait.until(lambda d: find_grid_row(grid_id, text) is not None)
