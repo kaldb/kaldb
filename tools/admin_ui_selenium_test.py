@@ -23,7 +23,7 @@ import shutil
 import sys
 import time
 from pathlib import Path
-from urllib.parse import quote, urlsplit, urlunsplit
+from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
 
@@ -178,14 +178,6 @@ def run_test(args: argparse.Namespace) -> None:
     screenshot_dir = Path(args.screenshot_dir)
     screenshot_dir.mkdir(parents=True, exist_ok=True)
 
-    def dataset_button_selector(action: str) -> str:
-        encoded = quote(dataset_name, safe="")
-        return f"[data-action='{action}'][data-dataset='{encoded}']"
-
-    def redaction_button_selector() -> str:
-        encoded = quote(redaction_name, safe="")
-        return f"[data-action='delete-redaction'][data-redaction='{encoded}']"
-
     def wait_for_toast(text: str) -> None:
         wait.until(
             lambda d: any(
@@ -194,11 +186,75 @@ def run_test(args: argparse.Namespace) -> None:
             )
         )
 
-    def wait_for_dataset_text(text: str) -> None:
-        wait.until(lambda d: text in d.find_element(By.ID, "datasets-grid").text)
+    def current_grid_page_marker(d, grid_id: str) -> tuple[str, str]:
+        current_buttons = d.find_elements(
+            By.CSS_SELECTOR,
+            f"#{grid_id} .gridjs-pagination .gridjs-pages button.gridjs-currentPage",
+        )
+        current_page = current_buttons[0].text if current_buttons else ""
+        rows = d.find_elements(By.CSS_SELECTOR, f"#{grid_id} tbody tr")
+        first_row_text = rows[0].text if rows else ""
+        return current_page, first_row_text
 
-    def wait_for_dataset_absent() -> None:
-        wait.until(lambda d: not d.find_elements(By.CSS_SELECTOR, dataset_button_selector("delete")))
+    def current_grid_row(d, grid_id: str, text: str):
+        for row in d.find_elements(By.CSS_SELECTOR, f"#{grid_id} tbody tr"):
+            if text in row.text:
+                return row
+        return None
+
+    def grid_edge_button(d, grid_id: str, *, next_page: bool):
+        buttons = d.find_elements(
+            By.CSS_SELECTOR,
+            f"#{grid_id} .gridjs-pagination .gridjs-pages button",
+        )
+        if len(buttons) < 2:
+            return None
+        return buttons[-1] if next_page else buttons[0]
+
+    def move_grid_to_first_page(grid_id: str) -> None:
+        while True:
+            prev_button = grid_edge_button(driver, grid_id, next_page=False)
+            if prev_button is None or not prev_button.is_enabled():
+                return
+            before = current_grid_page_marker(driver, grid_id)
+            prev_button.click()
+            wait.until(lambda d: current_grid_page_marker(d, grid_id) != before)
+
+    def find_grid_row(grid_id: str, text: str):
+        move_grid_to_first_page(grid_id)
+        while True:
+            row = current_grid_row(driver, grid_id, text)
+            if row is not None:
+                return row
+
+            next_button = grid_edge_button(driver, grid_id, next_page=True)
+            if next_button is None or not next_button.is_enabled():
+                return None
+
+            before = current_grid_page_marker(driver, grid_id)
+            next_button.click()
+            wait.until(lambda d: current_grid_page_marker(d, grid_id) != before)
+
+    def wait_for_grid_row(grid_id: str, text: str) -> None:
+        wait.until(lambda d: find_grid_row(grid_id, text) is not None)
+
+    def wait_for_grid_row_text(grid_id: str, row_text: str, expected_text: str) -> None:
+        def row_contains_text() -> bool:
+            row = find_grid_row(grid_id, row_text)
+            return row is not None and expected_text in row.text
+
+        wait.until(lambda d: row_contains_text())
+
+    def wait_for_grid_row_absent(grid_id: str, text: str) -> None:
+        wait.until(lambda d: find_grid_row(grid_id, text) is None)
+
+    def click_grid_row_action(grid_id: str, row_text: str, action: str) -> None:
+        row = find_grid_row(grid_id, row_text)
+        if row is None:
+            fail(f"Could not find row containing {row_text!r} in {grid_id}")
+        action_button = row.find_element(By.CSS_SELECTOR, f"[data-action='{action}']")
+        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", action_button)
+        action_button.click()
 
     def click(locator: tuple[str, str]) -> None:
         wait.until(EC.element_to_be_clickable(locator)).click()
@@ -230,12 +286,12 @@ def run_test(args: argparse.Namespace) -> None:
         pattern_input.send_keys(service_pattern)
         click((By.CSS_SELECTOR, "#form-dataset button[type='submit']"))
         wait_for_toast("Dataset created")
-        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, dataset_button_selector("edit"))))
-        wait_for_dataset_text(dataset_owner)
-        wait_for_dataset_text(service_pattern)
+        wait_for_grid_row("datasets-grid", dataset_name)
+        wait_for_grid_row_text("datasets-grid", dataset_name, dataset_owner)
+        wait_for_grid_row_text("datasets-grid", dataset_name, service_pattern)
 
         log_step("Editing dataset")
-        click((By.CSS_SELECTOR, dataset_button_selector("edit")))
+        click_grid_row_action("datasets-grid", dataset_name, "edit")
         wait.until(lambda d: d.find_element(By.ID, "dataset-form-page").is_displayed())
         owner_input = driver.find_element(By.CSS_SELECTOR, "#form-dataset [name='owner']")
         pattern_input = driver.find_element(By.CSS_SELECTOR, "#form-dataset [name='service_name_pattern']")
@@ -245,11 +301,11 @@ def run_test(args: argparse.Namespace) -> None:
         pattern_input.send_keys(updated_service_pattern)
         click((By.CSS_SELECTOR, "#form-dataset button[type='submit']"))
         wait_for_toast("Dataset updated")
-        wait_for_dataset_text(updated_owner)
-        wait_for_dataset_text(updated_service_pattern)
+        wait_for_grid_row_text("datasets-grid", dataset_name, updated_owner)
+        wait_for_grid_row_text("datasets-grid", dataset_name, updated_service_pattern)
 
         log_step("Updating capacity")
-        click((By.CSS_SELECTOR, dataset_button_selector("partitions")))
+        click_grid_row_action("datasets-grid", dataset_name, "partitions")
         wait.until(lambda d: "open" in d.find_element(By.ID, "modal-partition").get_attribute("class"))
         throughput_input = driver.find_element(By.CSS_SELECTOR, "#form-partition [name='throughput_bytes']")
         partition_ids_input = driver.find_element(By.CSS_SELECTOR, "#form-partition [name='partition_ids']")
@@ -259,9 +315,9 @@ def run_test(args: argparse.Namespace) -> None:
         partition_ids_input.send_keys("partition-a, partition-b")
         click((By.CSS_SELECTOR, "#form-partition button[type='submit']"))
         wait_for_toast("Partitions assigned")
-        wait_for_dataset_text("1234")
-        wait_for_dataset_text("partition-a")
-        wait_for_dataset_text("partition-b")
+        wait_for_grid_row_text("datasets-grid", dataset_name, "1234")
+        wait_for_grid_row_text("datasets-grid", dataset_name, "partition-a")
+        wait_for_grid_row_text("datasets-grid", dataset_name, "partition-b")
 
         log_step("Creating redaction")
         click((By.CSS_SELECTOR, ".tab[data-tab='redactions']"))
@@ -274,14 +330,14 @@ def run_test(args: argparse.Namespace) -> None:
         driver.find_element(By.CSS_SELECTOR, "#form-redaction [name='end_time_epoch_ms']").send_keys("2000")
         click((By.CSS_SELECTOR, "#form-redaction button[type='submit']"))
         wait_for_toast("Redaction created")
-        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, redaction_button_selector())))
+        wait_for_grid_row("redactions-grid", redaction_name)
 
         log_step("Deleting redaction")
-        click((By.CSS_SELECTOR, redaction_button_selector()))
+        click_grid_row_action("redactions-grid", redaction_name, "delete-redaction")
         wait.until(lambda d: "open" in d.find_element(By.ID, "modal-confirm").get_attribute("class"))
         click((By.ID, "confirm-ok"))
         wait_for_toast("Redaction deleted")
-        wait.until(lambda d: not d.find_elements(By.CSS_SELECTOR, redaction_button_selector()))
+        wait_for_grid_row_absent("redactions-grid", redaction_name)
 
         log_step("Checking operations tab")
         click((By.CSS_SELECTOR, ".tab[data-tab='operations']"))
@@ -292,8 +348,8 @@ def run_test(args: argparse.Namespace) -> None:
 
         log_step("Deleting dataset with danger confirmation")
         click((By.CSS_SELECTOR, ".tab[data-tab='datasets']"))
-        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, dataset_button_selector("delete"))))
-        click((By.CSS_SELECTOR, dataset_button_selector("delete")))
+        wait_for_grid_row("datasets-grid", dataset_name)
+        click_grid_row_action("datasets-grid", dataset_name, "delete")
         wait.until(
             lambda d: "open" in d.find_element(By.ID, "modal-danger-confirm").get_attribute("class")
         )
@@ -310,7 +366,7 @@ def run_test(args: argparse.Namespace) -> None:
         wait.until(lambda d: d.find_element(By.ID, "danger-confirm-ok").is_enabled())
         click((By.ID, "danger-confirm-ok"))
         wait_for_toast("Dataset deleted")
-        wait_for_dataset_absent()
+        wait_for_grid_row_absent("datasets-grid", dataset_name)
 
         log_step("Admin UI Selenium test passed")
     except TimeoutException as exc:
