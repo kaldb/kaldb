@@ -132,7 +132,7 @@ public class ArmeriaService extends AbstractIdleService {
         throw new IllegalArgumentException("Invalid classpathPrefix");
       }
       serverBuilder.serviceUnder(
-          urlPrefix, FileService.of(ClassLoader.getSystemClassLoader(), classpathPrefix));
+          urlPrefix, FileService.of(ArmeriaService.class.getClassLoader(), classpathPrefix));
       return this;
     }
 
