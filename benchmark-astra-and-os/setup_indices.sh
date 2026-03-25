@@ -13,6 +13,7 @@ set -eu
 #   OS_PORT     - OpenSearch port (default: 9200)
 #   ASTRA_BULK_PORT - Astra bulk ingest port (default: 8080)
 #   ASTRA_BULK_PATH - Astra bulk endpoint path (default: /_local_bulk)
+#   DATA_DIR        - directory containing ndjson files (default: data/ready)
 source common.sh
 
 load_ct_splits=${1:-10000}
@@ -22,6 +23,7 @@ OS_SCHEME="${OS_SCHEME:-https}"
 OS_PORT="${OS_PORT:-9200}"
 ASTRA_BULK_PORT="${ASTRA_BULK_PORT:-8080}"
 ASTRA_BULK_PATH="${ASTRA_BULK_PATH:-/_local_bulk}"
+DATA_DIR="${DATA_DIR:-data/ready}"
 
 os_auth=""
 if [ "$OS_SCHEME" = "https" ]; then
@@ -37,7 +39,7 @@ load_os() {
 
   echo "Loading $load_ct_splits files into OpenSearch"
   local failed=0
-  for f in $(ls data/ready/* | head -n "$load_ct_splits"); do
+  for f in $(ls ${DATA_DIR}/* | head -n "$load_ct_splits"); do
     echo -n "$f OpenSearch: "
     if curl --fail -H "Content-Type: application/x-ndjson" -XPOST "${OS_SCHEME}://localhost:${OS_PORT}/_bulk" \
        --data-binary "@$f" $os_auth -s > /dev/null; then
@@ -56,7 +58,7 @@ load_os() {
 load_astra() {
   echo "Loading $load_ct_splits files into Astra (port ${ASTRA_BULK_PORT}, path ${ASTRA_BULK_PATH})"
   local failed=0
-  for f in $(ls data/ready/* | head -n "$load_ct_splits"); do
+  for f in $(ls ${DATA_DIR}/* | head -n "$load_ct_splits"); do
     echo -n "$f Astra: "
     if curl --fail -H "Content-Type: application/x-ndjson" -XPOST "http://localhost:${ASTRA_BULK_PORT}${ASTRA_BULK_PATH}" \
        --data-binary "@$f" -s > /dev/null; then

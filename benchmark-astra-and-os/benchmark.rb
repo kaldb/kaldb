@@ -295,8 +295,15 @@ at_exit do
 end
 
 current_time = Time.now
-Dir.mkdir("output") unless Dir.exist?("output")
-Dir.mkdir("output/#{current_time.strftime "%Y-%m-%d-%H-%M-%S"}") unless Dir.exist?("output/#{current_time.strftime "%Y-%m-%d-%H-%M-%S"}")
+run_id = ENV.fetch("BENCHMARK_RUN_ID", current_time.strftime("%Y-%m-%d-%H-%M-%S"))
+output_root = ENV.fetch("BENCHMARK_OUTPUT_ROOT", "output")
+results_root = ENV.fetch("BENCHMARK_RESULTS_ROOT", "results")
+results_prefix = ENV.fetch("BENCHMARK_RESULTS_PREFIX", "benchmark")
+output_dir = File.join(output_root, run_id)
+results_file = ENV.fetch("BENCHMARK_RESULTS_FILE", File.join(results_root, "#{results_prefix}.#{run_id}.csv"))
+
+Dir.mkdir(output_root) unless Dir.exist?(output_root)
+Dir.mkdir(output_dir) unless Dir.exist?(output_dir)
 
 iterations = (ARGV.first || 1).to_i
 iterations = 1 if iterations <= 0
@@ -321,7 +328,7 @@ iterations.times do |iteration|
         timing = Benchmark.measure("#{subject} #{count}".ljust(60)) do
           raw_out = `#{curls[subject]} '#{request_body}'`
         end
-        File.write("output/#{current_time.strftime "%Y-%m-%d-%H-%M-%S"}/#{name}-#{count}-#{subject}.json", raw_out)
+        File.write(File.join(output_dir, "#{name}-#{count}-#{subject}.json"), raw_out)
         out = raw_out
         json_out = begin
                      JSON.parse(out)
@@ -381,8 +388,8 @@ iterations.times do |iteration|
   end
 end
 
-Dir.mkdir("results") unless Dir.exist?("results")
-CSV.open("results/benchmark.#{Time.now.strftime "%Y-%m-%d-%H-%M-%S"}.csv", "w") do |csv|
+Dir.mkdir(results_root) unless Dir.exist?(results_root)
+CSV.open(results_file, "w") do |csv|
   stats.each do |row|
     csv << row
   end

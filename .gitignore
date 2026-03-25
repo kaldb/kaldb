@@ -24,3 +24,4 @@ indices/
 
 # go vendor files.
 vendor/
+.claude/
