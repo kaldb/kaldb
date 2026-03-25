@@ -1,6 +1,7 @@
 package com.slack.astra.logstore.opensearch;
 
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.util.List;
 import java.util.Map;
 import org.apache.commons.lang3.NotImplementedException;
@@ -13,6 +14,7 @@ import org.opensearch.action.search.SearchShardTask;
 import org.opensearch.action.search.SearchType;
 import org.opensearch.common.unit.TimeValue;
 import org.opensearch.common.util.BigArrays;
+import org.opensearch.core.index.shard.ShardId;
 import org.opensearch.index.cache.bitset.BitsetFilterCache;
 import org.opensearch.index.mapper.MappedFieldType;
 import org.opensearch.index.mapper.MapperService;
@@ -59,6 +61,8 @@ import org.opensearch.search.suggest.SuggestionSearchContext;
  * existing methods to have a higher fidelity implementation.
  */
 public class AstraSearchContext extends SearchContext {
+  private static final IndexShard STUB_INDEX_SHARD = createStubIndexShard();
+
   private final BigArrays bigArrays;
   private final ContextIndexSearcher contextIndexSearcher;
   private BucketCollectorProcessor bucketCollectorProcessor = NO_OP_BUCKET_COLLECTOR_PROCESSOR;
@@ -266,7 +270,27 @@ public class AstraSearchContext extends SearchContext {
 
   @Override
   public IndexShard indexShard() {
-    throw new NotImplementedException();
+    return STUB_INDEX_SHARD;
+  }
+
+  @SuppressWarnings("removal")
+  private static IndexShard createStubIndexShard() {
+    try {
+      Field unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+      unsafeField.setAccessible(true);
+      sun.misc.Unsafe unsafe = (sun.misc.Unsafe) unsafeField.get(null);
+
+      IndexShard shard = (IndexShard) unsafe.allocateInstance(IndexShard.class);
+
+      Field shardIdField =
+          org.opensearch.index.shard.AbstractIndexShardComponent.class.getDeclaredField("shardId");
+      shardIdField.setAccessible(true);
+      shardIdField.set(shard, new ShardId("astra", "_na_", 0));
+
+      return shard;
+    } catch (Exception e) {
+      throw new RuntimeException("Failed to create stub IndexShard for AstraSearchContext", e);
+    }
   }
 
   @Override
@@ -590,5 +614,11 @@ public class AstraSearchContext extends SearchContext {
     // this is true, since we index with the timestamp in reverse order
     // see LuceneIndexStoreImpl.buildIndexWriterConfig()
     return true;
+  }
+
+  @Override
+  public int getTargetMaxSliceCount() {
+    // Default to no concurrency limit for slice count
+    return -1;
   }
 }
