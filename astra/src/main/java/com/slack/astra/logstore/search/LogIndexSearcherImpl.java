@@ -99,7 +99,8 @@ public class LogIndexSearcherImpl implements LogIndexSearcher<LogMessage> {
       int howMany,
       QueryBuilder queryBuilder,
       SourceFieldFilter sourceFieldFilter,
-      AggregatorFactories.Builder aggregatorFactoriesBuilder) {
+      AggregatorFactories.Builder aggregatorFactoriesBuilder,
+      String sortJson) {
 
     ensureNonEmptyString(dataset, "dataset should be a non-empty string");
     ensureTrue(howMany >= 0, "hits requested should not be negative.");
@@ -122,7 +123,9 @@ public class LogIndexSearcherImpl implements LogIndexSearcher<LogMessage> {
         if (howMany > 0) {
           CollectorManager<TopFieldCollector, TopFieldDocs> topFieldCollector =
               buildTopFieldCollector(
-                  howMany, aggregatorFactoriesBuilder != null ? Integer.MAX_VALUE : howMany);
+                  howMany,
+                  aggregatorFactoriesBuilder != null ? Integer.MAX_VALUE : howMany,
+                  sortJson);
           MultiCollectorManager collectorManager;
 
           if (aggregatorFactoriesBuilder != null) {
@@ -146,11 +149,13 @@ public class LogIndexSearcherImpl implements LogIndexSearcher<LogMessage> {
           }
         } else {
           results = Collections.emptyList();
-          internalAggregation =
-              searcher.search(
-                  query,
-                  openSearchAdapter.getCollectorManager(
-                      aggregatorFactoriesBuilder, searcher, query));
+          if (aggregatorFactoriesBuilder != null) {
+            internalAggregation =
+                searcher.search(
+                    query,
+                    openSearchAdapter.getCollectorManager(
+                        aggregatorFactoriesBuilder, searcher, query));
+          }
         }
 
         elapsedTime.stop();
@@ -207,15 +212,46 @@ public class LogIndexSearcherImpl implements LogIndexSearcher<LogMessage> {
    * value can be set to equal howMany to allow early exiting (ScoreMode.TOP_SCORES), but should
    * only be done when all collectors are tolerant of an early exit.
    */
+  private static final java.util.Set<String> LONG_SORT_FIELDS =
+      java.util.Set.of("_timesinceepoch", "@timestamp", "dropoff_datetime", "pickup_datetime");
+
   private CollectorManager<TopFieldCollector, TopFieldDocs> buildTopFieldCollector(
-      int howMany, int totalHitsThreshold) {
+      int howMany, int totalHitsThreshold, String sortJson) {
     if (howMany > 0) {
-      SortField sortField = new SortField(SystemField.TIME_SINCE_EPOCH.fieldName, Type.LONG, true);
+      SortField sortField = parseSortField(sortJson);
       return TopFieldCollector.createSharedManager(
           new Sort(sortField), howMany, null, totalHitsThreshold);
     } else {
       return null;
     }
+  }
+
+  private SortField parseSortField(String sortJson) {
+    if (sortJson == null || sortJson.isEmpty()) {
+      return new SortField(SystemField.TIME_SINCE_EPOCH.fieldName, Type.LONG, true);
+    }
+    try {
+      com.fasterxml.jackson.databind.JsonNode sortArray =
+          new com.fasterxml.jackson.databind.ObjectMapper().readTree(sortJson);
+      if (sortArray.isArray() && !sortArray.isEmpty()) {
+        com.fasterxml.jackson.databind.JsonNode firstSort = sortArray.get(0);
+        if (firstSort.isObject()) {
+          String fieldName = firstSort.fieldNames().next();
+          boolean reverse = true; // default desc
+          com.fasterxml.jackson.databind.JsonNode val = firstSort.get(fieldName);
+          if (val.isTextual()) {
+            reverse = !"asc".equalsIgnoreCase(val.asText());
+          } else if (val.isObject() && val.has("order")) {
+            reverse = !"asc".equalsIgnoreCase(val.get("order").asText());
+          }
+          Type type = LONG_SORT_FIELDS.contains(fieldName) ? Type.LONG : Type.DOUBLE;
+          return new SortField(fieldName, type, reverse);
+        }
+      }
+    } catch (Exception e) {
+      LOG.warn("Failed to parse sort JSON '{}', using default timestamp sort", sortJson, e);
+    }
+    return new SortField(SystemField.TIME_SINCE_EPOCH.fieldName, Type.LONG, true);
   }
 
   @Override

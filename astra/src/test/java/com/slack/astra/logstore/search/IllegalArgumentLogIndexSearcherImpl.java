@@ -11,7 +11,8 @@ public class IllegalArgumentLogIndexSearcherImpl implements LogIndexSearcher<Log
       int howMany,
       QueryBuilder queryBuilder,
       SourceFieldFilter sourceFieldFilter,
-      AggregatorFactories.Builder aggregatorFactoriesBuilder) {
+      AggregatorFactories.Builder aggregatorFactoriesBuilder,
+      String sortJson) {
     throw new IllegalArgumentException("Failed to acquire an index searcher");
   }
 

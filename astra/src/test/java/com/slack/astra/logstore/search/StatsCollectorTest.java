@@ -53,7 +53,8 @@ public class StatsCollectorTest {
             QueryBuilderUtil.generateQueryBuilder(
                 "", time.toEpochMilli(), time.plusSeconds(4 * 60).toEpochMilli()),
             null,
-            createGenericDateHistogramAggregatorFactoriesBuilder());
+            createGenericDateHistogramAggregatorFactoriesBuilder(),
+            null);
 
     assertThat(allIndexItems.hits.size()).isEqualTo(0);
 

@@ -139,7 +139,8 @@ public class SearchResultUtils {
         searchRequest.getChunkIdsList(),
         queryBuilder,
         SourceFieldFilter.fromProto(searchRequest.getSourceFieldFilter()),
-        aggregatorFactoriesBuilder);
+        aggregatorFactoriesBuilder,
+        searchRequest.getSortJson());
   }
 
   public static SearchResult<LogMessage> fromSearchResultProtoOrEmpty(

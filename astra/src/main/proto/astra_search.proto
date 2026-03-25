@@ -28,6 +28,9 @@ message SearchRequest {
   // The full agg JSON object, to be used in the leaf and query nodes and parsed by OpenSearch
   string aggregation_json = 10;
 
+  // The sort JSON array from the request, e.g. [{"tip_amount": "desc"}]
+  string sort_json = 11;
+
   message SourceFieldFilter {
     // Whether or not to include/exclude _all_ fields
     optional bool includeAll = 1;

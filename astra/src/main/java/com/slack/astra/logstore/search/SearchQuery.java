@@ -16,6 +16,7 @@ public class SearchQuery {
   public final SourceFieldFilter sourceFieldFilter;
   public final long startTimeEpochMs;
   public final long endTimeEpochMs;
+  public final String sortJson;
 
   public SearchQuery(
       String dataset,
@@ -25,7 +26,8 @@ public class SearchQuery {
       List<String> chunkIds,
       QueryBuilder queryBuilder,
       SourceFieldFilter sourceFieldFilter,
-      AggregatorFactories.Builder aggregatorFactoriesBuilder) {
+      AggregatorFactories.Builder aggregatorFactoriesBuilder,
+      String sortJson) {
     this.dataset = dataset;
     this.howMany = howMany;
     this.chunkIds = chunkIds;
@@ -34,6 +36,7 @@ public class SearchQuery {
     this.startTimeEpochMs = startTimeEpochMs;
     this.endTimeEpochMs = endTimeEpochMs;
     this.aggregatorFactoriesBuilder = aggregatorFactoriesBuilder;
+    this.sortJson = sortJson;
   }
 
   @Override

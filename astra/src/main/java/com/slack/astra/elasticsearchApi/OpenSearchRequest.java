@@ -137,6 +137,7 @@ public class OpenSearchRequest {
               .setQuery(getQuery(body))
               .setSourceFieldFilter(getSourceFieldFilter(body))
               .setAggregationJson(getAggregationJson(body))
+              .setSortJson(getSortJson(body))
               .setStartTimeEpochMs(startTimeEpochMs)
               .setEndTimeEpochMs(endTimeEpochMs)
               .build());
@@ -248,6 +249,13 @@ public class OpenSearchRequest {
 
   private static int getHowMany(JsonNode body) {
     return body.get("size").asInt();
+  }
+
+  private static String getSortJson(JsonNode body) {
+    if (body.has("sort") && body.get("sort") != null && !body.get("sort").isNull()) {
+      return body.get("sort").toString();
+    }
+    return "";
   }
 
   private static String getAggregationJson(JsonNode body) {

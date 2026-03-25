@@ -10,5 +10,6 @@ public interface LogIndexSearcher<T> extends Closeable {
       int howMany,
       QueryBuilder queryBuilder,
       SourceFieldFilter sourceFieldFilter,
-      AggregatorFactories.Builder aggregatorFactoriesBuilder);
+      AggregatorFactories.Builder aggregatorFactoriesBuilder,
+      String sortJson);
 }
