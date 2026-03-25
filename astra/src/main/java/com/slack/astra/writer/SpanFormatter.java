@@ -232,8 +232,8 @@ public class SpanFormatter {
     if (timestamp.isAfter(Instant.now().plus(1, ChronoUnit.HOURS))) {
       return false;
     }
-    // cannot be in the past by more than 168 hours
-    if (timestamp.isBefore(Instant.now().minus(168, ChronoUnit.HOURS))) {
+    // cannot be before epoch
+    if (timestamp.isBefore(Instant.EPOCH)) {
       return false;
     }
     return true;
