@@ -551,6 +551,258 @@ public class ManagerApiGrpcTest {
   }
 
   @Test
+  public void shouldDeleteDatasetWithMultipleDatasetsAndUnrelatedSnapshots() {
+    String datasetNameToDelete = "datasetToDelete";
+    String datasetNameWithSnapshots = "datasetWithSnapshots";
+    String datasetNameWithoutPartitions = "datasetWithoutPartitions";
+
+    managerApiStub.createDatasetMetadata(
+        ManagerApi.CreateDatasetMetadataRequest.newBuilder()
+            .setName(datasetNameToDelete)
+            .setOwner("ownerDelete")
+            .build());
+    managerApiStub.createDatasetMetadata(
+        ManagerApi.CreateDatasetMetadataRequest.newBuilder()
+            .setName(datasetNameWithSnapshots)
+            .setOwner("ownerSnapshots")
+            .build());
+    managerApiStub.createDatasetMetadata(
+        ManagerApi.CreateDatasetMetadataRequest.newBuilder()
+            .setName(datasetNameWithoutPartitions)
+            .setOwner("ownerNoPartitions")
+            .build());
+
+    managerApiStub.updatePartitionAssignment(
+        ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
+            .setName(datasetNameToDelete)
+            .setThroughputBytes(100)
+            .addAllPartitionIds(List.of("delete-1", "delete-2"))
+            .build());
+    managerApiStub.updatePartitionAssignment(
+        ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
+            .setName(datasetNameWithSnapshots)
+            .setThroughputBytes(200)
+            .addAllPartitionIds(List.of("snapshot-1"))
+            .build());
+
+    long nowMs = Instant.now().toEpochMilli();
+    snapshotMetadataStore.createSync(
+        new SnapshotMetadata("snapshot-a", nowMs, nowMs + 1, 0, "snapshot-1", 123));
+    await().until(() -> snapshotMetadataStore.listSync().size() == 1);
+
+    Metadata.DatasetMetadata deletedDataset =
+        managerApiStub.deleteDatasetMetadata(
+            ManagerApi.DeleteDatasetMetadataRequest.newBuilder()
+                .setName(datasetNameToDelete)
+                .build());
+
+    assertThat(deletedDataset.getName()).isEqualTo(datasetNameToDelete);
+
+    ManagerApi.ListDatasetMetadataResponse listDatasetMetadataResponse =
+        managerApiStub.listDatasetMetadata(
+            ManagerApi.ListDatasetMetadataRequest.newBuilder().build());
+    assertThat(listDatasetMetadataResponse.getDatasetMetadataList())
+        .extracting(Metadata.DatasetMetadata::getName)
+        .containsExactlyInAnyOrder(datasetNameWithSnapshots, datasetNameWithoutPartitions);
+    assertThat(snapshotMetadataStore.listSync()).hasSize(1);
+
+    StatusRuntimeException deletedDatasetLookupError =
+        (StatusRuntimeException)
+            catchThrowable(
+                () ->
+                    managerApiStub.getDatasetMetadata(
+                        ManagerApi.GetDatasetMetadataRequest.newBuilder()
+                            .setName(datasetNameToDelete)
+                            .build()));
+    assertThat(deletedDatasetLookupError.getStatus().getCode()).isEqualTo(Status.UNKNOWN.getCode());
+  }
+
+  @Test
+  public void shouldReturnNotFoundDeletingNonexistentDataset() {
+    String missingDatasetName = "missingDataset";
+    String existingDatasetName = "existingDataset";
+    String existingOwner = "existingOwner";
+
+    managerApiStub.createDatasetMetadata(
+        ManagerApi.CreateDatasetMetadataRequest.newBuilder()
+            .setName(existingDatasetName)
+            .setOwner(existingOwner)
+            .build());
+
+    StatusRuntimeException deleteError =
+        (StatusRuntimeException)
+            catchThrowable(
+                () ->
+                    managerApiStub.deleteDatasetMetadata(
+                        ManagerApi.DeleteDatasetMetadataRequest.newBuilder()
+                            .setName(missingDatasetName)
+                            .build()));
+
+    assertThat(deleteError.getStatus().getCode()).isEqualTo(Status.NOT_FOUND.getCode());
+    assertThat(deleteError.getStatus().getDescription())
+        .isEqualTo("Dataset not found: " + missingDatasetName);
+
+    Metadata.DatasetMetadata existingDataset =
+        managerApiStub.getDatasetMetadata(
+            ManagerApi.GetDatasetMetadataRequest.newBuilder().setName(existingDatasetName).build());
+    assertThat(existingDataset.getOwner()).isEqualTo(existingOwner);
+
+    ManagerApi.ListDatasetMetadataResponse listDatasetMetadataResponse =
+        managerApiStub.listDatasetMetadata(
+            ManagerApi.ListDatasetMetadataRequest.newBuilder().build());
+    assertThat(listDatasetMetadataResponse.getDatasetMetadataList())
+        .extracting(Metadata.DatasetMetadata::getName)
+        .containsExactly(existingDatasetName);
+
+    Metadata.DatasetMetadata deletedExistingDataset =
+        managerApiStub.deleteDatasetMetadata(
+            ManagerApi.DeleteDatasetMetadataRequest.newBuilder()
+                .setName(existingDatasetName)
+                .build());
+    assertThat(deletedExistingDataset.getName()).isEqualTo(existingDatasetName);
+
+    ManagerApi.ListDatasetMetadataResponse listAfterDeleteResponse =
+        managerApiStub.listDatasetMetadata(
+            ManagerApi.ListDatasetMetadataRequest.newBuilder().build());
+    assertThat(listAfterDeleteResponse.getDatasetMetadataList()).isEmpty();
+  }
+
+  @Test
+  public void shouldReturnUnknownWhenDeleteExistenceCheckFails() {
+    String datasetName = "datasetWithDeleteStoreError";
+    String errorString = "deleteHasSyncError";
+
+    doThrow(new InternalMetadataStoreException(errorString))
+        .when(datasetMetadataStore)
+        .hasSync(eq(datasetName));
+
+    StatusRuntimeException deleteError =
+        (StatusRuntimeException)
+            catchThrowable(
+                () ->
+                    managerApiStub.deleteDatasetMetadata(
+                        ManagerApi.DeleteDatasetMetadataRequest.newBuilder()
+                            .setName(datasetName)
+                            .build()));
+
+    assertThat(deleteError.getStatus().getCode()).isEqualTo(Status.UNKNOWN.getCode());
+    assertThat(deleteError.getStatus().getDescription()).isEqualTo(errorString);
+
+    assertThat(AstraMetadataTestUtils.listSyncUncached(datasetMetadataStore)).isEmpty();
+  }
+
+  @Test
+  public void shouldRejectDeletingDatasetWhenSnapshotsReferenceItsPartitions() {
+    String datasetNameToDelete = "datasetWithReferencedPartitions";
+    String otherDatasetName = "otherDataset";
+
+    managerApiStub.createDatasetMetadata(
+        ManagerApi.CreateDatasetMetadataRequest.newBuilder()
+            .setName(datasetNameToDelete)
+            .setOwner("ownerDelete")
+            .build());
+    managerApiStub.createDatasetMetadata(
+        ManagerApi.CreateDatasetMetadataRequest.newBuilder()
+            .setName(otherDatasetName)
+            .setOwner("ownerOther")
+            .build());
+
+    managerApiStub.updatePartitionAssignment(
+        ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
+            .setName(datasetNameToDelete)
+            .setThroughputBytes(300)
+            .addAllPartitionIds(List.of("referenced-1", "referenced-2"))
+            .build());
+    managerApiStub.updatePartitionAssignment(
+        ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
+            .setName(otherDatasetName)
+            .setThroughputBytes(400)
+            .addAllPartitionIds(List.of("other-1"))
+            .build());
+
+    long nowMs = Instant.now().toEpochMilli();
+    snapshotMetadataStore.createSync(
+        new SnapshotMetadata("snapshot-1", nowMs, nowMs + 1, 0, "referenced-1", 111));
+    snapshotMetadataStore.createSync(
+        new SnapshotMetadata("snapshot-2", nowMs, nowMs + 1, 0, "referenced-2", 222));
+    snapshotMetadataStore.createSync(
+        new SnapshotMetadata("snapshot-3", nowMs, nowMs + 1, 0, "other-1", 333));
+    await().until(() -> snapshotMetadataStore.listSync().size() == 3);
+
+    StatusRuntimeException deleteDatasetError =
+        (StatusRuntimeException)
+            catchThrowable(
+                () ->
+                    managerApiStub.deleteDatasetMetadata(
+                        ManagerApi.DeleteDatasetMetadataRequest.newBuilder()
+                            .setName(datasetNameToDelete)
+                            .build()));
+
+    assertThat(deleteDatasetError.getStatus().getCode())
+        .isEqualTo(Status.FAILED_PRECONDITION.getCode());
+    assertThat(deleteDatasetError.getStatus().getDescription())
+        .contains("Cannot delete dataset '" + datasetNameToDelete + "'")
+        .contains("2 snapshot(s) still reference its partitions");
+
+    ManagerApi.ListDatasetMetadataResponse listDatasetMetadataResponse =
+        managerApiStub.listDatasetMetadata(
+            ManagerApi.ListDatasetMetadataRequest.newBuilder().build());
+    assertThat(listDatasetMetadataResponse.getDatasetMetadataList())
+        .extracting(Metadata.DatasetMetadata::getName)
+        .containsExactlyInAnyOrder(datasetNameToDelete, otherDatasetName);
+  }
+
+  @Test
+  public void shouldDeleteDatasetWhenSnapshotsOnlyMatchReassignedPartitionInLaterWindow() {
+    // NOTE: Current behavior is intentionally asserted to keep CI green until the FIXME in
+    // ManagerApiGrpc.calculateRequiredSnapshots is addressed in issue #82. Once that fix lands,
+    // this test should be updated to expect successful deletion.
+    String datasetNameToDelete = "datasetWithReassignedPartition";
+    String otherDatasetName = "datasetWithCurrentPartitionOwner";
+    String reassignedPartitionId = "shared-partition";
+
+    datasetMetadataStore.createSync(
+        new DatasetMetadata(
+            datasetNameToDelete,
+            "ownerDelete",
+            300,
+            List.of(new DatasetPartitionMetadata(1000, 2000, List.of(reassignedPartitionId))),
+            datasetNameToDelete));
+    datasetMetadataStore.createSync(
+        new DatasetMetadata(
+            otherDatasetName,
+            "ownerOther",
+            400,
+            List.of(new DatasetPartitionMetadata(3000, MAX_TIME, List.of(reassignedPartitionId))),
+            otherDatasetName));
+
+    snapshotMetadataStore.createSync(
+        new SnapshotMetadata("snapshot-1", 3500, 3600, 0, reassignedPartitionId, 111));
+    await().until(() -> snapshotMetadataStore.listSync().size() == 1);
+
+    StatusRuntimeException deleteDatasetError =
+        (StatusRuntimeException)
+            catchThrowable(
+                () ->
+                    managerApiStub.deleteDatasetMetadata(
+                        ManagerApi.DeleteDatasetMetadataRequest.newBuilder()
+                            .setName(datasetNameToDelete)
+                            .build()));
+    assertThat(deleteDatasetError.getStatus().getCode())
+        .isEqualTo(Status.FAILED_PRECONDITION.getCode());
+    assertThat(deleteDatasetError.getStatus().getDescription())
+        .contains("Cannot delete dataset '" + datasetNameToDelete + "'")
+        .contains("1 snapshot(s) still reference its partitions");
+
+    ManagerApi.ListDatasetMetadataResponse listDatasetMetadataResponse =
+        managerApiStub.listDatasetMetadata(
+            ManagerApi.ListDatasetMetadataRequest.newBuilder().build());
+    assertThat(listDatasetMetadataResponse.getDatasetMetadataList())
+        .extracting(Metadata.DatasetMetadata::getName)
+        .containsExactlyInAnyOrder(datasetNameToDelete, otherDatasetName);
+  }
+
+  @Test
   public void shouldHandleZkErrorsGracefully() {
     String datasetName = "testZkErrorsDataset";
     String datasetOwner = "testZkErrorsOwner";

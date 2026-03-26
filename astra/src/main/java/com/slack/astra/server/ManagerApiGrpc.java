@@ -123,6 +123,51 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
     }
   }
 
+  /** Deletes an existing dataset by name, rejecting if snapshots still reference its partitions */
+  @Override
+  public void deleteDatasetMetadata(
+      ManagerApi.DeleteDatasetMetadataRequest request,
+      StreamObserver<Metadata.DatasetMetadata> responseObserver) {
+
+    try {
+      if (!datasetMetadataStore.hasSync(request.getName())) {
+        LOG.warn("Dataset not found during delete: {}", request.getName());
+        responseObserver.onError(
+            Status.NOT_FOUND
+                .withDescription("Dataset not found: " + request.getName())
+                .asException());
+        return;
+      }
+      DatasetMetadata datasetToDelete = datasetMetadataStore.getSync(request.getName());
+
+      List<SnapshotMetadata> snapshotsForDataset =
+          calculateRequiredSnapshots(
+              snapshotMetadataStore.listSync(),
+              datasetMetadataStore,
+              0L,
+              MAX_TIME,
+              request.getName());
+      if (!snapshotsForDataset.isEmpty()) {
+        responseObserver.onError(
+            Status.FAILED_PRECONDITION
+                .withDescription(
+                    String.format(
+                        "Cannot delete dataset '%s': %d snapshot(s) still reference its partitions. "
+                            + "Clean up snapshots first before deleting the dataset.",
+                        request.getName(), snapshotsForDataset.size()))
+                .asException());
+        return;
+      }
+
+      datasetMetadataStore.deleteSync(request.getName());
+      responseObserver.onNext(toDatasetMetadataProto(datasetToDelete));
+      responseObserver.onCompleted();
+    } catch (Exception e) {
+      LOG.error("Error deleting dataset", e);
+      responseObserver.onError(Status.UNKNOWN.withDescription(e.getMessage()).asException());
+    }
+  }
+
   /** Returns all available datasets from the metadata store */
   @Override
   public void listDatasetMetadata(
@@ -268,6 +313,9 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
       long startTimeEpochMs,
       long endTimeEpochMs,
       String datasetName) {
+    // FIXME: This over-includes snapshots when partition IDs are reassigned across datasets over
+    // time. We currently flatten to partition IDs only; this should be replaced with a
+    // partition-ownership-window-aware match in a follow-up PR.
     Set<String> partitionIdsWithQueriedData = new HashSet<>();
     List<DatasetPartitionMetadata> partitionMetadataList =
         DatasetPartitionMetadata.findPartitionsToQuery(
