@@ -110,7 +110,7 @@ fi
 # ------------------------------------------------------------------------------
 if [ "$CLEAN_BUILD" = true ]; then
   echo "🔨 Building Astra Docker image..."
-  docker build -t slackhq/astra --label astra-demo=true .
+  docker build -t slackhq/astra -t astra:latest --label astra-demo=true .
   echo "🔨 Rebuilding Dashboards gateway image..."
   docker compose build astra_dashboards_gateway
 else
@@ -168,7 +168,8 @@ curl -sS -XPOST \
 # ------------------------------------------------------------------------------
 echo ""
 echo "✅ Astra demo environment is ready!"
-echo "   - Manager UI:   http://localhost:8083"
+echo "   - Admin UI:     http://localhost:8083/admin/"
+echo "   - Manager API:  http://localhost:8083"
 echo "   - Query API:    http://localhost:8081"
 echo "   - Grafana:      http://localhost:3000"
 echo "   - OpenSearch:   http://localhost:9200"
