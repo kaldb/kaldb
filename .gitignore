@@ -28,3 +28,6 @@ vendor/
 
 # Claude
 .claude/settings.local.json
+
+# Pycache
+__pycache__
