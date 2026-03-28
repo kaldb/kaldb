@@ -30,4 +30,4 @@ vendor/
 .claude/settings.local.json
 
 # Ignore python cache
-__pycache__
+__pycache__/
