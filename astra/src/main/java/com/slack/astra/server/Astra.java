@@ -266,7 +266,11 @@ public class Astra {
               .withTracing(astraConfig.getTracingConfig())
               .withAnnotatedService(
                   new ElasticsearchApiService(
-                      astraDistributedQueryService, astraConfig, datasetMetadataStore))
+                      astraDistributedQueryService,
+                      astraConfig.getClusterConfig().getClusterName(),
+                      astraConfig.getQueryConfig().getServerConfig().getServerAddress(),
+                      astraConfig.getQueryConfig().getServerConfig().getServerPort(),
+                      datasetMetadataStore))
               .withAnnotatedService(new ZipkinService(tf))
               .withAnnotatedService(new GraphService(tf, graphConfig, meterRegistry))
               .withGrpcService(astraDistributedQueryService)

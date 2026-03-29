@@ -24,7 +24,6 @@ import com.slack.astra.elasticsearchApi.searchResponse.SearchResponseMetadata;
 import com.slack.astra.logstore.opensearch.OpenSearchInternalAggregation;
 import com.slack.astra.metadata.dataset.DatasetMetadata;
 import com.slack.astra.metadata.dataset.DatasetMetadataStore;
-import com.slack.astra.proto.config.AstraConfigs;
 import com.slack.astra.proto.service.AstraSearch;
 import com.slack.astra.server.AstraQueryServiceBase;
 import com.slack.astra.util.JsonUtil;
@@ -69,11 +68,13 @@ public class ElasticsearchApiService {
 
   public ElasticsearchApiService(
       AstraQueryServiceBase searcher,
-      AstraConfigs.AstraConfig astraConfig,
+      String clusterName,
+      String host,
+      int port,
       DatasetMetadataStore datasetMetadataStore) {
     this.searcher = searcher;
     this.openSearchSchemaAdapter = new OpenSearchSchemaAdapter(searcher);
-    this.compatibilityMetadata = CompatibilityMetadata.fromConfig(astraConfig);
+    this.compatibilityMetadata = CompatibilityMetadata.from(clusterName, host, port);
     this.datasetMetadataStore = Objects.requireNonNull(datasetMetadataStore);
   }
 
@@ -588,28 +589,28 @@ public class ElasticsearchApiService {
     private static final String DEFAULT_HOST = "localhost";
     private static final int DEFAULT_PORT = 8081;
 
-    private static CompatibilityMetadata fromConfig(AstraConfigs.AstraConfig astraConfig) {
-      var configuredClusterName = astraConfig.getClusterConfig().getClusterName();
-      var clusterName =
-          configuredClusterName.isBlank() ? DEFAULT_CLUSTER_NAME : configuredClusterName;
-      var queryServerConfig = astraConfig.getQueryConfig().getServerConfig();
-      var hasExplicitServerAddress = !queryServerConfig.getServerAddress().isBlank();
-      var hasExplicitServerPort = queryServerConfig.getServerPort() != 0;
-      var host = hasExplicitServerAddress ? queryServerConfig.getServerAddress() : DEFAULT_HOST;
-      var port = hasExplicitServerPort ? queryServerConfig.getServerPort() : DEFAULT_PORT;
+    private static CompatibilityMetadata from(String clusterName, String host, int port) {
+      var resolvedClusterName =
+          clusterName == null || clusterName.isBlank() ? DEFAULT_CLUSTER_NAME : clusterName;
+      var hasExplicitServerAddress = host != null && !host.isBlank();
+      var hasExplicitServerPort = port != 0;
+      var resolvedHost = hasExplicitServerAddress ? host : DEFAULT_HOST;
+      var resolvedPort = hasExplicitServerPort ? port : DEFAULT_PORT;
       var nodeId =
-          hasExplicitServerAddress || hasExplicitServerPort ? host + ":" + port : DEFAULT_NODE_ID;
+          hasExplicitServerAddress || hasExplicitServerPort
+              ? resolvedHost + ":" + resolvedPort
+              : DEFAULT_NODE_ID;
 
       return new CompatibilityMetadata(
-          clusterName,
-          clusterName + "-compat",
+          resolvedClusterName,
+          resolvedClusterName + "-compat",
           nodeId,
           nodeId + "-ephemeral",
           DEFAULT_NODE_NAME,
-          host,
-          host,
-          host + ":" + port,
-          host + ":" + port);
+          resolvedHost,
+          resolvedHost,
+          resolvedHost + ":" + resolvedPort,
+          resolvedHost + ":" + resolvedPort);
     }
   }
 
