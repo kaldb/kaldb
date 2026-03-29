@@ -553,15 +553,34 @@ public class ElasticsearchApiService {
     }
   }
 
+  /**
+   * Synthetic OpenSearch cluster and node identity returned by Astra's compatibility endpoints.
+   *
+   * <p>These values are not Astra-native topology metadata. They exist so responses from {@code /},
+   * {@code /_nodes}, and {@code /_cluster/state/nodes} have the OpenSearch-shaped fields that
+   * OpenSearch Dashboards expects during startup health and version checks.
+   */
   private record CompatibilityMetadata(
+      // Returned as `cluster_name` across compatibility responses.
       String clusterName,
+      // Returned as `cluster_uuid` and mirrored into node attributes as `cluster_id`.
       String clusterUuid,
+      // Used as the key in `nodes` maps and to back `/_nodes/:nodeId` style lookups.
       String nodeId,
+      // Returned as `ephemeral_id` in cluster-state payloads because OpenSearch node metadata
+      // includes it, even though this shim does not model real process restarts.
       String ephemeralNodeId,
+      // Returned as the node `name` in cluster and node metadata responses.
       String nodeName,
+      // Returned as the node `host` in `/_nodes` responses.
       String host,
+      // Returned as the node `ip` in `/_nodes`; today we mirror `host` because this shim has no
+      // separate published IP address.
       String ip,
+      // Returned as `transport_address` in node discovery responses.
       String transportAddress,
+      // Returned as `http.publish_address` in `/_nodes`, which Dashboards reads during version
+      // checks when building human-readable node descriptions.
       String httpPublishAddress) {
     private static final String DEFAULT_CLUSTER_NAME = "astra";
     private static final String DEFAULT_NODE_ID = "astra-query";
