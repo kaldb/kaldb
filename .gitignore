@@ -30,5 +30,5 @@ vendor/
 # Claude
 .claude/settings.local.json
 
-# python tools
-scripts/__pycache__/
+# Ignore python cache
+__pycache__/
