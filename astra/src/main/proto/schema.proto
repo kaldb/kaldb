@@ -38,6 +38,10 @@ enum SchemaFieldType {
   HALF_FLOAT = 7;
   INTEGER = 8;
   LONG = 9;
+  // TODO: `scaled_long` is not a real Elasticsearch/OpenSearch field type. Drop this legacy type
+  // in favor of LONG once configs and persisted schemas no longer depend on it.
+  // TODO: If we need scaled numeric semantics, add a real `scaled_float` type instead, along with
+  // any required scaling-factor support in the schema model and indexing/query paths.
   SCALED_LONG = 10;
   SHORT = 11;
   BYTE = 12;
