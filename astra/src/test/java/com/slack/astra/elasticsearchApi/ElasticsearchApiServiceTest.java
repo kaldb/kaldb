@@ -32,7 +32,6 @@ import com.slack.astra.logstore.search.AstraLocalQueryService;
 import com.slack.astra.metadata.dataset.DatasetMetadata;
 import com.slack.astra.metadata.dataset.DatasetMetadataStore;
 import com.slack.astra.metadata.schema.SchemaUtil;
-import com.slack.astra.proto.config.AstraConfigs;
 import com.slack.astra.proto.schema.Schema;
 import com.slack.astra.proto.service.AstraSearch;
 import com.slack.astra.server.AstraQueryServiceBase;
@@ -65,8 +64,9 @@ import org.opensearch.ingest.IngestDocument;
 @SuppressWarnings("UnstableApiUsage")
 public class ElasticsearchApiServiceTest {
   private static final String S3_TEST_BUCKET = "test-astra-logs";
-  private static final AstraConfigs.AstraConfig DEFAULT_ASTRA_CONFIG =
-      AstraConfigUtil.makeOpenSearchCompatibilityConfig();
+  private static final String DEFAULT_CLUSTER_NAME = "astra";
+  private static final String DEFAULT_HOST = "localhost";
+  private static final int DEFAULT_PORT = 8081;
   private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
   @RegisterExtension
@@ -102,7 +102,11 @@ public class ElasticsearchApiServiceTest {
         new AstraLocalQueryService<>(chunkManagerUtil.chunkManager, Duration.ofSeconds(3));
     elasticsearchApiService =
         new ElasticsearchApiService(
-            searcher, DEFAULT_ASTRA_CONFIG, mock(DatasetMetadataStore.class));
+            searcher,
+            DEFAULT_CLUSTER_NAME,
+            DEFAULT_HOST,
+            DEFAULT_PORT,
+            mock(DatasetMetadataStore.class));
   }
 
   @AfterEach
@@ -517,12 +521,20 @@ public class ElasticsearchApiServiceTest {
     // warmup to load OpenSearch plugins
     ElasticsearchApiService slowElasticsearchApiService =
         new ElasticsearchApiService(
-            slowSearcher, DEFAULT_ASTRA_CONFIG, mock(DatasetMetadataStore.class));
+            slowSearcher,
+            DEFAULT_CLUSTER_NAME,
+            DEFAULT_HOST,
+            DEFAULT_PORT,
+            mock(DatasetMetadataStore.class));
     slowElasticsearchApiService.multiSearch(postBody);
 
     slowElasticsearchApiService =
         new ElasticsearchApiService(
-            slowSearcher, DEFAULT_ASTRA_CONFIG, mock(DatasetMetadataStore.class));
+            slowSearcher,
+            DEFAULT_CLUSTER_NAME,
+            DEFAULT_HOST,
+            DEFAULT_PORT,
+            mock(DatasetMetadataStore.class));
     HttpResponse response = slowElasticsearchApiService.multiSearch(postBody.repeat(100));
 
     // handle response
@@ -569,7 +581,11 @@ public class ElasticsearchApiServiceTest {
     AstraQueryServiceBase searcher = mock(AstraQueryServiceBase.class);
     ElasticsearchApiService serviceUnderTest =
         new ElasticsearchApiService(
-            searcher, DEFAULT_ASTRA_CONFIG, mock(DatasetMetadataStore.class));
+            searcher,
+            DEFAULT_CLUSTER_NAME,
+            DEFAULT_HOST,
+            DEFAULT_PORT,
+            mock(DatasetMetadataStore.class));
 
     Instant start = Instant.now();
     Instant end = start.plusSeconds(60);
@@ -629,7 +645,11 @@ public class ElasticsearchApiServiceTest {
     AstraQueryServiceBase searcher = mock(AstraQueryServiceBase.class);
     ElasticsearchApiService serviceUnderTest =
         new ElasticsearchApiService(
-            searcher, DEFAULT_ASTRA_CONFIG, mock(DatasetMetadataStore.class));
+            searcher,
+            DEFAULT_CLUSTER_NAME,
+            DEFAULT_HOST,
+            DEFAULT_PORT,
+            mock(DatasetMetadataStore.class));
 
     AggregatedHttpResponse aggregatedRes = serviceUnderTest.clusterMetadata().aggregate().join();
     JsonNode jsonNode = OBJECT_MAPPER.readTree(aggregatedRes.content(StandardCharsets.UTF_8));
@@ -644,7 +664,11 @@ public class ElasticsearchApiServiceTest {
     AstraQueryServiceBase searcher = mock(AstraQueryServiceBase.class);
     ElasticsearchApiService serviceUnderTest =
         new ElasticsearchApiService(
-            searcher, DEFAULT_ASTRA_CONFIG, mock(DatasetMetadataStore.class));
+            searcher,
+            DEFAULT_CLUSTER_NAME,
+            DEFAULT_HOST,
+            DEFAULT_PORT,
+            mock(DatasetMetadataStore.class));
 
     AggregatedHttpResponse aggregatedRes = serviceUnderTest.nodesInfo().aggregate().join();
     JsonNode jsonNode = OBJECT_MAPPER.readTree(aggregatedRes.content(StandardCharsets.UTF_8));
@@ -660,7 +684,11 @@ public class ElasticsearchApiServiceTest {
     AstraQueryServiceBase searcher = mock(AstraQueryServiceBase.class);
     ElasticsearchApiService serviceUnderTest =
         new ElasticsearchApiService(
-            searcher, DEFAULT_ASTRA_CONFIG, mock(DatasetMetadataStore.class));
+            searcher,
+            DEFAULT_CLUSTER_NAME,
+            DEFAULT_HOST,
+            DEFAULT_PORT,
+            mock(DatasetMetadataStore.class));
 
     Instant start = Instant.now();
     Instant end = start.plusSeconds(60);
@@ -712,7 +740,8 @@ public class ElasticsearchApiServiceTest {
         .thenReturn(
             List.of(datasetMetadata("bar"), datasetMetadata("foo"), datasetMetadata("foo_logs")));
     ElasticsearchApiService serviceUnderTest =
-        new ElasticsearchApiService(searcher, DEFAULT_ASTRA_CONFIG, datasetMetadataStore);
+        new ElasticsearchApiService(
+            searcher, DEFAULT_CLUSTER_NAME, DEFAULT_HOST, DEFAULT_PORT, datasetMetadataStore);
 
     AggregatedHttpResponse aggregatedRes = serviceUnderTest.resolveIndex("foo").aggregate().join();
     JsonNode jsonNode = OBJECT_MAPPER.readTree(aggregatedRes.content(StandardCharsets.UTF_8));
@@ -734,7 +763,8 @@ public class ElasticsearchApiServiceTest {
         .thenReturn(
             List.of(datasetMetadata("bar"), datasetMetadata("foo"), datasetMetadata("foo_logs")));
     ElasticsearchApiService serviceUnderTest =
-        new ElasticsearchApiService(searcher, DEFAULT_ASTRA_CONFIG, datasetMetadataStore);
+        new ElasticsearchApiService(
+            searcher, DEFAULT_CLUSTER_NAME, DEFAULT_HOST, DEFAULT_PORT, datasetMetadataStore);
 
     AggregatedHttpResponse aggregatedRes = serviceUnderTest.resolveIndex("foo*").aggregate().join();
     JsonNode jsonNode = OBJECT_MAPPER.readTree(aggregatedRes.content(StandardCharsets.UTF_8));
@@ -751,7 +781,8 @@ public class ElasticsearchApiServiceTest {
     DatasetMetadataStore datasetMetadataStore = mock(DatasetMetadataStore.class);
     when(datasetMetadataStore.listSync()).thenReturn(List.of(datasetMetadata("foo")));
     ElasticsearchApiService serviceUnderTest =
-        new ElasticsearchApiService(searcher, DEFAULT_ASTRA_CONFIG, datasetMetadataStore);
+        new ElasticsearchApiService(
+            searcher, DEFAULT_CLUSTER_NAME, DEFAULT_HOST, DEFAULT_PORT, datasetMetadataStore);
 
     AggregatedHttpResponse aggregatedRes = serviceUnderTest.resolveIndex("bar").aggregate().join();
     JsonNode jsonNode = OBJECT_MAPPER.readTree(aggregatedRes.content(StandardCharsets.UTF_8));
@@ -768,7 +799,11 @@ public class ElasticsearchApiServiceTest {
     when(searcher.getSchema(any())).thenReturn(AstraSearch.SchemaResult.newBuilder().build());
     ElasticsearchApiService serviceUnderTest =
         new ElasticsearchApiService(
-            searcher, DEFAULT_ASTRA_CONFIG, mock(DatasetMetadataStore.class));
+            searcher,
+            DEFAULT_CLUSTER_NAME,
+            DEFAULT_HOST,
+            DEFAULT_PORT,
+            mock(DatasetMetadataStore.class));
 
     try (CompatibilityServer compatibilityServer = new CompatibilityServer(serviceUnderTest)) {
       AggregatedHttpResponse aggregatedRes =
@@ -783,7 +818,11 @@ public class ElasticsearchApiServiceTest {
     AstraQueryServiceBase searcher = mock(AstraQueryServiceBase.class);
     ElasticsearchApiService serviceUnderTest =
         new ElasticsearchApiService(
-            searcher, DEFAULT_ASTRA_CONFIG, mock(DatasetMetadataStore.class));
+            searcher,
+            DEFAULT_CLUSTER_NAME,
+            DEFAULT_HOST,
+            DEFAULT_PORT,
+            mock(DatasetMetadataStore.class));
 
     try (CompatibilityServer compatibilityServer = new CompatibilityServer(serviceUnderTest)) {
       AggregatedHttpResponse aliasRes =
