@@ -175,6 +175,8 @@ public class OpenSearchRequestTest {
     AstraSearch.SearchRequest request =
         openSearchRequest.parseSingleSearchRequest("test", searchBody);
 
+    // "aggs" and "aggregations" are aliases. If "aggs" is explicitly present but empty, treat
+    // that as "no aggregations" instead of falling back to the non-empty "aggregations" alias.
     assertThat(request.getAggregationJson()).isEmpty();
   }
 
