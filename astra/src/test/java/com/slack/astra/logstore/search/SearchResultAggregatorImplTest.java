@@ -26,6 +26,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.BeforeEach;
@@ -328,6 +329,90 @@ public class SearchResultAggregatorImplTest {
   }
 
   @Test
+  public void testSearchResultAggregatorRespectsDescendingNumericSortAcrossResults()
+      throws IOException {
+    Instant startTime = Instant.parse("2024-01-01T00:00:00Z");
+    long startTimeMs = startTime.toEpochMilli();
+    long endTimeMs = startTime.plus(1, ChronoUnit.DAYS).toEpochMilli();
+
+    LogMessage shard1HighestTip =
+        makeLogMessage("shard-1-highest-tip", startTime.plus(5, ChronoUnit.MINUTES), 9.5);
+    LogMessage shard1LowerTip =
+        makeLogMessage("shard-1-lower-tip", startTime.plus(40, ChronoUnit.MINUTES), 1.5);
+    LogMessage shard2SecondHighestTip =
+        makeLogMessage("shard-2-second-highest-tip", startTime.plus(10, ChronoUnit.MINUTES), 8.0);
+    LogMessage shard2LowestTip =
+        makeLogMessage("shard-2-lowest-tip", startTime.plus(50, ChronoUnit.MINUTES), 0.5);
+
+    SearchResult<LogMessage> searchResult1 =
+        new SearchResult<>(List.of(shard1HighestTip, shard1LowerTip), 10, 0, 1, 1, 0, null);
+    SearchResult<LogMessage> searchResult2 =
+        new SearchResult<>(List.of(shard2SecondHighestTip, shard2LowestTip), 11, 0, 1, 1, 0, null);
+
+    SearchQuery searchQuery =
+        new SearchQuery(
+            MessageUtil.TEST_DATASET_NAME,
+            startTimeMs,
+            endTimeMs,
+            3,
+            Collections.emptyList(),
+            QueryBuilderUtil.generateQueryBuilder("*:*", startTimeMs, endTimeMs),
+            null,
+            null,
+            "[{\"tip_amount\":\"desc\"}]");
+
+    SearchResult<LogMessage> aggSearchResult =
+        new SearchResultAggregatorImpl<>(searchQuery)
+            .aggregate(List.of(searchResult1, searchResult2), false);
+
+    assertThat(aggSearchResult.hits.stream().map(LogMessage::getId).collect(Collectors.toList()))
+        .containsExactly("shard-1-highest-tip", "shard-2-second-highest-tip", "shard-1-lower-tip");
+  }
+
+  @Test
+  public void testSearchResultAggregatorRespectsAscendingNumericSortAcrossResults()
+      throws IOException {
+    Instant startTime = Instant.parse("2024-01-01T00:00:00Z");
+    long startTimeMs = startTime.toEpochMilli();
+    long endTimeMs = startTime.plus(1, ChronoUnit.DAYS).toEpochMilli();
+
+    LogMessage shard1LowestTip =
+        makeLogMessage("shard-1-lowest-tip", startTime.plus(45, ChronoUnit.MINUTES), 0.5);
+    LogMessage shard1HighestTip =
+        makeLogMessage("shard-1-highest-tip", startTime.plus(5, ChronoUnit.MINUTES), 5.0);
+    LogMessage shard2SecondLowestTip =
+        makeLogMessage("shard-2-second-lowest-tip", startTime.plus(35, ChronoUnit.MINUTES), 1.0);
+    LogMessage shard2ThirdLowestTip =
+        makeLogMessage("shard-2-third-lowest-tip", startTime.plus(15, ChronoUnit.MINUTES), 2.0);
+
+    SearchResult<LogMessage> searchResult1 =
+        new SearchResult<>(List.of(shard1LowestTip, shard1HighestTip), 10, 0, 1, 1, 0, null);
+    SearchResult<LogMessage> searchResult2 =
+        new SearchResult<>(
+            List.of(shard2SecondLowestTip, shard2ThirdLowestTip), 11, 0, 1, 1, 0, null);
+
+    SearchQuery searchQuery =
+        new SearchQuery(
+            MessageUtil.TEST_DATASET_NAME,
+            startTimeMs,
+            endTimeMs,
+            3,
+            Collections.emptyList(),
+            QueryBuilderUtil.generateQueryBuilder("*:*", startTimeMs, endTimeMs),
+            null,
+            null,
+            "[{\"tip_amount\":\"asc\"}]");
+
+    SearchResult<LogMessage> aggSearchResult =
+        new SearchResultAggregatorImpl<>(searchQuery)
+            .aggregate(List.of(searchResult1, searchResult2), false);
+
+    assertThat(aggSearchResult.hits.stream().map(LogMessage::getId).collect(Collectors.toList()))
+        .containsExactly(
+            "shard-1-lowest-tip", "shard-2-second-lowest-tip", "shard-2-third-lowest-tip");
+  }
+
+  @Test
   public void testSimpleSearchResultsAggNoHits() throws IOException {
     long tookMs = 10;
     int bucketCount = 13;
@@ -577,5 +662,10 @@ public class SearchResultAggregatorImplTest {
       logStore.close();
       logStore.cleanup();
     }
+  }
+
+  private LogMessage makeLogMessage(String id, Instant timestamp, double tipAmount) {
+    return new LogMessage(
+        MessageUtil.TEST_DATASET_NAME, "testType", id, timestamp, Map.of("tip_amount", tipAmount));
   }
 }
