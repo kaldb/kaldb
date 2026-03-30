@@ -5,6 +5,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.protobuf.ByteString;
 import com.slack.astra.logstore.LogMessage;
 import com.slack.astra.logstore.LogWireMessage;
+import com.slack.astra.logstore.search.SearchSortUtils;
 import com.slack.astra.util.JsonUtil;
 import java.io.IOException;
 import java.time.Instant;
@@ -34,7 +35,7 @@ public class SearchResponseHit {
   private final Map<String, Object> source;
 
   @JsonProperty("sort")
-  private List<Long> sort;
+  private List<Object> sort;
 
   public SearchResponseHit(
       String index,
@@ -43,7 +44,7 @@ public class SearchResponseHit {
       String score,
       Instant timestamp,
       Map<String, Object> source,
-      List<Long> sort) {
+      List<Object> sort) {
     this.index = index;
     this.type = type;
     this.id = id;
@@ -77,7 +78,7 @@ public class SearchResponseHit {
     return source;
   }
 
-  public List<Long> getSort() {
+  public List<Object> getSort() {
     return sort;
   }
 
@@ -88,7 +89,7 @@ public class SearchResponseHit {
     private Instant timestamp;
     private String score;
     private Map<String, Object> source = new HashMap<>();
-    private List<Long> sort = new ArrayList<>();
+    private List<Object> sort = new ArrayList<>();
 
     public Builder index(String index) {
       this.index = index;
@@ -120,7 +121,7 @@ public class SearchResponseHit {
       return this;
     }
 
-    public Builder sort(List<Long> sort) {
+    public Builder sort(List<Object> sort) {
       this.sort = sort;
       return this;
     }
@@ -132,6 +133,11 @@ public class SearchResponseHit {
   }
 
   public static SearchResponseHit fromByteString(ByteString byteString) throws IOException {
+    return fromByteString(byteString, null);
+  }
+
+  public static SearchResponseHit fromByteString(ByteString byteString, String sortJson)
+      throws IOException {
     LogWireMessage hit = JsonUtil.read(byteString.toStringUtf8(), LogWireMessage.class);
     LogMessage message = LogMessage.fromWireMessage(hit);
 
@@ -141,7 +147,10 @@ public class SearchResponseHit {
         .id(message.getId())
         .timestamp(message.getTimestamp())
         .source(message.getSource())
-        .sort(ImmutableList.of(message.getTimestamp().toEpochMilli()))
+        .sort(
+            sortJson == null
+                ? ImmutableList.of(message.getTimestamp().toEpochMilli())
+                : SearchSortUtils.getSortValues(message, sortJson))
         .build();
   }
 }

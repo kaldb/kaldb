@@ -1945,4 +1945,46 @@ public class LogIndexSearcherImplTest {
             null);
     assertThat(index.hits.size()).isEqualTo(1);
   }
+
+  @Test
+  public void testSearchRespectsSecondarySortClause() throws IOException {
+    Instant time = Instant.parse("2024-01-01T00:00:00Z");
+    strictLogStore.logStore.addMessage(makeSortSpan(1, time.plusSeconds(1), 10.0, 400.0));
+    strictLogStore.logStore.addMessage(makeSortSpan(2, time.plusSeconds(2), 10.0, 300.0));
+    strictLogStore.logStore.addMessage(makeSortSpan(3, time.plusSeconds(3), 10.0, 500.0));
+    strictLogStore.logStore.addMessage(makeSortSpan(4, time.plusSeconds(4), 9.0, 900.0));
+    strictLogStore.logStore.commit();
+    strictLogStore.logStore.refresh();
+
+    SearchResult<LogMessage> searchResult =
+        strictLogStore.logSearcher.search(
+            TEST_DATASET_NAME,
+            4,
+            QueryBuilderUtil.generateQueryBuilder(
+                "*:*", time.toEpochMilli(), time.plus(1, ChronoUnit.DAYS).toEpochMilli()),
+            null,
+            null,
+            "[{\"tip_amount\":\"desc\"},{\"total_amount\":\"desc\"}]");
+
+    assertThat(searchResult.hits.stream().map(LogMessage::getId).collect(Collectors.toList()))
+        .containsExactly("Message3", "Message1", "Message2", "Message4");
+  }
+
+  private Trace.Span makeSortSpan(int i, Instant timestamp, double tipAmount, double totalAmount) {
+    return SpanUtil.makeSpan(
+        i,
+        "sort-test",
+        timestamp,
+        List.of(
+            Trace.KeyValue.newBuilder()
+                .setKey("tip_amount")
+                .setFieldType(Schema.SchemaFieldType.DOUBLE)
+                .setVFloat64(tipAmount)
+                .build(),
+            Trace.KeyValue.newBuilder()
+                .setKey("total_amount")
+                .setFieldType(Schema.SchemaFieldType.DOUBLE)
+                .setVFloat64(totalAmount)
+                .build()));
+  }
 }

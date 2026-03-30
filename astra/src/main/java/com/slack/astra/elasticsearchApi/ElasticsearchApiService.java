@@ -140,7 +140,7 @@ public class ElasticsearchApiService {
         "resultSnapshotsWithReplicas", String.valueOf(searchResult.getSnapshotsWithReplicas()));
 
     try {
-      HitsMetadata hits = getHits(searchResult);
+      HitsMetadata hits = getHits(searchRequest, searchResult);
       return new EsSearchResponse.Builder()
           .hits(hits)
           .aggregations(parseAggregations(searchResult.getInternalAggregations()))
@@ -189,11 +189,13 @@ public class ElasticsearchApiService {
     return "";
   }
 
-  private HitsMetadata getHits(AstraSearch.SearchResult searchResult) throws IOException {
+  private HitsMetadata getHits(
+      AstraSearch.SearchRequest searchRequest, AstraSearch.SearchResult searchResult)
+      throws IOException {
     List<ByteString> hitsByteList = searchResult.getHitsList().asByteStringList();
     List<SearchResponseHit> responseHits = new ArrayList<>(hitsByteList.size());
     for (ByteString bytes : hitsByteList) {
-      responseHits.add(SearchResponseHit.fromByteString(bytes));
+      responseHits.add(SearchResponseHit.fromByteString(bytes, searchRequest.getSortJson()));
     }
 
     return new HitsMetadata.Builder()

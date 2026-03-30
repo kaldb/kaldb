@@ -2,8 +2,6 @@ package com.slack.astra.logstore.search;
 
 import brave.ScopedSpan;
 import brave.Tracing;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.slack.astra.logstore.LogMessage;
 import com.slack.astra.logstore.opensearch.AstraBigArrays;
 import com.slack.astra.logstore.opensearch.ScriptServiceProvider;
@@ -13,7 +11,6 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.PriorityQueue;
-import java.util.Set;
 import org.opensearch.search.aggregations.AggregationBuilder;
 import org.opensearch.search.aggregations.InternalAggregation;
 import org.opensearch.search.aggregations.pipeline.PipelineAggregator;
@@ -24,16 +21,6 @@ import org.opensearch.search.aggregations.pipeline.PipelineAggregator;
  * histogram will be merged using the histogram merge function.
  */
 public class SearchResultAggregatorImpl<T extends LogMessage> implements SearchResultAggregator<T> {
-  private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
-  private static final Set<String> LONG_SORT_FIELDS =
-      Set.of(
-          LogMessage.SystemField.TIME_SINCE_EPOCH.fieldName,
-          "@timestamp",
-          "dropoff_datetime",
-          "pickup_datetime");
-  private static final SortSpec DEFAULT_SORT_SPEC =
-      new SortSpec(LogMessage.SystemField.TIME_SINCE_EPOCH.fieldName, SortValueType.LONG, true);
-
   private final SearchQuery searchQuery;
 
   public SearchResultAggregatorImpl(SearchQuery searchQuery) {
@@ -171,133 +158,10 @@ public class SearchResultAggregatorImpl<T extends LogMessage> implements SearchR
   }
 
   private Comparator<T> buildHitComparator() {
-    SortSpec sortSpec = parseSortSpec(searchQuery.sortJson);
-    return (left, right) -> {
-      int comparison =
-          switch (sortSpec.valueType()) {
-            case LONG ->
-                compareNullableLongs(
-                    coerceLong(getSortFieldValue(left, sortSpec.fieldName())),
-                    coerceLong(getSortFieldValue(right, sortSpec.fieldName())));
-            case DOUBLE ->
-                compareNullableDoubles(
-                    coerceDouble(getSortFieldValue(left, sortSpec.fieldName())),
-                    coerceDouble(getSortFieldValue(right, sortSpec.fieldName())));
-          };
-      return sortSpec.reverse() ? -comparison : comparison;
-    };
+    Comparator<LogMessage> comparator =
+        SearchSortUtils.buildLogMessageComparator(searchQuery.sortJson);
+    return (left, right) -> comparator.compare(left, right);
   }
-
-  private Object getSortFieldValue(T message, String fieldName) {
-    if (LogMessage.SystemField.TIME_SINCE_EPOCH.fieldName.equals(fieldName)
-        || "@timestamp".equals(fieldName)) {
-      return message.getTimestamp();
-    }
-    return message.getSource().get(fieldName);
-  }
-
-  private SortSpec parseSortSpec(String sortJson) {
-    if (sortJson == null || sortJson.isEmpty()) {
-      return DEFAULT_SORT_SPEC;
-    }
-    try {
-      JsonNode sortArray = OBJECT_MAPPER.readTree(sortJson);
-      if (sortArray.isArray() && !sortArray.isEmpty()) {
-        JsonNode firstSort = sortArray.get(0);
-        if (firstSort.isObject()) {
-          String fieldName = firstSort.fieldNames().next();
-          boolean reverse = true;
-          JsonNode sortNode = firstSort.get(fieldName);
-          if (sortNode.isTextual()) {
-            reverse = !"asc".equalsIgnoreCase(sortNode.asText());
-          } else if (sortNode.isObject() && sortNode.has("order")) {
-            reverse = !"asc".equalsIgnoreCase(sortNode.get("order").asText());
-          }
-          return new SortSpec(
-              fieldName,
-              LONG_SORT_FIELDS.contains(fieldName) ? SortValueType.LONG : SortValueType.DOUBLE,
-              reverse);
-        }
-      }
-    } catch (Exception e) {
-      // Fall back to the default timestamp-desc sort if parsing fails.
-    }
-    return DEFAULT_SORT_SPEC;
-  }
-
-  private Long coerceLong(Object value) {
-    if (value == null) {
-      return null;
-    }
-    if (value instanceof Number number) {
-      return number.longValue();
-    }
-    if (value instanceof java.time.Instant instant) {
-      return instant.toEpochMilli();
-    }
-    if (value instanceof String stringValue) {
-      try {
-        return Long.valueOf(stringValue);
-      } catch (NumberFormatException ignored) {
-        try {
-          return java.time.Instant.parse(stringValue).toEpochMilli();
-        } catch (Exception ignoredAgain) {
-          return null;
-        }
-      }
-    }
-    return null;
-  }
-
-  private Double coerceDouble(Object value) {
-    if (value == null) {
-      return null;
-    }
-    if (value instanceof Number number) {
-      return number.doubleValue();
-    }
-    if (value instanceof String stringValue) {
-      try {
-        return Double.valueOf(stringValue);
-      } catch (NumberFormatException ignored) {
-        return null;
-      }
-    }
-    return null;
-  }
-
-  private int compareNullableLongs(Long left, Long right) {
-    if (left == null && right == null) {
-      return 0;
-    }
-    if (left == null) {
-      return 1;
-    }
-    if (right == null) {
-      return -1;
-    }
-    return Long.compare(left, right);
-  }
-
-  private int compareNullableDoubles(Double left, Double right) {
-    if (left == null && right == null) {
-      return 0;
-    }
-    if (left == null) {
-      return 1;
-    }
-    if (right == null) {
-      return -1;
-    }
-    return Double.compare(left, right);
-  }
-
-  private enum SortValueType {
-    LONG,
-    DOUBLE
-  }
-
-  private record SortSpec(String fieldName, SortValueType valueType, boolean reverse) {}
 
   private record SearchResultCursor<T extends LogMessage>(
       List<T> hits, int searchResultIndex, int hitIndex) {

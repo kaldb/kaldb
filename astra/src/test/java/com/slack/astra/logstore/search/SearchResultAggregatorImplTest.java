@@ -413,6 +413,46 @@ public class SearchResultAggregatorImplTest {
   }
 
   @Test
+  public void testSearchResultAggregatorRespectsSecondarySortAcrossResults() throws IOException {
+    Instant startTime = Instant.parse("2024-01-01T00:00:00Z");
+    long startTimeMs = startTime.toEpochMilli();
+    long endTimeMs = startTime.plus(1, ChronoUnit.DAYS).toEpochMilli();
+
+    LogMessage shard1First =
+        makeLogMessage("shard-1-first", startTime.plus(5, ChronoUnit.MINUTES), 10.0, 400.0);
+    LogMessage shard1Second =
+        makeLogMessage("shard-1-second", startTime.plus(10, ChronoUnit.MINUTES), 10.0, 300.0);
+    LogMessage shard2First =
+        makeLogMessage("shard-2-first", startTime.plus(15, ChronoUnit.MINUTES), 10.0, 500.0);
+    LogMessage shard2Second =
+        makeLogMessage("shard-2-second", startTime.plus(20, ChronoUnit.MINUTES), 9.0, 900.0);
+
+    SearchResult<LogMessage> searchResult1 =
+        new SearchResult<>(List.of(shard1First, shard1Second), 10, 0, 1, 1, 0, null);
+    SearchResult<LogMessage> searchResult2 =
+        new SearchResult<>(List.of(shard2First, shard2Second), 11, 0, 1, 1, 0, null);
+
+    SearchQuery searchQuery =
+        new SearchQuery(
+            MessageUtil.TEST_DATASET_NAME,
+            startTimeMs,
+            endTimeMs,
+            4,
+            Collections.emptyList(),
+            QueryBuilderUtil.generateQueryBuilder("*:*", startTimeMs, endTimeMs),
+            null,
+            null,
+            "[{\"tip_amount\":\"desc\"},{\"total_amount\":\"desc\"}]");
+
+    SearchResult<LogMessage> aggSearchResult =
+        new SearchResultAggregatorImpl<>(searchQuery)
+            .aggregate(List.of(searchResult1, searchResult2), false);
+
+    assertThat(aggSearchResult.hits.stream().map(LogMessage::getId).collect(Collectors.toList()))
+        .containsExactly("shard-2-first", "shard-1-first", "shard-1-second", "shard-2-second");
+  }
+
+  @Test
   public void testSimpleSearchResultsAggNoHits() throws IOException {
     long tookMs = 10;
     int bucketCount = 13;
@@ -665,7 +705,16 @@ public class SearchResultAggregatorImplTest {
   }
 
   private LogMessage makeLogMessage(String id, Instant timestamp, double tipAmount) {
+    return makeLogMessage(id, timestamp, tipAmount, tipAmount);
+  }
+
+  private LogMessage makeLogMessage(
+      String id, Instant timestamp, double tipAmount, double totalAmount) {
     return new LogMessage(
-        MessageUtil.TEST_DATASET_NAME, "testType", id, timestamp, Map.of("tip_amount", tipAmount));
+        MessageUtil.TEST_DATASET_NAME,
+        "testType",
+        id,
+        timestamp,
+        Map.of("tip_amount", tipAmount, "total_amount", totalAmount));
   }
 }
