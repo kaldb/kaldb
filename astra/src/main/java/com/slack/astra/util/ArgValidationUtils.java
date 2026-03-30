@@ -1,6 +1,5 @@
 package com.slack.astra.util;
 
-/* test */
 public class ArgValidationUtils {
   public static void ensureNonEmptyString(String s, String exceptionMessage) {
     if (s == null || s.isEmpty()) {
