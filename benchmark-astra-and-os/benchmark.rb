@@ -244,11 +244,11 @@ queries = {
              hits_hits_len
            ],
            sorting_desc: [
-             %Q!{"match_all": {}},"sort" : [{"tip_amount" : "desc"}]!,
+             %Q!{"match_all": {}},"sort" : [{"tip_amount" : "desc"},{"total_amount" : "desc"}]!,
              hits_hits_len
            ],
            sorting_asc: [
-             %Q!{"match_all": {}},"sort" : [{"tip_amount" : "asc"}]!,
+             %Q!{"match_all": {}},"sort" : [{"tip_amount" : "asc"},{"total_amount" : "asc"}]!,
              hits_hits_len
            ],
 }
