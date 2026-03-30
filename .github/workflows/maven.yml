@@ -4,22 +4,18 @@
 name: Java CI with Maven
 
 on:
-  workflow_dispatch:
   push:
     branches:
-      - "**"
+      - kaldb-main
+      - master
   pull_request:
     branches:
       - "**"
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   build:
     runs-on: ubuntu-22.04
-    timeout-minutes: 60
+    timeout-minutes: 15
 
     steps:
     - uses: actions/checkout@v4
@@ -32,7 +28,6 @@ jobs:
             - 'benchmarks/**'
             - 'config/**'
             - 'pom.xml'
-            - '.github/workflows/**'
     - name: Set up JDK 21
       if: steps.filter.outputs.java == 'true'
       uses: actions/setup-java@v3
@@ -50,7 +45,4 @@ jobs:
       run: mvn -B -Dstyle.color=always com.spotify.fmt:fmt-maven-plugin:check --file benchmarks/pom.xml
     - name: Build with Maven
       if: steps.filter.outputs.java == 'true'
-      run: mvn -B -Dstyle.color=always package -DskipTests --file pom.xml
-    - name: Run unit tests
-      if: steps.filter.outputs.java == 'true'
-      run: mvn -B -Dstyle.color=always test --file pom.xml
+      run: mvn -B -Dstyle.color=always package --file pom.xml
