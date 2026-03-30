@@ -2,6 +2,7 @@ package com.slack.astra.elasticsearchApi;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.slack.astra.logstore.LogMessage;
+import com.slack.astra.logstore.schema.ReservedFields;
 import com.slack.astra.logstore.search.SearchResultUtils;
 import com.slack.astra.metadata.schema.FieldType;
 import com.slack.astra.proto.service.AstraSearch;
@@ -37,7 +38,7 @@ final class OpenSearchSchemaAdapter {
 
     Map<String, String> dateType = Map.of("type", FieldType.DATE.toOpenSearchTypeName());
     propertiesMap.put(LogMessage.SystemField.TIME_SINCE_EPOCH.fieldName, dateType);
-    propertiesMap.put(LogMessage.ReservedField.TIMESTAMP.fieldName, dateType);
+    propertiesMap.put(ReservedFields.TIMESTAMP, dateType);
     return propertiesMap;
   }
 
