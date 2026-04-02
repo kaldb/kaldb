@@ -758,6 +758,12 @@ public class IndexingChunkManagerTest {
                     .setKey(LogMessage.ReservedField.HOSTNAME.fieldName)
                     .setFieldType(Schema.SchemaFieldType.INTEGER)
                     .build())
+            .addTags(
+                Trace.KeyValue.newBuilder()
+                    .setVStr(MessageUtil.TEST_DATASET_NAME)
+                    .setKey(LogMessage.ReservedField.SERVICE_NAME.fieldName)
+                    .setFieldType(Schema.SchemaFieldType.KEYWORD)
+                    .build())
             .build();
     chunkManager.addMessage(
         invalidSpan, invalidSpan.getSerializedSize(), TEST_KAFKA_PARTITION_ID, offset);

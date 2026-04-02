@@ -122,6 +122,12 @@ public class LuceneIndexStoreImplTest {
                       .setKey("nested.duplicateproperty")
                       .setFieldType(Schema.SchemaFieldType.KEYWORD)
                       .build())
+              .addTags(
+                  Trace.KeyValue.newBuilder()
+                      .setVStr(MessageUtil.TEST_DATASET_NAME)
+                      .setKey(LogMessage.ReservedField.SERVICE_NAME.fieldName)
+                      .setFieldType(Schema.SchemaFieldType.KEYWORD)
+                      .build())
               .build();
       logStore.logStore.addMessage(span);
       logStore.logStore.commit();
@@ -182,6 +188,12 @@ public class LuceneIndexStoreImplTest {
                   Trace.KeyValue.newBuilder()
                       .setVStr("2")
                       .setKey("nested.duplicateproperty")
+                      .setFieldType(Schema.SchemaFieldType.KEYWORD)
+                      .build())
+              .addTags(
+                  Trace.KeyValue.newBuilder()
+                      .setVStr(MessageUtil.TEST_DATASET_NAME)
+                      .setKey(LogMessage.ReservedField.SERVICE_NAME.fieldName)
                       .setFieldType(Schema.SchemaFieldType.KEYWORD)
                       .build())
               .build();
