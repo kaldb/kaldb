@@ -78,11 +78,27 @@ EOF
 ingest_fixture() {
   local fixture_file="$1"
   local expected_docs="$2"
-  local response total_docs failed_docs
-  response="$(
+  local response raw_response http_status total_docs failed_docs
+  raw_response="$(
     cat "$fixture_file" \
-      | run_curl -sS -H 'Content-Type: application/x-ndjson' "$BULK_URL" --data-binary @-
+      | run_curl -sS -w $'\n%{http_code}' -H 'Content-Type: application/x-ndjson' \
+          "$BULK_URL" --data-binary @-
   )"
+
+  http_status="${raw_response##*$'\n'}"
+  response="${raw_response%$'\n'*}"
+
+  if [[ "$http_status" != "200" ]]; then
+    echo "ERROR: bulk ingest returned HTTP $http_status" >&2
+    printf '%s\n' "$response" >&2
+    exit 1
+  fi
+
+  if ! jq -e . >/dev/null 2>&1 <<<"$response"; then
+    echo "ERROR: bulk ingest returned non-JSON output" >&2
+    printf '%s\n' "$response" >&2
+    exit 1
+  fi
 
   total_docs="$(jq -r '.totalDocs // 0' <<<"$response")"
   failed_docs="$(jq -r '.failedDocs // 0' <<<"$response")"

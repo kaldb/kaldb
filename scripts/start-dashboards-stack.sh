@@ -80,6 +80,8 @@ fi
 
 wait_for_http "OpenSearch Dashboards" "http://localhost:5601/api/status" 60 2
 wait_for_gateway 60 2
+wait_for_http "Manager API" "http://localhost:8083/health" 60 2
+wait_for_http "Preprocessor bulk health" "http://localhost:8086/health" 60 2
 
 log ""
 log "Stack ready."

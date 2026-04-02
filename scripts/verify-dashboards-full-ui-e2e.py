@@ -208,6 +208,34 @@ def run_gateway_command(
         ) from error
 
 
+def ensure_default_kafka_topic() -> None:
+    command = [
+        "docker",
+        "exec",
+        "dep_kafka",
+        "kafka-topics.sh",
+        "--create",
+        "--topic",
+        "test-topic",
+        "--if-not-exists",
+        "--bootstrap-server",
+        "localhost:9092",
+    ]
+    completed = subprocess.run(
+        command,
+        cwd=REPO_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(
+            f"Failed ensuring Kafka topic exists ({completed.returncode}): {' '.join(command)}\n"
+            f"stdout:\n{completed.stdout}\n"
+            f"stderr:\n{completed.stderr}"
+        )
+
+
 def manager_headers() -> dict[str, str]:
     return {"content-type": "application/json; charset=utf-8; protocol=gRPC"}
 
@@ -666,11 +694,13 @@ def main() -> int:
         run_repo_command(command)
 
     wait_for_http("OpenSearch Dashboards", f"{args.dashboards_url}/api/status")
+    wait_for_http("Manager API", f"{args.manager_url}/health")
     wait_for_http("Bulk ingest", args.bulk_health_url)
 
     if dashboards_status(args.dashboards_url) not in {"green", "available"}:
         raise RuntimeError("Dashboards is not green")
 
+    ensure_default_kafka_topic()
     ensure_exact_dataset(args.manager_url, args.dataset_name, args.owner)
     ensure_exact_dataset(args.manager_url, args.noise_dataset_name, args.owner)
     verify_resolve_exact_only(args.dashboards_url, args.dataset_name)
