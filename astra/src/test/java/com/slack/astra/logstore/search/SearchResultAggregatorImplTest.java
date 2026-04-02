@@ -12,6 +12,7 @@ import com.slack.astra.logstore.LogStore;
 import com.slack.astra.logstore.LuceneIndexStoreConfig;
 import com.slack.astra.logstore.LuceneIndexStoreImpl;
 import com.slack.astra.logstore.schema.SchemaAwareLogDocumentBuilderImpl;
+import com.slack.astra.proto.service.AstraSearch;
 import com.slack.astra.testlib.MessageUtil;
 import com.slack.astra.testlib.SpanUtil;
 import com.slack.astra.util.QueryBuilderUtil;
@@ -32,6 +33,7 @@ import java.util.stream.Collectors;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.opensearch.search.aggregations.InternalAggregation;
+import org.opensearch.search.aggregations.bucket.histogram.InternalAutoDateHistogram;
 import org.opensearch.search.aggregations.bucket.histogram.InternalDateHistogram;
 
 public class SearchResultAggregatorImplTest {
@@ -648,6 +650,46 @@ public class SearchResultAggregatorImplTest {
     assertThat(internalDateHistogram.getBuckets().size()).isEqualTo(bucketCount);
   }
 
+  @Test
+  public void testAutoDateHistogramPartialReductionNeedsFinalPass() throws Exception {
+    Instant startTime = Instant.parse("2024-01-01T00:00:00Z");
+
+    SearchQuery searchQuery =
+        SearchResultUtils.fromSearchRequest(
+            AstraSearch.SearchRequest.newBuilder()
+                .setDataset(MessageUtil.TEST_DATASET_NAME)
+                .setHowMany(0)
+                .setQuery("{\"match_all\":{}}")
+                .setAggregationJson(
+                    """
+                    {
+                      "dropoffs_over_time": {
+                        "auto_date_histogram": {
+                          "field": "_timesinceepoch",
+                          "buckets": 1
+                        }
+                      }
+                    }
+                    """)
+                .build());
+
+    SearchResult<LogMessage> partiallyReduced =
+        makeAutoDateHistogramSearchResult(
+            searchQuery,
+            SpanUtil.makeSpansWithTimeDifference(
+                1, 40, ChronoUnit.DAYS.getDuration().toMillis(), startTime));
+    SearchResult<LogMessage> finalized =
+        new SearchResultAggregatorImpl<>(searchQuery).aggregate(List.of(partiallyReduced), true);
+
+    InternalAutoDateHistogram partiallyReducedHistogram =
+        (InternalAutoDateHistogram) Objects.requireNonNull(partiallyReduced.internalAggregation);
+    InternalAutoDateHistogram finalizedHistogram =
+        (InternalAutoDateHistogram) Objects.requireNonNull(finalized.internalAggregation);
+
+    assertThat(partiallyReducedHistogram.getBuckets().size())
+        .isGreaterThan(finalizedHistogram.getBuckets().size());
+  }
+
   /**
    * Makes an InternalDateHistogram given the provided configuration. Since the
    * InternalDateHistogram has private constructors this uses a temporary LogSearcher to index,
@@ -716,5 +758,46 @@ public class SearchResultAggregatorImplTest {
         id,
         timestamp,
         Map.of("tip_amount", tipAmount, "total_amount", totalAmount));
+  }
+
+  private SearchResult<LogMessage> makeAutoDateHistogramSearchResult(
+      SearchQuery searchQuery, List<Trace.Span> logMessages) throws IOException {
+    File tempFolder = Files.createTempDir();
+    LuceneIndexStoreConfig indexStoreCfg =
+        new LuceneIndexStoreConfig(
+            Duration.of(1, ChronoUnit.MINUTES),
+            Duration.of(1, ChronoUnit.MINUTES),
+            tempFolder.getCanonicalPath(),
+            false);
+    MeterRegistry metricsRegistry = new SimpleMeterRegistry();
+    DocumentBuilder documentBuilder =
+        SchemaAwareLogDocumentBuilderImpl.build(
+            SchemaAwareLogDocumentBuilderImpl.FieldConflictPolicy.DROP_FIELD,
+            true,
+            metricsRegistry);
+
+    LogStore logStore = new LuceneIndexStoreImpl(indexStoreCfg, documentBuilder, metricsRegistry);
+    LogIndexSearcherImpl logSearcher =
+        new LogIndexSearcherImpl(logStore.getSearcherManager(), logStore.getSchema());
+
+    for (Trace.Span logMessage : logMessages) {
+      logStore.addMessage(logMessage);
+    }
+    logStore.commit();
+    logStore.refresh();
+
+    try {
+      return logSearcher.search(
+          searchQuery.dataset,
+          searchQuery.howMany,
+          searchQuery.queryBuilder,
+          null,
+          searchQuery.aggregatorFactoriesBuilder,
+          searchQuery.sortJson);
+    } finally {
+      logSearcher.close();
+      logStore.close();
+      logStore.cleanup();
+    }
   }
 }

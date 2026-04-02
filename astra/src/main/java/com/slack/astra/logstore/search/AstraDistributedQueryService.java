@@ -443,7 +443,9 @@ public class AstraDistributedQueryService extends AstraQueryServiceBase implemen
       SearchResult<LogMessage> aggregatedResult =
           ((SearchResultAggregator<LogMessage>)
                   new SearchResultAggregatorImpl<>(SearchResultUtils.fromSearchRequest(request)))
-              .aggregate(searchResults, false);
+              // This is the last reduction step before the aggregation is serialized back to the
+              // caller, so auto_date_histogram needs final reduction semantics here.
+              .aggregate(searchResults, true);
 
       // We report a query with more than 0% of requested nodes, but less than 2% as a tolerable
       // response. Anything over 2% is considered an unacceptable.
