@@ -43,6 +43,7 @@ import org.apache.lucene.document.FloatDocValuesField;
 import org.apache.lucene.document.InetAddressPoint;
 import org.apache.lucene.document.SortedDocValuesField;
 import org.apache.lucene.document.SortedNumericDocValuesField;
+import org.apache.lucene.document.StoredField;
 import org.apache.lucene.sandbox.document.HalfFloatPoint;
 import org.assertj.core.api.Assertions;
 import org.assertj.core.api.AssertionsForClassTypes;
@@ -635,8 +636,17 @@ public class SpanFormatterWithSchemaTest {
                   assertThat(field.binaryValue().utf8ToString()).isEqualTo(tag.getVStr());
                 } else if (fieldType == FieldType.IP) {
                   assertThat(tag.getFieldType()).isEqualTo(Schema.SchemaFieldType.IP);
-                  assertThat(InetAddressPoint.decode(field.binaryValue().bytes).getHostName())
-                      .isEqualTo(tag.getVStr());
+                  if (field instanceof StoredField) {
+                    assertThat(field.binaryValue().utf8ToString()).isEqualTo(tag.getVStr());
+                  } else {
+                    byte[] encodedAddress =
+                        Arrays.copyOfRange(
+                            field.binaryValue().bytes,
+                            field.binaryValue().offset,
+                            field.binaryValue().offset + field.binaryValue().length);
+                    assertThat(InetAddressPoint.decode(encodedAddress).getHostAddress())
+                        .isEqualTo(tag.getVStr());
+                  }
                 } else if (fieldType == FieldType.BYTE) {
                   assertThat(tag.getFieldType()).isEqualTo(Schema.SchemaFieldType.BYTE);
                   assertThat(field.numericValue().byteValue()).isEqualTo((byte) tag.getVInt32());
