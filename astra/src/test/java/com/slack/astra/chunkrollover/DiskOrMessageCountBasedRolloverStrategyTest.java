@@ -273,6 +273,21 @@ public class DiskOrMessageCountBasedRolloverStrategyTest {
   }
 
   @Test
+  public void testMaxTimeRolloverDisabledWhenConfiguredWithSentinelValue() {
+    Instant rolloverStartTime = Instant.parse("2024-01-01T00:00:00Z");
+    Instant laterTime = rolloverStartTime.plusSeconds(10);
+
+    assertThat(
+            DiskOrMessageCountBasedRolloverStrategy.isMaxTimePerChunkRolloverEnabled(
+                Long.MAX_VALUE))
+        .isFalse();
+    assertThat(
+            DiskOrMessageCountBasedRolloverStrategy.hasReachedMaxTimePerChunk(
+                rolloverStartTime, laterTime, Long.MAX_VALUE))
+        .isFalse();
+  }
+
+  @Test
   public void testDiskBasedRolloverWithMaxMessages() throws Exception {
     ChunkRollOverStrategy chunkRollOverStrategy =
         new DiskOrMessageCountBasedRolloverStrategy(metricsRegistry, Long.MAX_VALUE, 4);

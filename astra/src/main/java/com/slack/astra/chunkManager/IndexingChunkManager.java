@@ -284,6 +284,11 @@ public class IndexingChunkManager<T> extends ChunkManagerBase<T> {
 
   private void deleteStaleData() {
     Duration staleDelayDuration = Duration.ofSeconds(indexerConfig.getStaleDurationSecs());
+    // TODO: maxChunksOnDisk still uses a negative sentinel to mean "disabled".
+    // That leaks config encoding into runtime behavior and forces call sites like
+    // deleteChunksOverLimit() to remember the sentinel contract. Long term,
+    // represent "disabled" explicitly at the config boundary instead of passing
+    // magic values through the chunk manager.
     int limit = indexerConfig.getMaxChunksOnDisk();
 
     Instant startInstant = Instant.now();
@@ -298,7 +303,8 @@ public class IndexingChunkManager<T> extends ChunkManagerBase<T> {
 
   private void deleteChunksOverLimit(int limit) {
     if (limit < 0) {
-      throw new IllegalArgumentException("limit can't be negative");
+      LOG.debug("Skipping chunk deletion because maxChunksOnDisk is disabled: {}", limit);
+      return;
     }
 
     final List<Chunk<T>> unsortedChunks = this.getChunkList();

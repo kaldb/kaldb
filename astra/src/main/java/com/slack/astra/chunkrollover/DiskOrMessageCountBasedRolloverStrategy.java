@@ -52,6 +52,10 @@ public class DiskOrMessageCountBasedRolloverStrategy implements ChunkRollOverStr
 
   public static DiskOrMessageCountBasedRolloverStrategy fromConfig(
       MeterRegistry meterRegistry, AstraConfigs.IndexerConfig indexerConfig) {
+    // TODO: maxTimePerChunkSeconds still uses <= 0 to mean "disabled", and we
+    // translate that into Long.MAX_VALUE here as a runtime sentinel. Long term,
+    // encode "disabled" explicitly at the config boundary so rollover logic and
+    // tests do not need to rely on magic values.
     return new DiskOrMessageCountBasedRolloverStrategy(
         meterRegistry,
         indexerConfig.getMaxBytesPerChunk(),
@@ -89,8 +93,8 @@ public class DiskOrMessageCountBasedRolloverStrategy implements ChunkRollOverStr
               approximateDirectoryBytes.set(dirSize);
             }
             if (!maxTimePerChunksMinsReached.get()
-                && Instant.now()
-                    .isAfter(rolloverStartTime.plus(maxTimePerChunksSeconds, ChronoUnit.SECONDS))) {
+                && hasReachedMaxTimePerChunk(
+                    rolloverStartTime, Instant.now(), maxTimePerChunksSeconds)) {
               LOG.info(
                   "Max time per chunk reached. chunkStartTime: {} currentTime: {}",
                   rolloverStartTime,
@@ -125,6 +129,20 @@ public class DiskOrMessageCountBasedRolloverStrategy implements ChunkRollOverStr
 
   public long getMaxBytesPerChunk() {
     return maxBytesPerChunk;
+  }
+
+  @VisibleForTesting
+  static boolean isMaxTimePerChunkRolloverEnabled(long maxTimePerChunksSeconds) {
+    return maxTimePerChunksSeconds > 0 && maxTimePerChunksSeconds < Long.MAX_VALUE;
+  }
+
+  @VisibleForTesting
+  static boolean hasReachedMaxTimePerChunk(
+      Instant rolloverStartTime, Instant currentTime, long maxTimePerChunksSeconds) {
+    if (!isMaxTimePerChunkRolloverEnabled(maxTimePerChunksSeconds)) {
+      return false;
+    }
+    return currentTime.isAfter(rolloverStartTime.plus(maxTimePerChunksSeconds, ChronoUnit.SECONDS));
   }
 
   @Override
