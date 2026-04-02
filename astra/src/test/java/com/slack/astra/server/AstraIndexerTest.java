@@ -36,6 +36,7 @@ import com.slack.astra.metadata.snapshot.SnapshotMetadata;
 import com.slack.astra.metadata.snapshot.SnapshotMetadataStore;
 import com.slack.astra.proto.config.AstraConfigs;
 import com.slack.astra.testlib.ChunkManagerUtil;
+import com.slack.astra.testlib.MessageUtil;
 import com.slack.astra.testlib.TestKafkaServer;
 import com.slack.astra.util.QueryBuilderUtil;
 import com.slack.astra.writer.kafka.AstraKafkaConsumer;
@@ -644,7 +645,7 @@ public class AstraIndexerTest {
     SearchResult<LogMessage> searchResult =
         chunkManagerUtil.chunkManager.query(
             new SearchQuery(
-                "test",
+                MessageUtil.TEST_DATASET_NAME,
                 chunk1StartTimeMs,
                 chunk1StartTimeMs + (100 * 1000),
                 10,
