@@ -4,7 +4,7 @@
 [![License](https://img.shields.io/github/license/kaldb/kaldb)](LICENSE)
 [![Documentation](https://img.shields.io/badge/docs-kaldb.com-blue)](https://kaldb.com/docs/)
 
-KalDB is a cloud-native log search and analytics engine built for high-volume observability workloads. It combines OpenSearch-compatible APIs with a decoupled architecture: Kafka for durable ingest, Lucene for indexing, and S3 for indexed storage.
+KalDB is a cloud-native log search and analytics engine built for high-volume observability workloads. It combines OpenSearch-compatible APIs with a disaggregated storage architecture: Kafka for durable ingest, Lucene for indexing, and S3 for indexed storage.
 
 [Quick Start](#quick-start) • [Architecture](#architecture-overview) • [Docs](https://kaldb.com/docs/) • [Talks](#talks-and-architecture-deep-dives) • [Contributing](.github/CONTRIBUTING.md)
 
