@@ -2,17 +2,17 @@
 set -euo pipefail
 
 # ------------------------------------------------------------------------------
-# Astra Quick Start Script
+# KalDB Quick Start Script
 # Usage:
-#   ./quick-start.sh [OPTIONS]
+#   ./quick_start.sh [OPTIONS]
 #
 # Options:
-#   --clean     Remove old Astra containers, volumes, and images, then rebuild fresh
+#   --clean     Remove old KalDB containers, volumes, and images, then rebuild fresh
 #   --help      Show this help message
 #
 # Examples:
-#   ./quick-start.sh           # Start Astra using existing containers/images
-#   ./quick-start.sh --clean   # Full rebuild from scratch
+#   ./quick_start.sh           # Start KalDB using existing containers/images
+#   ./quick_start.sh --clean   # Full rebuild from scratch
 #
 # After you're done, you can clean everything up with:
 #   ./clean-astra.sh
@@ -22,6 +22,7 @@ set -euo pipefail
 # Parse arguments
 # ------------------------------------------------------------------------------
 CLEAN_BUILD=false
+IMAGE_EXISTS=false
 
 # ------------------------------------------------------------------------------
 # Helpers
@@ -61,18 +62,18 @@ for arg in "$@"; do
       shift
       ;;
     --help)
-      echo "Astra Quick Start Script"
+      echo "KalDB Quick Start Script"
       echo ""
       echo "Usage:"
-      echo "  ./quick-start.sh [OPTIONS]"
+      echo "  ./quick_start.sh [OPTIONS]"
       echo ""
       echo "Options:"
-      echo "  --clean     Remove old Astra containers, volumes, and images, then rebuild fresh"
+      echo "  --clean     Remove old KalDB containers, volumes, and images, then rebuild fresh"
       echo "  --help      Show this help message"
       echo ""
       echo "Examples:"
-      echo "  ./quick-start.sh           # Start Astra using existing containers/images"
-      echo "  ./quick-start.sh --clean   # Full rebuild from scratch"
+      echo "  ./quick_start.sh           # Start KalDB using existing containers/images"
+      echo "  ./quick_start.sh --clean   # Full rebuild from scratch"
       echo ""
       echo "To clean up everything afterwards:"
       echo "  ./clean-astra.sh"
@@ -82,16 +83,16 @@ for arg in "$@"; do
   esac
 done
 
-echo "🚀 Starting Astra demo environment..."
+echo "🚀 Starting KalDB demo environment..."
 
 # ------------------------------------------------------------------------------
-# Step 1. Stop existing Astra containers (only those defined in docker-compose.yml)
+# Step 1. Stop existing KalDB containers (only those defined in docker-compose.yml)
 # ------------------------------------------------------------------------------
-echo "🧹 Stopping Astra containers from docker-compose.yml..."
+echo "🧹 Stopping KalDB containers from docker-compose.yml..."
 if docker compose ps -q | grep . >/dev/null 2>&1; then
   docker compose down --remove-orphans
 else
-  echo "No Astra containers to stop."
+  echo "No KalDB containers to stop."
 fi
 
 # ------------------------------------------------------------------------------
@@ -106,19 +107,23 @@ else
 fi
 
 # ------------------------------------------------------------------------------
-# Step 3. Build Astra image if necessary
+# Step 3. Build local image if necessary
 # ------------------------------------------------------------------------------
-if [ "$CLEAN_BUILD" = true ]; then
-  echo "🔨 Building Astra Docker image..."
+if docker image inspect slackhq/astra >/dev/null 2>&1; then
+  IMAGE_EXISTS=true
+fi
+
+if [ "$CLEAN_BUILD" = true ] || [ "$IMAGE_EXISTS" = false ]; then
+  echo "🔨 Building KalDB Docker image..."
   docker build -t slackhq/astra -t astra:latest --label astra-demo=true .
 else
-  echo "⚡ Using existing Astra Docker image (run with --clean to rebuild)."
+  echo "⚡ Using existing KalDB Docker image (run with --clean to rebuild)."
 fi
 
 # ------------------------------------------------------------------------------
-# Step 4. Start Astra stack
+# Step 4. Start KalDB stack
 # ------------------------------------------------------------------------------
-echo "📦 Starting Astra stack via Docker Compose..."
+echo "📦 Starting KalDB stack via Docker Compose..."
 docker compose up -d
 
 # ------------------------------------------------------------------------------
@@ -129,7 +134,7 @@ wait_for_http "Manager API" "http://localhost:8083/health" 60 2
 wait_for_http "Preprocessor" "http://localhost:8086/health" 60 2
 
 # ------------------------------------------------------------------------------
-# Step 6. Configure Kafka topic and Astra dataset
+# Step 6. Configure Kafka topic and KalDB dataset
 # ------------------------------------------------------------------------------
 echo "📡 Creating Kafka topic (if not exists)..."
 docker exec dep_kafka kafka-topics.sh \
@@ -164,12 +169,13 @@ curl -sS -XPOST \
 # Step 7. Summary
 # ------------------------------------------------------------------------------
 echo ""
-echo "✅ Astra demo environment is ready!"
+echo "✅ KalDB demo environment is ready!"
 echo "   - Admin UI:     http://localhost:8083/admin/"
 echo "   - Manager API:  http://localhost:8083"
 echo "   - Query API:    http://localhost:8081"
 echo "   - Grafana:      http://localhost:3000"
+echo "   - Zipkin UI:    http://localhost:9411"
 echo ""
-echo "To ingest sample data, run: ./ingest-demo-data.sh"
+echo "Next step: send a sample log with the curl examples in README.md."
 echo "To stop and remove everything, run: ./clean-astra.sh"
 echo ""
