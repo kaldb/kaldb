@@ -9,7 +9,7 @@ KalDB is a cloud-native log search and analytics engine built for high-volume ob
 
 [Quick Start](#quick-start) • [Architecture](#architecture-overview) • [Docs](https://kaldb.com/docs/) • [Talks](#talks-and-architecture-deep-dives) • [Contributing](.github/CONTRIBUTING.md)
 
-> Historical note: parts of the codebase, APIs, and docs still use the original `Astra` name while the project transitions to `KalDB`.
+> KalDB builds on the Astra codebase originally open-sourced by Slack and reflects production learnings from large-scale deployments at Slack and Airbnb. The project is in transition, and parts of the codebase, APIs, and docs still use the original `Astra` name.
 
 ## Why KalDB
 
@@ -62,82 +62,15 @@ If you want the shortest path to a local cluster, use the helper script:
 ./quick_start.sh --clean
 ```
 
-If you prefer to see each step explicitly, the manual flow is:
-
-### Prerequisites
-
-- Docker with Compose support
-- `curl`
-- JDK 21 if you want to build or run the project outside Docker
-
-### 1. Build the local image and start dependencies
-
-```bash
-docker build -t slackhq/astra .
-docker compose up
-```
-
-### 2. Create the Kafka topic used by the local example
-
-```bash
-docker exec dep_kafka kafka-topics.sh \
-  --create \
-  --topic test-topic-in \
-  --if-not-exists \
-  --bootstrap-server localhost:9092
-```
-
-### 3. Create dataset metadata and assign a partition
-
-```bash
-curl -XPOST \
-  -H 'content-type: application/json; charset=utf-8; protocol=gRPC' \
-  'http://localhost:8083/slack.proto.astra.ManagerApiService/CreateDatasetMetadata' \
-  -d '{
-    "name": "test",
-    "owner": "test@email.com",
-    "serviceNamePattern": "_all"
-  }'
-
-curl -XPOST \
-  -H 'content-type: application/json; charset=utf-8; protocol=gRPC' \
-  'http://localhost:8083/slack.proto.astra.ManagerApiService/UpdatePartitionAssignment' \
-  -d '{
-    "name": "test",
-    "throughputBytes": "4000000",
-    "partitionIds": ["0"]
-  }'
-```
-
-You can also inspect cluster metadata in the manager UI at `http://localhost:8083/docs`.
-
-### 4. Ingest a sample log line
-
-```bash
-curl --location 'http://localhost:8086/_bulk' \
-  --header 'Content-type: application/x-ndjson' \
-  --data '{ "index" : { "_index" : "test", "_id" : "100" } }
-{ "@timestamp": "2024-03-07T12:00:00.000Z", "level": "INFO", "message": "This is a log message", "service-name": "test" }
-'
-```
-
-### 5. Query it back
-
-```bash
-curl --location 'http://localhost:8081/_msearch' \
-  --header 'Content-type: application/x-ndjson' \
-  --data '{ "index": "test"}
-{"query" : {"match_all" : {}, "gte":1625156649889,"lte":2708540790265}, "size": 500}
-'
-```
-
 Local endpoints:
 
 - Query API: `http://localhost:8081`
-- Manager API and admin UI: `http://localhost:8083`
+- Admin UI: `http://localhost:8083/admin/`
+- Manager API: `http://localhost:8083`
 - Preprocessor ingest API: `http://localhost:8086`
 - Grafana: `http://localhost:3000/explore`
-- Zipkin UI: `http://localhost:9411`
+
+For the manual curl workflow, API examples, and the per-service setup details, see [docs/topics/Getting-started.md](docs/topics/Getting-started.md).
 
 ## What You Can Build With It
 
@@ -166,8 +99,6 @@ KalDB exposes OpenSearch-compatible APIs for query and ingest workflows, which h
 
 ```bash
 mvn package
-mvn -B -Dstyle.color=always com.spotify.fmt:fmt-maven-plugin:check --file astra/pom.xml
-mvn -B -Dstyle.color=always com.spotify.fmt:fmt-maven-plugin:check --file benchmarks/pom.xml
 ```
 
 ### Repository map
