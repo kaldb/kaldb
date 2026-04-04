@@ -73,21 +73,21 @@ Local endpoints:
 - Preprocessor ingest API: `http://localhost:8086`
 - Grafana: `http://localhost:3000/explore`
 
-For the manual curl workflow, API examples, and the per-service setup details, see [docs/topics/Getting-started.md](docs/topics/Getting-started.md).
+For the manual curl workflow, API examples, and the per-service setup details, see [Getting-started.md](docs/topics/Getting-started.md).
 
 ## What You Can Build With It
 
 ### Log search with Lucene-style queries
 
-KalDB supports Lucene query syntax for field filters, wildcards, boolean queries, ranges, and optional full-text search. See [docs/topics/Logs.md](docs/topics/Logs.md) for examples and Grafana integration details.
+KalDB supports Lucene query syntax for field filters, wildcards, boolean queries, ranges, and optional full-text search. See [Logs.md](docs/topics/Logs.md) for examples and Grafana integration details.
 
 ### Trace search with a Zipkin-compatible API
 
-KalDB can store and serve traces when the required span fields are indexed. See [docs/topics/Traces.md](docs/topics/Traces.md) for the expected schema and Grafana setup.
+KalDB can store and serve traces when the required span fields are indexed. See [Traces.md](docs/topics/Traces.md) for the expected schema and Grafana setup.
 
 ### OpenSearch-oriented migrations
 
-KalDB exposes OpenSearch-compatible APIs for query and ingest workflows, which helps reuse existing shippers, clients, and dashboards. See [docs/topics/Migrating.md](docs/topics/Migrating.md) and [docs/topics/API-opensearch.md](docs/topics/API-opensearch.md).
+KalDB exposes OpenSearch-compatible APIs for query and ingest workflows, which helps reuse existing shippers, clients, and dashboards. See [Migrating.md](docs/topics/Migrating.md) and [API-opensearch.md](docs/topics/API-opensearch.md).
 
 ## Developer Setup
 
@@ -116,10 +116,10 @@ mvn package
 
 - [KalDB website](https://kaldb.com/)
 - [Documentation](https://kaldb.com/docs/)
-- [Getting started guide](docs/topics/Getting-started.md)
-- [Architecture guide](docs/topics/Architecture.md)
-- [Cluster recommendations](docs/topics/Recommendations.md)
-- [Roadmap](docs/topics/Roadmap.md)
+- [Getting-started.md](docs/topics/Getting-started.md)
+- [Architecture.md](docs/topics/Architecture.md)
+- [Recommendations.md](docs/topics/Recommendations.md)
+- [Roadmap.md](docs/topics/Roadmap.md)
 
 ## Talks And Architecture Deep Dives
 
@@ -132,8 +132,4 @@ The public talks complement the architecture docs well: the docs explain the com
 
 ## Contributing
 
-Contributions to code, docs, tests, and developer tooling are all useful. Start with [.github/CONTRIBUTING.md](.github/CONTRIBUTING.md), check open issues, and look for a good first issue if you want a smaller entry point.
-
-## License
-
-KalDB is released under the [MIT License](LICENSE).
+See [CONTRIBUTING.md](.github/CONTRIBUTING.md) and open issues.
