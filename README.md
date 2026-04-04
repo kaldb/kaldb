@@ -121,10 +121,10 @@ mvn package
 
 ## Talks And Architecture Deep Dives
 
-- Monitorama 2022: KalDB: A k8s Native Log Search Platform
-- Strange Loop 2022: KalDB: A Cloud Native Log Search Platform
-- Berlin Buzzwords 2023: KalDB: Serverless Lucene at Petabyte Scale
-- SREcon APAC 2023: Taming Spiky Log Volumes with KalDB
+- [Monitorama 2022: KalDB: A k8s Native Log Search Platform](https://www.youtube.com/watch?v=CQKXzQ1yyEQ)
+- [Strange Loop 2022: KalDB: A Cloud Native Log Search Platform](https://www.youtube.com/watch?v=TNf_oqm7JQQ)
+- [Berlin Buzzwords 2023: KalDB: Serverless Lucene at Petabyte Scale](https://www.youtube.com/watch?v=Xs-aNMg94ck)
+- [SREcon APAC 2023: Taming Spiky Log Volumes with KalDB](https://www.youtube.com/watch?v=GKV1m_w6mFc)
 
 The public talks complement the architecture docs well: the docs explain the components, while the talks explain the operational pressure and design tradeoffs that shaped them.
 
