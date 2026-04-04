@@ -3,11 +3,12 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/kaldb/kaldb/maven.yml?branch=kaldb-main&label=ci)](https://github.com/kaldb/kaldb/actions/workflows/maven.yml)
 [![License](https://img.shields.io/github/license/kaldb/kaldb)](LICENSE)
 [![Documentation](https://img.shields.io/badge/docs-kaldb.com-blue)](https://kaldb.com/docs/)
-[![GitHub stars](https://img.shields.io/github/stars/kaldb/kaldb?style=social)](https://github.com/kaldb/kaldb)
 
 KalDB is a cloud-native log search and analytics engine built for high-volume observability workloads. It combines OpenSearch-compatible APIs with a decoupled architecture: Kafka for durable ingest, Lucene for indexing, and S3 for indexed storage.
 
 [Quick Start](#quick-start) • [Architecture](#architecture-overview) • [Docs](https://kaldb.com/docs/) • [Talks](#talks-and-architecture-deep-dives) • [Contributing](.github/CONTRIBUTING.md)
+
+[Star it!](https://github.com/kaldb/kaldb)
 
 > KalDB builds on the Astra codebase originally open-sourced by Slack and reflects production learnings from large-scale deployments at Slack and Airbnb. The project is in transition, and parts of the codebase, APIs, and docs still use the original `Astra` name.
 
