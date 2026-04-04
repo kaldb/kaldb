@@ -22,11 +22,13 @@ KalDB is a cloud-native log search and analytics engine built for high-volume ob
 
 ## Why It Exists
 
-KalDB was created to solve the practical problems that show up when log search becomes large enough to hurt: ingest delays during traffic spikes, schema conflicts from fast-moving services, and operational complexity from running many large search clusters. The architecture and public talks around KalDB focus on a simple idea: keep the search experience fast, but move durability and long-term storage onto systems that scale more naturally for cloud-native environments.
+KalDB was created to solve practical problems that show up as log search scales.
+These include ingest delays during traffic spikes, schema conflicts from fast-moving services, and operational complexity from running many large search clusters.
+The architecture and public talks around KalDB focus on a simple idea: keep the search experience fast, but move durability and long-term storage onto systems that scale more naturally for cloud-native environments.
 
 ## Architecture Overview
 
-KalDB is a Lucene-based system inspired by aggregator/leaf/tailer style architectures. Kafka handles durable ingest, S3 stores indexed data, and stateless indexers can be scaled independently to keep fresh data searchable during spikes.
+KalDB is a Lucene-based system inspired by aggregator/leaf/tailer-style architectures. Kafka handles durable ingest, S3 stores indexed data, and stateless indexers can be scaled independently to keep fresh data searchable during spikes.
 
 ```mermaid
 flowchart TD

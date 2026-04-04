@@ -22,7 +22,8 @@ set -euo pipefail
 # Parse arguments
 # ------------------------------------------------------------------------------
 CLEAN_BUILD=false
-IMAGE_EXISTS=false
+readonly SCRIPT_IMAGE_LABEL_KEY="kaldb.quick_start.managed"
+readonly SCRIPT_IMAGE_LABEL_VALUE="true"
 
 # ------------------------------------------------------------------------------
 # Helpers
@@ -59,7 +60,6 @@ for arg in "$@"; do
   case $arg in
     --clean)
       CLEAN_BUILD=true
-      shift
       ;;
     --help)
       echo "KalDB Quick Start Script"
@@ -79,6 +79,11 @@ for arg in "$@"; do
       echo "  ./clean-astra.sh"
       echo ""
       exit 0
+      ;;
+    *)
+      echo "Unknown option: $arg" >&2
+      echo "Run './quick_start.sh --help' for usage." >&2
+      exit 1
       ;;
   esac
 done
@@ -101,7 +106,7 @@ fi
 if [ "$CLEAN_BUILD" = true ]; then
   echo "🔥 Performing full clean build..."
   docker compose down -v --remove-orphans
-  docker image prune -af --filter "label=astra-demo=true" || true
+  docker image prune -af --filter "label=$SCRIPT_IMAGE_LABEL_KEY=$SCRIPT_IMAGE_LABEL_VALUE" || true
 else
   echo "⚡ Skipping clean build (use --clean for a fresh start)."
 fi
@@ -109,13 +114,15 @@ fi
 # ------------------------------------------------------------------------------
 # Step 3. Build local image if necessary
 # ------------------------------------------------------------------------------
-if docker image inspect slackhq/astra >/dev/null 2>&1; then
-  IMAGE_EXISTS=true
-fi
+IMAGE_LABEL_VALUE=$(docker image inspect --format "{{ index .Config.Labels \"$SCRIPT_IMAGE_LABEL_KEY\" }}" slackhq/astra 2>/dev/null || true)
 
-if [ "$CLEAN_BUILD" = true ] || [ "$IMAGE_EXISTS" = false ]; then
+if [ "$CLEAN_BUILD" = true ] || [ "$IMAGE_LABEL_VALUE" != "$SCRIPT_IMAGE_LABEL_VALUE" ]; then
   echo "🔨 Building KalDB Docker image..."
-  docker build -t slackhq/astra -t astra:latest --label astra-demo=true .
+  docker build \
+    -t slackhq/astra \
+    -t astra:latest \
+    --label "$SCRIPT_IMAGE_LABEL_KEY=$SCRIPT_IMAGE_LABEL_VALUE" \
+    .
 else
   echo "⚡ Using existing KalDB Docker image (run with --clean to rebuild)."
 fi
