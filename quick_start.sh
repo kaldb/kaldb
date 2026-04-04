@@ -15,7 +15,7 @@ set -euo pipefail
 #   ./quick_start.sh --clean   # Full rebuild from scratch
 #
 # After you're done, you can clean everything up with:
-#   ./clean-astra.sh
+#   ./clean.sh
 # ------------------------------------------------------------------------------
 
 # ------------------------------------------------------------------------------
@@ -76,7 +76,7 @@ for arg in "$@"; do
       echo "  ./quick_start.sh --clean   # Full rebuild from scratch"
       echo ""
       echo "To clean up everything afterwards:"
-      echo "  ./clean-astra.sh"
+      echo "  ./clean.sh"
       echo ""
       exit 0
       ;;
@@ -184,5 +184,5 @@ echo "   - Grafana:      http://localhost:3000"
 echo "   - Zipkin UI:    http://localhost:9411"
 echo ""
 echo "For manual API examples, see docs/topics/Getting-started.md."
-echo "To stop and remove everything, run: ./clean-astra.sh"
+echo "To stop and remove everything, run: ./clean.sh"
 echo ""
