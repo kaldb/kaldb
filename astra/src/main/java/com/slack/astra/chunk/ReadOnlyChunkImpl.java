@@ -476,31 +476,22 @@ public class ReadOnlyChunkImpl<T> implements Chunk<T> {
                 snapshotName, cacheSearchContext.hostname),
             snapshotName,
             cacheSearchContext.toUrl(),
-            isSearchableCacheNode(cacheSearchContext));
+            isSearchableCacheNode());
     searchMetadataStore.createSync(metadata);
     return metadata;
   }
 
-  private boolean isSearchableCacheNode(SearchContext cacheSearchContext) {
+  private boolean isSearchableCacheNode() {
     CacheNodeAssignment cacheNodeAssignment = getCacheNodeAssignment();
-    CacheNodeMetadata cacheNodeMetadata = null;
-
-    if (cacheNodeAssignment != null) {
-      cacheNodeMetadata = this.cacheNodeMetadataStore.getSync(cacheNodeAssignment.cacheNodeId);
-    } else {
-      // Legacy cache-slot mode does not create CacheNodeAssignment records. Fall back to any
-      // hostname-level cache metadata if present and otherwise preserve the pre-query-gating
-      // behavior of treating the cache node as searchable.
-      cacheNodeMetadata =
-          this.cacheNodeMetadataStore.listSync().stream()
-              .filter(node -> Objects.equals(node.hostname, cacheSearchContext.hostname))
-              .findFirst()
-              .orElse(null);
+    if (cacheNodeAssignment == null) {
+      // Legacy cache-slot mode does not create CacheNodeAssignment records or participate in the
+      // newer cache-node searchability gating model.
+      return true;
     }
 
-    return cacheNodeMetadata == null || cacheNodeMetadata.searchable == null
-        ? true
-        : cacheNodeMetadata.searchable;
+    CacheNodeMetadata cacheNodeMetadata =
+        this.cacheNodeMetadataStore.getSync(cacheNodeAssignment.cacheNodeId);
+    return cacheNodeMetadata.searchable;
   }
 
   // We lock access when manipulating the chunk, as the close()
