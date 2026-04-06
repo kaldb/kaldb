@@ -470,17 +470,37 @@ public class ReadOnlyChunkImpl<T> implements Chunk<T> {
       SearchMetadataStore searchMetadataStore,
       SearchContext cacheSearchContext,
       String snapshotName) {
-    CacheNodeMetadata cacheNodeMetadata =
-        this.cacheNodeMetadataStore.getSync(getCacheNodeAssignment().cacheNodeId);
     SearchMetadata metadata =
         new SearchMetadata(
             SearchMetadata.generateSearchContextSnapshotId(
                 snapshotName, cacheSearchContext.hostname),
             snapshotName,
             cacheSearchContext.toUrl(),
-            cacheNodeMetadata.searchable);
+            isSearchableCacheNode(cacheSearchContext));
     searchMetadataStore.createSync(metadata);
     return metadata;
+  }
+
+  private boolean isSearchableCacheNode(SearchContext cacheSearchContext) {
+    CacheNodeAssignment cacheNodeAssignment = getCacheNodeAssignment();
+    CacheNodeMetadata cacheNodeMetadata = null;
+
+    if (cacheNodeAssignment != null) {
+      cacheNodeMetadata = this.cacheNodeMetadataStore.getSync(cacheNodeAssignment.cacheNodeId);
+    } else {
+      // Legacy cache-slot mode does not create CacheNodeAssignment records. Fall back to any
+      // hostname-level cache metadata if present and otherwise preserve the pre-query-gating
+      // behavior of treating the cache node as searchable.
+      cacheNodeMetadata =
+          this.cacheNodeMetadataStore.listSync().stream()
+              .filter(node -> Objects.equals(node.hostname, cacheSearchContext.hostname))
+              .findFirst()
+              .orElse(null);
+    }
+
+    return cacheNodeMetadata == null || cacheNodeMetadata.searchable == null
+        ? true
+        : cacheNodeMetadata.searchable;
   }
 
   // We lock access when manipulating the chunk, as the close()
