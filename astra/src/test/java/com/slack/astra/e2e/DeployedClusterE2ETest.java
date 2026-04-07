@@ -15,6 +15,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
@@ -39,16 +40,26 @@ public class DeployedClusterE2ETest {
             .truncatedTo(ChronoUnit.MINUTES)
             .minus(config.bucketCount() + 2L, ChronoUnit.MINUTES);
     String marker = "e2ecache" + UUID.randomUUID().toString().replace("-", "");
+    String matchingHostname = "host" + marker + ".e2e.test";
+    String otherHostname = "other" + marker + ".e2e.test";
+    long expectedMatchingDocs = (config.totalDocs() + 1L) / 2L;
 
-    ingestDocuments(config, marker, baseBucketTime);
+    ingestDocuments(config, marker, matchingHostname, otherHostname, baseBucketTime);
 
     await()
         .pollInterval(config.pollInterval())
         .atMost(config.pollTimeout())
-        .untilAsserted(() -> assertExpectedAggregations(config, marker));
+        .untilAsserted(
+            () ->
+                assertExpectedAggregations(config, marker, matchingHostname, expectedMatchingDocs));
   }
 
-  private void ingestDocuments(ExternalClusterConfig config, String marker, Instant baseBucketTime)
+  private void ingestDocuments(
+      ExternalClusterConfig config,
+      String marker,
+      String matchingHostname,
+      String otherHostname,
+      Instant baseBucketTime)
       throws Exception {
     String filler = "x".repeat(config.messageBytes());
     StringBuilder batchBody = new StringBuilder();
@@ -71,9 +82,11 @@ public class DeployedClusterE2ETest {
             .append('\n');
 
         Map<String, Object> document = new LinkedHashMap<>();
+        String hostname = totalDocs % 2 == 0 ? matchingHostname : otherHostname;
         document.put("@timestamp", bucketTime.toString());
         document.put(
             "message", marker + " bucket" + bucketIndex + " doc" + docIndex + " " + filler);
+        document.put("hostname", hostname);
         document.put("level", "INFO");
         document.put("test_run_id", marker);
         document.put("bucket_index", bucketIndex);
@@ -112,9 +125,10 @@ public class DeployedClusterE2ETest {
     assertThat(bulkResponse.errorMsg()).isBlank();
   }
 
-  private void assertExpectedAggregations(ExternalClusterConfig config, String marker)
+  private void assertExpectedAggregations(
+      ExternalClusterConfig config, String marker, String hostname, long expectedDocs)
       throws Exception {
-    String requestBody = buildMultiSearchRequest(config.dataset(), marker);
+    String requestBody = buildMultiSearchRequest(config.dataset(), marker, hostname);
     HttpResponse<String> response =
         postText(config.queryUri("/_msearch"), "application/x-ndjson", requestBody);
 
@@ -135,13 +149,22 @@ public class DeployedClusterE2ETest {
       aggregatedDocs += bucket.path("doc_count").asLong();
     }
 
-    assertThat(aggregatedDocs).isEqualTo(config.totalDocs());
+    assertThat(aggregatedDocs).isEqualTo(expectedDocs);
   }
 
-  private String buildMultiSearchRequest(String dataset, String marker) throws IOException {
+  private String buildMultiSearchRequest(String dataset, String marker, String hostname)
+      throws IOException {
     Map<String, Object> queryBody = new LinkedHashMap<>();
     queryBody.put("size", 0);
-    queryBody.put("query", Map.of("query_string", Map.of("query", "message:" + marker)));
+    queryBody.put(
+        "query",
+        Map.of(
+            "bool",
+            Map.of(
+                "filter",
+                List.of(
+                    Map.of("query_string", Map.of("query", "message:" + marker)),
+                    Map.of("query_string", Map.of("query", "hostname:" + hostname))))));
     queryBody.put(
         "aggs",
         Map.of(
