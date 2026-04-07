@@ -46,6 +46,7 @@ import com.slack.astra.proto.config.AstraConfigs;
 import com.slack.astra.proto.metadata.Metadata;
 import com.slack.astra.testlib.MessageUtil;
 import com.slack.astra.util.QueryBuilderUtil;
+import com.slack.astra.util.TestingZKServer;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.io.File;
@@ -90,7 +91,7 @@ public class ReadOnlyChunkImplTest {
   public void startup() throws Exception {
     Tracing.newBuilder().build();
     meterRegistry = new SimpleMeterRegistry();
-    testingServer = new TestingServer();
+    testingServer = TestingZKServer.createTestingServer();
 
     S3AsyncClient s3AsyncClient =
         S3TestUtils.createS3CrtClient(S3_MOCK_EXTENSION.getServiceEndpoint());
