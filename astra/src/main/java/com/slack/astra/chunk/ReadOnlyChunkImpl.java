@@ -470,17 +470,28 @@ public class ReadOnlyChunkImpl<T> implements Chunk<T> {
       SearchMetadataStore searchMetadataStore,
       SearchContext cacheSearchContext,
       String snapshotName) {
-    CacheNodeMetadata cacheNodeMetadata =
-        this.cacheNodeMetadataStore.getSync(getCacheNodeAssignment().cacheNodeId);
     SearchMetadata metadata =
         new SearchMetadata(
             SearchMetadata.generateSearchContextSnapshotId(
                 snapshotName, cacheSearchContext.hostname),
             snapshotName,
             cacheSearchContext.toUrl(),
-            cacheNodeMetadata.searchable);
+            isSearchableCacheNode());
     searchMetadataStore.createSync(metadata);
     return metadata;
+  }
+
+  private boolean isSearchableCacheNode() {
+    CacheNodeAssignment cacheNodeAssignment = getCacheNodeAssignment();
+    if (cacheNodeAssignment == null) {
+      // Legacy cache-slot mode does not create CacheNodeAssignment records or participate in the
+      // newer cache-node searchability gating model.
+      return true;
+    }
+
+    CacheNodeMetadata cacheNodeMetadata =
+        this.cacheNodeMetadataStore.getSync(cacheNodeAssignment.cacheNodeId);
+    return cacheNodeMetadata.searchable;
   }
 
   // We lock access when manipulating the chunk, as the close()
