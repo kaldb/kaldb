@@ -353,6 +353,46 @@ public class ReadOnlyChunkImplTest {
         .isEqualTo(1);
     assertThat(meterRegistry.get(CHUNK_ASSIGNMENT_TIMER).tag("successful", "false").timer().count())
         .isEqualTo(0);
+    assertThat(meterRegistry.get(CHUNK_EVICTION_TIMER).tag("successful", "true").timer().count())
+        .isEqualTo(0);
+    assertThat(meterRegistry.get(CHUNK_EVICTION_TIMER).tag("successful", "false").timer().count())
+        .isEqualTo(0);
+
+    CacheSlotMetadata cacheSlotMetadata =
+        cacheSlotMetadataStore.getSync(searchContext.hostname, readOnlyChunk.slotId);
+    cacheSlotMetadataStore
+        .updateNonFreeCacheSlotState(
+            cacheSlotMetadata, Metadata.CacheSlotMetadata.CacheSlotState.EVICT)
+        .get(1, TimeUnit.SECONDS);
+
+    await()
+        .until(
+            () ->
+                readOnlyChunk.getChunkMetadataState()
+                    == Metadata.CacheSlotMetadata.CacheSlotState.FREE);
+    await().until(() -> AstraMetadataTestUtils.listSyncUncached(searchMetadataStore).isEmpty());
+
+    SearchResult<LogMessage> logMessageEmptySearchResult =
+        readOnlyChunk.query(
+            new SearchQuery(
+                MessageUtil.TEST_DATASET_NAME,
+                Instant.now().minus(1, ChronoUnit.MINUTES).toEpochMilli(),
+                Instant.now().toEpochMilli(),
+                500,
+                Collections.emptyList(),
+                QueryBuilderUtil.generateQueryBuilder(
+                    "*:*",
+                    Instant.now().minus(1, ChronoUnit.MINUTES).toEpochMilli(),
+                    Instant.now().toEpochMilli()),
+                null,
+                createGenericDateHistogramAggregatorFactoriesBuilder()));
+    assertThat(logMessageEmptySearchResult).isEqualTo(SearchResult.empty());
+    assertThat(readOnlyChunk.info()).isNull();
+    assertThat(searchMetadataStore.listSync()).isEmpty();
+    assertThat(meterRegistry.get(CHUNK_EVICTION_TIMER).tag("successful", "true").timer().count())
+        .isEqualTo(1);
+    assertThat(meterRegistry.get(CHUNK_EVICTION_TIMER).tag("successful", "false").timer().count())
+        .isEqualTo(0);
 
     curatorFramework.unwrap().close();
   }
