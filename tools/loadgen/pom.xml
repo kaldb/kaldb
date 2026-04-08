@@ -9,12 +9,13 @@
   <packaging>jar</packaging>
 
   <name>Astra Tools — Load Generator</name>
-  <description>Minimal HTTP bulk load generator for KalDB/_bulk, used in quick-start demos.</description>
+  <description>HTTP load generator and steady-state Prometheus monitor for KalDB.</description>
 
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <javac.target>21</javac.target>
     <uberjar.name>tools-loadgen</uberjar.name>
+    <jackson.version>2.19.1</jackson.version>
 
     <!-- align with root project conventions -->
     <error.prone.version>2.38.0</error.prone.version>
@@ -31,7 +32,12 @@
   </licenses>
 
   <dependencies>
-    <!-- No runtime deps required: using JDK 21 HttpClient -->
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+      <version>${jackson.version}</version>
+    </dependency>
+
     <!-- Test deps -->
     <dependency>
       <groupId>org.junit.jupiter</groupId>
@@ -122,6 +128,7 @@
             <goals><goal>shade</goal></goals>
             <configuration>
               <finalName>${uberjar.name}</finalName>
+              <createDependencyReducedPom>false</createDependencyReducedPom>
               <transformers>
                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                   <manifestEntries>
@@ -237,4 +244,3 @@
     </pluginManagement>
   </build>
 </project>
-

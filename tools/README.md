@@ -46,6 +46,48 @@ the default `--backlog-docs 2000` should force recovery task creation. Use
 Use `tools/run_deployed_cluster_recovery_e2e.sh --help` to see service,
 StatefulSet, dataset, namespace, port, and workload-size options.
 
+Steady-state monitor
+====================
+
+`tools/loadgen` now supports a long-running `steady-state` mode for continuous
+ingest plus continuous aggregation queries. Instead of asserting in-process, it
+exports Prometheus metrics so Grafana and alert rules can detect drift between
+expected and observed docs-per-minute buckets.
+
+Build the shaded JAR:
+
+```
+mvn -pl tools/loadgen package
+```
+
+Run the steady-state monitor:
+
+```
+LOADGEN_MODE=steady-state \
+KALDB_BULK_URL=http://localhost:8086/_bulk \
+KALDB_QUERY_URL=http://localhost:8081/_msearch \
+INDEX=logs \
+METRICS_PORT=9464 \
+java -jar tools/loadgen/target/tools-loadgen.jar
+```
+
+Important metrics:
+
+```
+kaldb_steady_state_window_ready
+kaldb_steady_state_bucket_expected_docs{bucket_age_minutes="1"}
+kaldb_steady_state_bucket_observed_docs{bucket_age_minutes="1"}
+kaldb_steady_state_bucket_doc_delta{bucket_age_minutes="1"}
+kaldb_steady_state_bucket_doc_ratio{bucket_age_minutes="1"}
+kaldb_steady_state_window_min_ratio
+kaldb_steady_state_window_max_abs_delta_docs
+```
+
+The monitor warms up over `WINDOW_BUCKETS` minutes before
+`kaldb_steady_state_window_ready` becomes `1`, because it waits until every
+completed bucket in the rolling window has locally expected docs to compare
+against query results.
+
 Span generator tool
 ===================
 spangen is a cli tool that can generate spans from the command line. 
