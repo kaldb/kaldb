@@ -1,4 +1,4 @@
-package com.slack.astra.tools.loadgen;
+package com.slack.astra.tools.monitor;
 
 final class Env {
   private Env() {}

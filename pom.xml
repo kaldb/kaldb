@@ -25,6 +25,7 @@
         <module>benchmarks</module>
         <module>astra</module>
         <module>tools/loadgen</module>
+        <module>tools/steady-state-monitor</module>
     </modules>
 
     <build>

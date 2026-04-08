@@ -49,26 +49,25 @@ StatefulSet, dataset, namespace, port, and workload-size options.
 Steady-state monitor
 ====================
 
-`tools/loadgen` now supports a long-running `steady-state` mode for continuous
-ingest plus continuous aggregation queries. Instead of asserting in-process, it
+`tools/steady-state-monitor` is a continuous correctness monitor, not a load
+test. It keeps ingest and query running in parallel at a low steady rate and
 exports Prometheus metrics so Grafana and alert rules can detect drift between
 expected and observed docs-per-minute buckets.
 
 Build the shaded JAR:
 
 ```
-mvn -pl tools/loadgen package
+mvn -pl tools/steady-state-monitor package
 ```
 
-Run the steady-state monitor:
+Run the monitor:
 
 ```
-LOADGEN_MODE=steady-state \
 KALDB_BULK_URL=http://localhost:8086/_bulk \
 KALDB_QUERY_URL=http://localhost:8081/_msearch \
 INDEX=logs \
 METRICS_PORT=9464 \
-java -jar tools/loadgen/target/tools-loadgen.jar
+java -jar tools/steady-state-monitor/target/tools-steady-state-monitor.jar
 ```
 
 Important metrics:

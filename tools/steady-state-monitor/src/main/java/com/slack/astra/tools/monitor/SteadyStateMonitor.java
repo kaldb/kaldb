@@ -1,4 +1,4 @@
-package com.slack.astra.tools.loadgen;
+package com.slack.astra.tools.monitor;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -81,9 +81,9 @@ final class SteadyStateMonitor {
     this.lastQueryStatusCode = new AtomicLong();
     this.nextDocId = new AtomicLong(config.startId());
     this.ingestExecutor =
-        Executors.newSingleThreadScheduledExecutor(r -> new Thread(r, "kaldb-steady-state-ingest"));
+        Executors.newSingleThreadScheduledExecutor(r -> new Thread(r, "kaldb-monitor-ingest"));
     this.queryExecutor =
-        Executors.newSingleThreadScheduledExecutor(r -> new Thread(r, "kaldb-steady-state-query"));
+        Executors.newSingleThreadScheduledExecutor(r -> new Thread(r, "kaldb-monitor-query"));
     this.metricsServer =
         HttpServer.create(new InetSocketAddress(config.metricsHost(), config.metricsPort()), 0);
     this.metricsServer.createContext("/metrics", this::handleMetricsRequest);
@@ -97,10 +97,10 @@ final class SteadyStateMonitor {
   }
 
   private void run() throws InterruptedException {
-    Runtime.getRuntime().addShutdownHook(new Thread(this::stop, "kaldb-steady-state-shutdown"));
+    Runtime.getRuntime().addShutdownHook(new Thread(this::stop, "kaldb-monitor-shutdown"));
 
     System.out.printf(
-        "Starting steady-state monitor.%n  bulk=%s%n  query=%s%n  index=%s%n  metrics=http://%s:%d/metrics%n  run_id=%s%n  target_hostname=%s%n  distractor_hostname=%s%n  window_buckets=%d%n  ingest_delay_minutes=%d%n",
+        "Starting continuous correctness monitor.%n  bulk=%s%n  query=%s%n  index=%s%n  metrics=http://%s:%d/metrics%n  run_id=%s%n  target_hostname=%s%n  distractor_hostname=%s%n  window_buckets=%d%n  ingest_delay_minutes=%d%n",
         config.bulkUri(),
         config.queryUri(),
         config.index(),
@@ -140,7 +140,7 @@ final class SteadyStateMonitor {
     } catch (Exception e) {
       ingestBatchesFailedTotal.increment();
       ingestDocsFailedTotal.add(config.batchSize());
-      System.err.printf("steady-state ingest cycle failed: %s%n", e.getMessage());
+      System.err.printf("monitor ingest cycle failed: %s%n", e.getMessage());
     }
   }
 
@@ -149,13 +149,12 @@ final class SteadyStateMonitor {
       queryCycle();
     } catch (Exception e) {
       queryFailedTotal.increment();
-      System.err.printf("steady-state query cycle failed: %s%n", e.getMessage());
+      System.err.printf("monitor query cycle failed: %s%n", e.getMessage());
     }
   }
 
   private void ingestCycle() throws IOException, InterruptedException {
     long nowMs = System.currentTimeMillis();
-    // Always write into a delayed "active" minute so queries can evaluate only completed buckets.
     long bucketStartMs = activeBucketStartMs(nowMs);
     IngestBatch batch = buildIngestBatch(bucketStartMs);
 
@@ -168,7 +167,7 @@ final class SteadyStateMonitor {
       ingestBatchesFailedTotal.increment();
       ingestDocsFailedTotal.add(batch.totalDocs());
       System.err.printf(
-          "steady-state ingest HTTP %d for bucket %d%n", response.statusCode(), bucketStartMs);
+          "monitor ingest HTTP %d for bucket %d%n", response.statusCode(), bucketStartMs);
       return;
     }
 
@@ -179,7 +178,7 @@ final class SteadyStateMonitor {
       ingestBatchesFailedTotal.increment();
       ingestDocsFailedTotal.add(batch.totalDocs());
       System.err.printf(
-          "steady-state ingest partial failure: totalDocs=%d failedDocs=%d expected=%d%n",
+          "monitor ingest partial failure: totalDocs=%d failedDocs=%d expected=%d%n",
           totalDocs, failedDocs, batch.totalDocs());
       return;
     }
@@ -196,7 +195,6 @@ final class SteadyStateMonitor {
   private void queryCycle() throws IOException, InterruptedException {
     long nowMs = System.currentTimeMillis();
     long activeBucketStartMs = activeBucketStartMs(nowMs);
-    // Compare only completed buckets behind the active ingest bucket.
     long windowStartMs = activeBucketStartMs - (long) config.windowBuckets() * MINUTE_MS;
     String requestBody = buildQueryRequest(windowStartMs, activeBucketStartMs);
 
@@ -207,7 +205,7 @@ final class SteadyStateMonitor {
 
     if (response.statusCode() != 200) {
       queryFailedTotal.increment();
-      System.err.printf("steady-state query HTTP %d%n", response.statusCode());
+      System.err.printf("monitor query HTTP %d%n", response.statusCode());
       return;
     }
 
@@ -217,7 +215,7 @@ final class SteadyStateMonitor {
         || searchResponse.path("status").asInt(-1) != 200
         || searchResponse.path("_shards").path("failed").asInt(0) != 0) {
       queryFailedTotal.increment();
-      System.err.printf("steady-state query returned unexpected response: %s%n", response.body());
+      System.err.printf("monitor query returned unexpected response: %s%n", response.body());
       return;
     }
 
@@ -232,7 +230,7 @@ final class SteadyStateMonitor {
     JsonNode buckets = searchResponse.path("aggregations").path(AGGREGATION_NAME).path("buckets");
     if (!buckets.isArray()) {
       queryFailedTotal.increment();
-      System.err.println("steady-state query did not return aggregation buckets");
+      System.err.println("monitor query did not return aggregation buckets");
       return;
     }
 
@@ -613,7 +611,10 @@ final class SteadyStateMonitor {
       Duration requestTimeout) {
 
     private static Config fromEnvironment() {
-      String runId = Env.get("STEADY_STATE_RUN_ID", "steady" + System.currentTimeMillis());
+      String runId =
+          Env.get(
+              "MONITOR_RUN_ID",
+              Env.get("STEADY_STATE_RUN_ID", "steady" + System.currentTimeMillis()));
       String distractorHostname =
           Env.get("DISTRACTOR_HOSTNAME", Env.get("OTHER_HOSTNAME", runId + ".other.e2e.test"));
       return new Config(

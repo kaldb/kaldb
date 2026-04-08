@@ -4,19 +4,19 @@
   <modelVersion>4.0.0</modelVersion>
 
   <groupId>com.slack.astra</groupId>
-  <artifactId>tools-loadgen</artifactId>
+  <artifactId>tools-steady-state-monitor</artifactId>
   <version>0.1-SNAPSHOT</version>
   <packaging>jar</packaging>
 
-  <name>Astra Tools — Load Generator</name>
-  <description>Minimal HTTP bulk load generator for KalDB/_bulk, used in quick-start demos.</description>
+  <name>Astra Tools — Steady-State Monitor</name>
+  <description>Continuous correctness monitor for KalDB ingest/query steady state.</description>
 
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <javac.target>21</javac.target>
-    <uberjar.name>tools-loadgen</uberjar.name>
+    <uberjar.name>tools-steady-state-monitor</uberjar.name>
+    <jackson.version>2.19.1</jackson.version>
 
-    <!-- align with root project conventions -->
     <error.prone.version>2.38.0</error.prone.version>
     <junit.jupiter.version>5.13.1</junit.jupiter.version>
   </properties>
@@ -31,8 +31,12 @@
   </licenses>
 
   <dependencies>
-    <!-- No runtime deps required: using JDK 21 HttpClient -->
-    <!-- Test deps -->
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+      <version>${jackson.version}</version>
+    </dependency>
+
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>
@@ -51,67 +55,64 @@
     <defaultGoal>clean install</defaultGoal>
 
     <plugins>
-        <plugin>
-            <groupId>org.apache.maven.plugins</groupId>
-            <artifactId>maven-compiler-plugin</artifactId>
-            <version>3.14.0</version>
-            <configuration>
-                <release>${javac.target}</release>
-                <source>${javac.target}</source>
-                <testSource>${javac.target}</testSource>
-                <target>${javac.target}</target>
-                <fork>true</fork>
-                <compilerArgs>
-                    <arg>-XDcompilePolicy=simple</arg>
-                    <arg>--enable-preview</arg>
-                    <arg>-J--add-exports=jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED</arg>
-                    <arg>-J--add-exports=jdk.compiler/com.sun.tools.javac.file=ALL-UNNAMED</arg>
-                    <arg>-J--add-exports=jdk.compiler/com.sun.tools.javac.main=ALL-UNNAMED</arg>
-                    <arg>-J--add-exports=jdk.compiler/com.sun.tools.javac.model=ALL-UNNAMED</arg>
-                    <arg>-J--add-exports=jdk.compiler/com.sun.tools.javac.parser=ALL-UNNAMED</arg>
-                    <arg>-J--add-exports=jdk.compiler/com.sun.tools.javac.processing=ALL-UNNAMED</arg>
-                    <arg>-J--add-exports=jdk.compiler/com.sun.tools.javac.tree=ALL-UNNAMED</arg>
-                    <arg>-J--add-exports=jdk.compiler/com.sun.tools.javac.util=ALL-UNNAMED</arg>
-                    <arg>-J--add-opens=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED</arg>
-                    <arg>-J--add-opens=jdk.compiler/com.sun.tools.javac.comp=ALL-UNNAMED</arg>
-                    <arg>--should-stop=ifError=FLOW</arg>
-                    <!-- Error prone settings -->
-                    <arg>
-                        <!-- TODO: consider removing all specific error upgrades in favor of -Werror (all warnings as build errors) -->
-                        -Xplugin:ErrorProne \
-                        -XepDisableWarningsInGeneratedCode \
-                        -XepExcludedPaths:.*/protobuf/.* \
-                        -Xep:WildcardImport:ERROR \
-                        -Xep:AssertEqualsArgumentOrderChecker:ERROR \
-                        -Xep:AlmostJavadoc:ERROR \
-                        -Xep:FallThrough:ERROR \
-                        -Xep:Finally:ERROR \
-                        -Xep:InconsistentCapitalization:ERROR \
-                        -Xep:InconsistentHashCode:ERROR \
-                        -Xep:InlineFormatString:ERROR \
-                        -Xep:InvalidThrows:ERROR \
-                        -Xep:JavaInstantGetSecondsGetNano:ERROR \
-                        -Xep:JavaUtilDate:ERROR \
-                        -Xep:LockNotBeforeTry:ERROR \
-                        -Xep:MissingOverride:ERROR \
-                        -Xep:NullOptional:ERROR \
-                        -Xep:UnnecessaryParentheses:ERROR \
-                        -Xep:UnusedMethod:ERROR \
-                        -Xep:StreamResourceLeak:ERROR \
-                        -Xep:StaticAssignmentInConstructor:ERROR
-                    </arg>
-                </compilerArgs>
-                <annotationProcessorPaths>
-                    <path>
-                        <groupId>com.google.errorprone</groupId>
-                        <artifactId>error_prone_core</artifactId>
-                        <version>${error.prone.version}</version>
-                    </path>
-                </annotationProcessorPaths>
-            </configuration>
-        </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.14.0</version>
+        <configuration>
+          <release>${javac.target}</release>
+          <source>${javac.target}</source>
+          <testSource>${javac.target}</testSource>
+          <target>${javac.target}</target>
+          <fork>true</fork>
+          <compilerArgs>
+            <arg>-XDcompilePolicy=simple</arg>
+            <arg>--enable-preview</arg>
+            <arg>-J--add-exports=jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED</arg>
+            <arg>-J--add-exports=jdk.compiler/com.sun.tools.javac.file=ALL-UNNAMED</arg>
+            <arg>-J--add-exports=jdk.compiler/com.sun.tools.javac.main=ALL-UNNAMED</arg>
+            <arg>-J--add-exports=jdk.compiler/com.sun.tools.javac.model=ALL-UNNAMED</arg>
+            <arg>-J--add-exports=jdk.compiler/com.sun.tools.javac.parser=ALL-UNNAMED</arg>
+            <arg>-J--add-exports=jdk.compiler/com.sun.tools.javac.processing=ALL-UNNAMED</arg>
+            <arg>-J--add-exports=jdk.compiler/com.sun.tools.javac.tree=ALL-UNNAMED</arg>
+            <arg>-J--add-exports=jdk.compiler/com.sun.tools.javac.util=ALL-UNNAMED</arg>
+            <arg>-J--add-opens=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED</arg>
+            <arg>-J--add-opens=jdk.compiler/com.sun.tools.javac.comp=ALL-UNNAMED</arg>
+            <arg>--should-stop=ifError=FLOW</arg>
+            <arg>
+              -Xplugin:ErrorProne \
+              -XepDisableWarningsInGeneratedCode \
+              -XepExcludedPaths:.*/protobuf/.* \
+              -Xep:WildcardImport:ERROR \
+              -Xep:AssertEqualsArgumentOrderChecker:ERROR \
+              -Xep:AlmostJavadoc:ERROR \
+              -Xep:FallThrough:ERROR \
+              -Xep:Finally:ERROR \
+              -Xep:InconsistentCapitalization:ERROR \
+              -Xep:InconsistentHashCode:ERROR \
+              -Xep:InlineFormatString:ERROR \
+              -Xep:InvalidThrows:ERROR \
+              -Xep:JavaInstantGetSecondsGetNano:ERROR \
+              -Xep:JavaUtilDate:ERROR \
+              -Xep:LockNotBeforeTry:ERROR \
+              -Xep:MissingOverride:ERROR \
+              -Xep:NullOptional:ERROR \
+              -Xep:UnnecessaryParentheses:ERROR \
+              -Xep:UnusedMethod:ERROR \
+              -Xep:StreamResourceLeak:ERROR \
+              -Xep:StaticAssignmentInConstructor:ERROR
+            </arg>
+          </compilerArgs>
+          <annotationProcessorPaths>
+            <path>
+              <groupId>com.google.errorprone</groupId>
+              <artifactId>error_prone_core</artifactId>
+              <version>${error.prone.version}</version>
+            </path>
+          </annotationProcessorPaths>
+        </configuration>
+      </plugin>
 
-      <!-- Shade to a single runnable JAR -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-shade-plugin</artifactId>
@@ -122,10 +123,11 @@
             <goals><goal>shade</goal></goals>
             <configuration>
               <finalName>${uberjar.name}</finalName>
+              <createDependencyReducedPom>false</createDependencyReducedPom>
               <transformers>
                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                   <manifestEntries>
-                    <Main-Class>com.slack.astra.tools.loadgen.LoadGen</Main-Class>
+                    <Main-Class>com.slack.astra.tools.monitor.MonitorMain</Main-Class>
                     <Multi-Release>true</Multi-Release>
                   </manifestEntries>
                 </transformer>
@@ -145,7 +147,6 @@
         </executions>
       </plugin>
 
-      <!-- Enforce dep sanity (lightweight) -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-enforcer-plugin</artifactId>
@@ -162,7 +163,6 @@
         </executions>
       </plugin>
 
-      <!-- Apply Google Java Format like the main repo -->
       <plugin>
         <groupId>com.spotify.fmt</groupId>
         <artifactId>fmt-maven-plugin</artifactId>
@@ -179,7 +179,6 @@
           <style>google</style>
         </configuration>
         <dependencies>
-          <!-- keep in sync with main project -->
           <dependency>
             <groupId>com.google.googlejavaformat</groupId>
             <artifactId>google-java-format</artifactId>
@@ -194,7 +193,6 @@
       </plugin>
     </plugins>
 
-    <!-- Centralize plugin versions (optional, mirrors root style) -->
     <pluginManagement>
       <plugins>
         <plugin>
@@ -237,4 +235,3 @@
     </pluginManagement>
   </build>
 </project>
-
