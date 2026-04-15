@@ -1,43 +1,27 @@
-Steady-state monitor
+Synthetic data probe
 ====================
 
-`tools/steady-state-monitor` is a continuous correctness monitor, not a load
-test. It keeps ingest and query running in parallel at a low steady rate and
-exports Prometheus metrics so Grafana and alert rules can detect drift between
-expected and observed docs-per-minute buckets.
+The synthetic data probe is packaged inside `astra.jar`. It continuously writes
+synthetic documents through `_bulk`, queries those documents back through
+`_msearch`, and exposes Prometheus metrics on `/metrics`.
 
-Build the shaded JAR:
-
-```
-mvn -pl tools/steady-state-monitor package
-```
-
-Run the monitor:
+Run it from a built KalDB image or local jar with:
 
 ```
-KALDB_BULK_URL=http://localhost:8086/_bulk \
-KALDB_QUERY_URL=http://localhost:8081/_msearch \
-INDEX=logs \
-METRICS_PORT=9464 \
-java -jar tools/steady-state-monitor/target/tools-steady-state-monitor.jar
+java --enable-preview -cp /astra.jar com.slack.astra.tools.syntheticdataprobe.SyntheticDataProbeMain
 ```
 
-Important metrics:
+Useful environment variables:
 
 ```
-kaldb_steady_state_window_ready
-kaldb_steady_state_bucket_expected_docs{bucket_age_minutes="1"}
-kaldb_steady_state_bucket_observed_docs{bucket_age_minutes="1"}
-kaldb_steady_state_bucket_doc_delta{bucket_age_minutes="1"}
-kaldb_steady_state_bucket_doc_ratio{bucket_age_minutes="1"}
-kaldb_steady_state_window_min_ratio
-kaldb_steady_state_window_max_abs_delta_docs
+KALDB_BULK_URL=http://ingest:8086/_bulk
+KALDB_QUERY_URL=http://query:8081/_msearch
+INDEX=logs
+SYNTHETIC_DATA_PROBE_RUN_ID=synthetic
+TARGET_HOSTNAME=synthetic-data-probe.target
+DISTRACTOR_HOSTNAME=synthetic-data-probe.other
+METRICS_PORT=9464
 ```
-
-The monitor warms up over `WINDOW_BUCKETS` minutes before
-`kaldb_steady_state_window_ready` becomes `1`, because it waits until every
-completed bucket in the rolling window has locally expected docs to compare
-against query results.
 
 Span generator tool
 ===================

@@ -1,4 +1,4 @@
-package com.slack.astra.tools.monitor;
+package com.slack.astra.tools.syntheticdataprobe;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -12,6 +12,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -29,14 +30,16 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
 
-final class SteadyStateMonitor {
+final class SyntheticDataProbe {
   private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
   private static final DateTimeFormatter ISO_MILLIS =
       DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'").withZone(ZoneOffset.UTC);
   private static final long MINUTE_MS = 60_000L;
   private static final String AGGREGATION_NAME = "per_minute";
+  private static final String METRIC_PREFIX = "kaldb_synthetic_data_probe_";
 
   private final Config config;
+  private final Clock clock;
   private final HttpClient httpClient;
   private final ConcurrentMap<Long, BucketStats> bucketStatsByStartMs;
   private final LongAdder ingestRequestsTotal;
@@ -59,8 +62,13 @@ final class SteadyStateMonitor {
   private final String filler;
   private volatile boolean stopped;
 
-  private SteadyStateMonitor(Config config) throws IOException {
+  private SyntheticDataProbe(Config config) throws IOException {
+    this(config, Clock.systemUTC());
+  }
+
+  SyntheticDataProbe(Config config, Clock clock) throws IOException {
     this.config = config;
+    this.clock = clock;
     this.httpClient =
         HttpClient.newBuilder()
             .connectTimeout(config.connectTimeout())
@@ -81,9 +89,11 @@ final class SteadyStateMonitor {
     this.lastQueryStatusCode = new AtomicLong();
     this.nextDocId = new AtomicLong(config.startId());
     this.ingestExecutor =
-        Executors.newSingleThreadScheduledExecutor(r -> new Thread(r, "kaldb-monitor-ingest"));
+        Executors.newSingleThreadScheduledExecutor(
+            r -> new Thread(r, "kaldb-synthetic-data-probe-ingest"));
     this.queryExecutor =
-        Executors.newSingleThreadScheduledExecutor(r -> new Thread(r, "kaldb-monitor-query"));
+        Executors.newSingleThreadScheduledExecutor(
+            r -> new Thread(r, "kaldb-synthetic-data-probe-query"));
     this.metricsServer =
         HttpServer.create(new InetSocketAddress(config.metricsHost(), config.metricsPort()), 0);
     this.metricsServer.createContext("/metrics", this::handleMetricsRequest);
@@ -93,14 +103,15 @@ final class SteadyStateMonitor {
   }
 
   static void runFromEnvironment() throws Exception {
-    new SteadyStateMonitor(Config.fromEnvironment()).run();
+    new SyntheticDataProbe(Config.fromEnvironment()).run();
   }
 
   private void run() throws InterruptedException {
-    Runtime.getRuntime().addShutdownHook(new Thread(this::stop, "kaldb-monitor-shutdown"));
+    Runtime.getRuntime()
+        .addShutdownHook(new Thread(this::stop, "kaldb-synthetic-data-probe-shutdown"));
 
     System.out.printf(
-        "Starting continuous correctness monitor.%n  bulk=%s%n  query=%s%n  index=%s%n  metrics=http://%s:%d/metrics%n  run_id=%s%n  target_hostname=%s%n  distractor_hostname=%s%n  window_buckets=%d%n  ingest_delay_minutes=%d%n",
+        "Starting synthetic data probe.%n  bulk=%s%n  query=%s%n  index=%s%n  metrics=http://%s:%d/metrics%n  run_id=%s%n  target_hostname=%s%n  distractor_hostname=%s%n  window_buckets=%d%n  ingest_delay_minutes=%d%n",
         config.bulkUri(),
         config.queryUri(),
         config.index(),
@@ -123,7 +134,7 @@ final class SteadyStateMonitor {
     done.await();
   }
 
-  private void stop() {
+  void stop() {
     if (stopped) {
       return;
     }
@@ -140,7 +151,7 @@ final class SteadyStateMonitor {
     } catch (Exception e) {
       ingestBatchesFailedTotal.increment();
       ingestDocsFailedTotal.add(config.batchSize());
-      System.err.printf("monitor ingest cycle failed: %s%n", e.getMessage());
+      System.err.printf("synthetic data probe ingest cycle failed: %s%n", e.getMessage());
     }
   }
 
@@ -149,12 +160,12 @@ final class SteadyStateMonitor {
       queryCycle();
     } catch (Exception e) {
       queryFailedTotal.increment();
-      System.err.printf("monitor query cycle failed: %s%n", e.getMessage());
+      System.err.printf("synthetic data probe query cycle failed: %s%n", e.getMessage());
     }
   }
 
-  private void ingestCycle() throws IOException, InterruptedException {
-    long nowMs = System.currentTimeMillis();
+  void ingestCycle() throws IOException, InterruptedException {
+    long nowMs = clock.millis();
     long bucketStartMs = activeBucketStartMs(nowMs);
     IngestBatch batch = buildIngestBatch(bucketStartMs);
 
@@ -167,7 +178,8 @@ final class SteadyStateMonitor {
       ingestBatchesFailedTotal.increment();
       ingestDocsFailedTotal.add(batch.totalDocs());
       System.err.printf(
-          "monitor ingest HTTP %d for bucket %d%n", response.statusCode(), bucketStartMs);
+          "synthetic data probe ingest HTTP %d for bucket %d%n",
+          response.statusCode(), bucketStartMs);
       return;
     }
 
@@ -178,7 +190,7 @@ final class SteadyStateMonitor {
       ingestBatchesFailedTotal.increment();
       ingestDocsFailedTotal.add(batch.totalDocs());
       System.err.printf(
-          "monitor ingest partial failure: totalDocs=%d failedDocs=%d expected=%d%n",
+          "synthetic data probe ingest partial failure: totalDocs=%d failedDocs=%d expected=%d%n",
           totalDocs, failedDocs, batch.totalDocs());
       return;
     }
@@ -192,8 +204,8 @@ final class SteadyStateMonitor {
     pruneOldBuckets(nowMs);
   }
 
-  private void queryCycle() throws IOException, InterruptedException {
-    long nowMs = System.currentTimeMillis();
+  void queryCycle() throws IOException, InterruptedException {
+    long nowMs = clock.millis();
     long activeBucketStartMs = activeBucketStartMs(nowMs);
     long windowStartMs = activeBucketStartMs - (long) config.windowBuckets() * MINUTE_MS;
     String requestBody = buildQueryRequest(windowStartMs, activeBucketStartMs);
@@ -205,7 +217,7 @@ final class SteadyStateMonitor {
 
     if (response.statusCode() != 200) {
       queryFailedTotal.increment();
-      System.err.printf("monitor query HTTP %d%n", response.statusCode());
+      System.err.printf("synthetic data probe query HTTP %d%n", response.statusCode());
       return;
     }
 
@@ -215,7 +227,8 @@ final class SteadyStateMonitor {
         || searchResponse.path("status").asInt(-1) != 200
         || searchResponse.path("_shards").path("failed").asInt(0) != 0) {
       queryFailedTotal.increment();
-      System.err.printf("monitor query returned unexpected response: %s%n", response.body());
+      System.err.printf(
+          "synthetic data probe query returned unexpected response: %s%n", response.body());
       return;
     }
 
@@ -230,7 +243,7 @@ final class SteadyStateMonitor {
     JsonNode buckets = searchResponse.path("aggregations").path(AGGREGATION_NAME).path("buckets");
     if (!buckets.isArray()) {
       queryFailedTotal.increment();
-      System.err.println("monitor query did not return aggregation buckets");
+      System.err.println("synthetic data probe query did not return aggregation buckets");
       return;
     }
 
@@ -276,7 +289,8 @@ final class SteadyStateMonitor {
 
       Map<String, Object> document = new LinkedHashMap<>();
       document.put("@timestamp", timestamp);
-      document.put("message", "steady-state " + config.runId() + " doc " + docId + " " + filler);
+      document.put(
+          "message", "synthetic-data-probe " + config.runId() + " doc " + docId + " " + filler);
       document.put(config.hostnameField(), hostname);
       document.put("level", "INFO");
       document.put("test_run_id", config.runId());
@@ -365,89 +379,77 @@ final class SteadyStateMonitor {
     }
   }
 
-  private String buildMetricsPayload() {
-    long nowMs = System.currentTimeMillis();
+  String buildMetricsPayload() {
+    long nowMs = clock.millis();
     long activeBucketStartMs = activeBucketStartMs(nowMs);
     WindowSnapshot snapshot = buildWindowSnapshot(activeBucketStartMs);
     StringBuilder metrics = new StringBuilder(4096);
 
-    appendMetricType(metrics, "kaldb_steady_state_up", "gauge");
-    appendMetricType(metrics, "kaldb_steady_state_window_ready", "gauge");
-    appendMetricType(metrics, "kaldb_steady_state_window_min_ratio", "gauge");
-    appendMetricType(metrics, "kaldb_steady_state_window_max_abs_delta_docs", "gauge");
-    appendMetricType(metrics, "kaldb_steady_state_window_buckets_with_expected_docs", "gauge");
-    appendMetricType(metrics, "kaldb_steady_state_active_ingest_bucket_epoch_seconds", "gauge");
-    appendMetricType(metrics, "kaldb_steady_state_last_ingest_success_epoch_seconds", "gauge");
-    appendMetricType(metrics, "kaldb_steady_state_last_query_success_epoch_seconds", "gauge");
-    appendMetricType(metrics, "kaldb_steady_state_last_ingest_status_code", "gauge");
-    appendMetricType(metrics, "kaldb_steady_state_last_query_status_code", "gauge");
-    appendMetricType(metrics, "kaldb_steady_state_ingest_requests_total", "counter");
-    appendMetricType(metrics, "kaldb_steady_state_ingest_batches_succeeded_total", "counter");
-    appendMetricType(metrics, "kaldb_steady_state_ingest_batches_failed_total", "counter");
-    appendMetricType(metrics, "kaldb_steady_state_ingest_docs_accepted_total", "counter");
-    appendMetricType(metrics, "kaldb_steady_state_ingest_docs_failed_total", "counter");
-    appendMetricType(metrics, "kaldb_steady_state_query_requests_total", "counter");
-    appendMetricType(metrics, "kaldb_steady_state_query_succeeded_total", "counter");
-    appendMetricType(metrics, "kaldb_steady_state_query_failed_total", "counter");
-    appendMetricType(metrics, "kaldb_steady_state_bucket_expected_docs", "gauge");
-    appendMetricType(metrics, "kaldb_steady_state_bucket_observed_docs", "gauge");
-    appendMetricType(metrics, "kaldb_steady_state_bucket_doc_delta", "gauge");
-    appendMetricType(metrics, "kaldb_steady_state_bucket_doc_ratio", "gauge");
-    appendMetricType(metrics, "kaldb_steady_state_bucket_epoch_seconds", "gauge");
+    appendMetricType(metrics, metricName("up"), "gauge");
+    appendMetricType(metrics, metricName("window_ready"), "gauge");
+    appendMetricType(metrics, metricName("window_min_ratio"), "gauge");
+    appendMetricType(metrics, metricName("window_max_abs_delta_docs"), "gauge");
+    appendMetricType(metrics, metricName("window_buckets_with_expected_docs"), "gauge");
+    appendMetricType(metrics, metricName("active_ingest_bucket_epoch_seconds"), "gauge");
+    appendMetricType(metrics, metricName("last_ingest_success_epoch_seconds"), "gauge");
+    appendMetricType(metrics, metricName("last_query_success_epoch_seconds"), "gauge");
+    appendMetricType(metrics, metricName("last_ingest_status_code"), "gauge");
+    appendMetricType(metrics, metricName("last_query_status_code"), "gauge");
+    appendMetricType(metrics, metricName("ingest_requests_total"), "counter");
+    appendMetricType(metrics, metricName("ingest_batches_succeeded_total"), "counter");
+    appendMetricType(metrics, metricName("ingest_batches_failed_total"), "counter");
+    appendMetricType(metrics, metricName("ingest_docs_accepted_total"), "counter");
+    appendMetricType(metrics, metricName("ingest_docs_failed_total"), "counter");
+    appendMetricType(metrics, metricName("query_requests_total"), "counter");
+    appendMetricType(metrics, metricName("query_succeeded_total"), "counter");
+    appendMetricType(metrics, metricName("query_failed_total"), "counter");
+    appendMetricType(metrics, metricName("bucket_expected_docs"), "gauge");
+    appendMetricType(metrics, metricName("bucket_observed_docs"), "gauge");
+    appendMetricType(metrics, metricName("bucket_doc_delta"), "gauge");
+    appendMetricType(metrics, metricName("bucket_doc_ratio"), "gauge");
+    appendMetricType(metrics, metricName("bucket_epoch_seconds"), "gauge");
 
-    appendGauge(metrics, "kaldb_steady_state_up", stopped ? 0 : 1);
-    appendGauge(metrics, "kaldb_steady_state_window_ready", snapshot.ready() ? 1 : 0);
-    appendGauge(metrics, "kaldb_steady_state_window_min_ratio", snapshot.minRatio());
-    appendGauge(
-        metrics, "kaldb_steady_state_window_max_abs_delta_docs", snapshot.maxAbsDeltaDocs());
+    appendGauge(metrics, metricName("up"), stopped ? 0 : 1);
+    appendGauge(metrics, metricName("window_ready"), snapshot.ready() ? 1 : 0);
+    appendGauge(metrics, metricName("window_min_ratio"), snapshot.minRatio());
+    appendGauge(metrics, metricName("window_max_abs_delta_docs"), snapshot.maxAbsDeltaDocs());
     appendGauge(
         metrics,
-        "kaldb_steady_state_window_buckets_with_expected_docs",
+        metricName("window_buckets_with_expected_docs"),
         snapshot.bucketsWithExpectedDocs());
     appendGauge(
-        metrics,
-        "kaldb_steady_state_active_ingest_bucket_epoch_seconds",
-        activeBucketStartMs / 1000.0);
+        metrics, metricName("active_ingest_bucket_epoch_seconds"), activeBucketStartMs / 1000.0);
     appendGauge(
         metrics,
-        "kaldb_steady_state_last_ingest_success_epoch_seconds",
+        metricName("last_ingest_success_epoch_seconds"),
         lastIngestSuccessEpochMs.get() / 1000.0);
     appendGauge(
         metrics,
-        "kaldb_steady_state_last_query_success_epoch_seconds",
+        metricName("last_query_success_epoch_seconds"),
         lastQuerySuccessEpochMs.get() / 1000.0);
-    appendGauge(metrics, "kaldb_steady_state_last_ingest_status_code", lastIngestStatusCode.get());
-    appendGauge(metrics, "kaldb_steady_state_last_query_status_code", lastQueryStatusCode.get());
+    appendGauge(metrics, metricName("last_ingest_status_code"), lastIngestStatusCode.get());
+    appendGauge(metrics, metricName("last_query_status_code"), lastQueryStatusCode.get());
 
-    appendCounter(metrics, "kaldb_steady_state_ingest_requests_total", ingestRequestsTotal.sum());
+    appendCounter(metrics, metricName("ingest_requests_total"), ingestRequestsTotal.sum());
     appendCounter(
-        metrics,
-        "kaldb_steady_state_ingest_batches_succeeded_total",
-        ingestBatchesSucceededTotal.sum());
+        metrics, metricName("ingest_batches_succeeded_total"), ingestBatchesSucceededTotal.sum());
     appendCounter(
-        metrics, "kaldb_steady_state_ingest_batches_failed_total", ingestBatchesFailedTotal.sum());
-    appendCounter(
-        metrics, "kaldb_steady_state_ingest_docs_accepted_total", ingestDocsAcceptedTotal.sum());
-    appendCounter(
-        metrics, "kaldb_steady_state_ingest_docs_failed_total", ingestDocsFailedTotal.sum());
-    appendCounter(metrics, "kaldb_steady_state_query_requests_total", queryRequestsTotal.sum());
-    appendCounter(metrics, "kaldb_steady_state_query_succeeded_total", querySucceededTotal.sum());
-    appendCounter(metrics, "kaldb_steady_state_query_failed_total", queryFailedTotal.sum());
+        metrics, metricName("ingest_batches_failed_total"), ingestBatchesFailedTotal.sum());
+    appendCounter(metrics, metricName("ingest_docs_accepted_total"), ingestDocsAcceptedTotal.sum());
+    appendCounter(metrics, metricName("ingest_docs_failed_total"), ingestDocsFailedTotal.sum());
+    appendCounter(metrics, metricName("query_requests_total"), queryRequestsTotal.sum());
+    appendCounter(metrics, metricName("query_succeeded_total"), querySucceededTotal.sum());
+    appendCounter(metrics, metricName("query_failed_total"), queryFailedTotal.sum());
 
     for (BucketSnapshot bucket : snapshot.buckets()) {
       Map<String, String> labels =
           Map.of("bucket_age_minutes", String.valueOf(bucket.bucketAgeMinutes()));
+      appendGauge(metrics, metricName("bucket_expected_docs"), labels, bucket.expectedDocs());
+      appendGauge(metrics, metricName("bucket_observed_docs"), labels, bucket.observedDocs());
+      appendGauge(metrics, metricName("bucket_doc_delta"), labels, bucket.deltaDocs());
+      appendGauge(metrics, metricName("bucket_doc_ratio"), labels, bucket.ratio());
       appendGauge(
-          metrics, "kaldb_steady_state_bucket_expected_docs", labels, bucket.expectedDocs());
-      appendGauge(
-          metrics, "kaldb_steady_state_bucket_observed_docs", labels, bucket.observedDocs());
-      appendGauge(metrics, "kaldb_steady_state_bucket_doc_delta", labels, bucket.deltaDocs());
-      appendGauge(metrics, "kaldb_steady_state_bucket_doc_ratio", labels, bucket.ratio());
-      appendGauge(
-          metrics,
-          "kaldb_steady_state_bucket_epoch_seconds",
-          labels,
-          bucket.bucketStartMs() / 1000.0);
+          metrics, metricName("bucket_epoch_seconds"), labels, bucket.bucketStartMs() / 1000.0);
     }
 
     return metrics.toString();
@@ -488,7 +490,7 @@ final class SteadyStateMonitor {
   }
 
   private boolean windowReady() {
-    long activeBucketStartMs = activeBucketStartMs(System.currentTimeMillis());
+    long activeBucketStartMs = activeBucketStartMs(clock.millis());
     for (int age = 1; age <= config.windowBuckets(); age++) {
       long bucketStartMs = activeBucketStartMs - (long) age * MINUTE_MS;
       BucketStats bucketStats = bucketStatsByStartMs.get(bucketStartMs);
@@ -517,6 +519,10 @@ final class SteadyStateMonitor {
 
   private static String quotedQueryStringValue(String value) {
     return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+  }
+
+  private static String metricName(String suffix) {
+    return METRIC_PREFIX + suffix;
   }
 
   private static void appendCounter(StringBuilder metrics, String name, long value) {
@@ -590,7 +596,7 @@ final class SteadyStateMonitor {
     private final AtomicLong observedTargetDocs = new AtomicLong();
   }
 
-  private record Config(
+  record Config(
       URI bulkUri,
       URI queryUri,
       String index,
@@ -612,17 +618,15 @@ final class SteadyStateMonitor {
 
     private static Config fromEnvironment() {
       String runId =
-          Env.get(
-              "MONITOR_RUN_ID",
-              Env.get("STEADY_STATE_RUN_ID", "steady" + System.currentTimeMillis()));
+          Env.get("SYNTHETIC_DATA_PROBE_RUN_ID", "synthetic" + System.currentTimeMillis());
       String distractorHostname =
-          Env.get("DISTRACTOR_HOSTNAME", Env.get("OTHER_HOSTNAME", runId + ".other.e2e.test"));
+          Env.get("DISTRACTOR_HOSTNAME", runId + ".other.synthetic-data-probe.test");
       return new Config(
           URI.create(Env.get("KALDB_BULK_URL", "http://localhost:8086/_bulk")),
           URI.create(Env.get("KALDB_QUERY_URL", "http://localhost:8081/_msearch")),
           Env.get("INDEX", "logs"),
           runId,
-          Env.get("TARGET_HOSTNAME", runId + ".target.e2e.test"),
+          Env.get("TARGET_HOSTNAME", runId + ".target.synthetic-data-probe.test"),
           distractorHostname,
           Env.get("HOSTNAME_FIELD", "hostname"),
           Env.get("METRICS_HOST", "0.0.0.0"),

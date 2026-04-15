@@ -1,4 +1,4 @@
-package com.slack.astra.tools.monitor;
+package com.slack.astra.tools.syntheticdataprobe;
 
 final class Env {
   private Env() {}
