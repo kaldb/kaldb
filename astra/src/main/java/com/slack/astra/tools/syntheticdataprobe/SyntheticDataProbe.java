@@ -35,6 +35,7 @@ final class SyntheticDataProbe {
   private static final DateTimeFormatter ISO_MILLIS =
       DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'").withZone(ZoneOffset.UTC);
   private static final long MINUTE_MS = 60_000L;
+  private static final long NO_COVERED_BUCKET = Long.MIN_VALUE;
   private static final String AGGREGATION_NAME = "per_minute";
   private static final String METRIC_PREFIX = "kaldb_synthetic_data_probe_";
 
@@ -45,6 +46,7 @@ final class SyntheticDataProbe {
   private final LongAdder ingestRequestsTotal;
   private final LongAdder ingestBatchesSucceededTotal;
   private final LongAdder ingestBatchesFailedTotal;
+  private final LongAdder ingestCatchupBatchesTotal;
   private final LongAdder ingestDocsAcceptedTotal;
   private final LongAdder ingestDocsFailedTotal;
   private final LongAdder queryRequestsTotal;
@@ -55,6 +57,7 @@ final class SyntheticDataProbe {
   private final AtomicLong lastIngestStatusCode;
   private final AtomicLong lastQueryStatusCode;
   private final AtomicLong nextDocId;
+  private final AtomicLong lastCoveredBucketStartMs;
   private final ScheduledExecutorService ingestExecutor;
   private final ScheduledExecutorService queryExecutor;
   private final HttpServer metricsServer;
@@ -78,6 +81,7 @@ final class SyntheticDataProbe {
     this.ingestRequestsTotal = new LongAdder();
     this.ingestBatchesSucceededTotal = new LongAdder();
     this.ingestBatchesFailedTotal = new LongAdder();
+    this.ingestCatchupBatchesTotal = new LongAdder();
     this.ingestDocsAcceptedTotal = new LongAdder();
     this.ingestDocsFailedTotal = new LongAdder();
     this.queryRequestsTotal = new LongAdder();
@@ -88,6 +92,7 @@ final class SyntheticDataProbe {
     this.lastIngestStatusCode = new AtomicLong();
     this.lastQueryStatusCode = new AtomicLong();
     this.nextDocId = new AtomicLong(config.startId());
+    this.lastCoveredBucketStartMs = new AtomicLong(NO_COVERED_BUCKET);
     this.ingestExecutor =
         Executors.newSingleThreadScheduledExecutor(
             r -> new Thread(r, "kaldb-synthetic-data-probe-ingest"));
@@ -111,7 +116,7 @@ final class SyntheticDataProbe {
         .addShutdownHook(new Thread(this::stop, "kaldb-synthetic-data-probe-shutdown"));
 
     System.out.printf(
-        "Starting synthetic data probe.%n  bulk=%s%n  query=%s%n  index=%s%n  metrics=http://%s:%d/metrics%n  run_id=%s%n  target_hostname=%s%n  distractor_hostname=%s%n  window_buckets=%d%n  ingest_delay_minutes=%d%n",
+        "Starting synthetic data probe.%n  bulk=%s%n  query=%s%n  index=%s%n  metrics=http://%s:%d/metrics%n  run_id=%s%n  target_hostname=%s%n  distractor_hostname=%s%n  window_buckets=%d%n  checked_bucket_age_minutes=%d..%d%n  max_catchup_buckets_per_cycle=%d%n",
         config.bulkUri(),
         config.queryUri(),
         config.index(),
@@ -121,7 +126,9 @@ final class SyntheticDataProbe {
         config.targetHostname(),
         config.distractorHostname(),
         config.windowBuckets(),
-        config.ingestDelayMinutes());
+        config.newestBucketAgeMinutes(),
+        config.oldestCheckedBucketAgeMinutes(),
+        config.maxCatchupBucketsPerCycle());
 
     metricsServer.start();
     var unusedIngestTask =
@@ -166,7 +173,31 @@ final class SyntheticDataProbe {
 
   void ingestCycle() throws IOException, InterruptedException {
     long nowMs = clock.millis();
-    long bucketStartMs = activeBucketStartMs(nowMs);
+    long activeBucketStartMs = activeBucketStartMs(nowMs);
+    long lastCoveredBucketStartMs = this.lastCoveredBucketStartMs.get();
+    boolean catchingUp =
+        lastCoveredBucketStartMs != NO_COVERED_BUCKET
+            && lastCoveredBucketStartMs < activeBucketStartMs;
+    long firstBucketStartMs =
+        catchingUp ? lastCoveredBucketStartMs + MINUTE_MS : activeBucketStartMs;
+    int maxBucketsThisCycle = catchingUp ? config.maxCatchupBucketsPerCycle() : 1;
+
+    int ingestedBuckets = 0;
+    for (long bucketStartMs = firstBucketStartMs;
+        bucketStartMs <= activeBucketStartMs && ingestedBuckets < maxBucketsThisCycle;
+        bucketStartMs += MINUTE_MS) {
+      if (!ingestBucket(bucketStartMs, nowMs, catchingUp)) {
+        return;
+      }
+      markBucketCovered(bucketStartMs);
+      ingestedBuckets++;
+    }
+
+    pruneOldBuckets(nowMs);
+  }
+
+  private boolean ingestBucket(long bucketStartMs, long nowMs, boolean catchup)
+      throws IOException, InterruptedException {
     IngestBatch batch = buildIngestBatch(bucketStartMs);
 
     ingestRequestsTotal.increment();
@@ -180,7 +211,7 @@ final class SyntheticDataProbe {
       System.err.printf(
           "synthetic data probe ingest HTTP %d for bucket %d%n",
           response.statusCode(), bucketStartMs);
-      return;
+      return false;
     }
 
     JsonNode root = OBJECT_MAPPER.readTree(response.body());
@@ -192,23 +223,33 @@ final class SyntheticDataProbe {
       System.err.printf(
           "synthetic data probe ingest partial failure: totalDocs=%d failedDocs=%d expected=%d%n",
           totalDocs, failedDocs, batch.totalDocs());
-      return;
+      return false;
     }
 
     BucketStats bucketStats =
         bucketStatsByStartMs.computeIfAbsent(bucketStartMs, ignored -> new BucketStats());
     bucketStats.expectedTargetDocs.add(batch.targetDocs());
     ingestBatchesSucceededTotal.increment();
+    if (catchup) {
+      ingestCatchupBatchesTotal.increment();
+    }
     ingestDocsAcceptedTotal.add(batch.totalDocs());
     lastIngestSuccessEpochMs.set(nowMs);
-    pruneOldBuckets(nowMs);
+    return true;
+  }
+
+  private void markBucketCovered(long bucketStartMs) {
+    lastCoveredBucketStartMs.accumulateAndGet(bucketStartMs, Math::max);
   }
 
   void queryCycle() throws IOException, InterruptedException {
     long nowMs = clock.millis();
     long activeBucketStartMs = activeBucketStartMs(nowMs);
-    long windowStartMs = activeBucketStartMs - (long) config.windowBuckets() * MINUTE_MS;
-    String requestBody = buildQueryRequest(windowStartMs, activeBucketStartMs);
+    long windowStartMs =
+        activeBucketStartMs - (long) config.oldestCheckedBucketAgeMinutes() * MINUTE_MS;
+    long windowEndMs =
+        activeBucketStartMs - (long) (config.newestBucketAgeMinutes() - 1) * MINUTE_MS;
+    String requestBody = buildQueryRequest(windowStartMs, windowEndMs);
 
     queryRequestsTotal.increment();
     HttpResponse<String> response =
@@ -232,7 +273,9 @@ final class SyntheticDataProbe {
       return;
     }
 
-    for (int age = 1; age <= config.windowBuckets(); age++) {
+    for (int age = config.newestBucketAgeMinutes();
+        age <= config.oldestCheckedBucketAgeMinutes();
+        age++) {
       long bucketStartMs = activeBucketStartMs - (long) age * MINUTE_MS;
       bucketStatsByStartMs
           .computeIfAbsent(bucketStartMs, ignored -> new BucketStats())
@@ -253,7 +296,8 @@ final class SyntheticDataProbe {
         continue;
       }
       long ageMinutes = (activeBucketStartMs - bucketStartMs) / MINUTE_MS;
-      if (ageMinutes < 1 || ageMinutes > config.windowBuckets()) {
+      if (ageMinutes < config.newestBucketAgeMinutes()
+          || ageMinutes > config.oldestCheckedBucketAgeMinutes()) {
         continue;
       }
       BucketStats bucketStats =
@@ -390,6 +434,7 @@ final class SyntheticDataProbe {
     appendMetricType(metrics, metricName("window_min_ratio"), "gauge");
     appendMetricType(metrics, metricName("window_max_abs_delta_docs"), "gauge");
     appendMetricType(metrics, metricName("window_buckets_with_expected_docs"), "gauge");
+    appendMetricType(metrics, metricName("ingest_coverage_backlog_buckets"), "gauge");
     appendMetricType(metrics, metricName("active_ingest_bucket_epoch_seconds"), "gauge");
     appendMetricType(metrics, metricName("last_ingest_success_epoch_seconds"), "gauge");
     appendMetricType(metrics, metricName("last_query_success_epoch_seconds"), "gauge");
@@ -398,6 +443,7 @@ final class SyntheticDataProbe {
     appendMetricType(metrics, metricName("ingest_requests_total"), "counter");
     appendMetricType(metrics, metricName("ingest_batches_succeeded_total"), "counter");
     appendMetricType(metrics, metricName("ingest_batches_failed_total"), "counter");
+    appendMetricType(metrics, metricName("ingest_catchup_batches_total"), "counter");
     appendMetricType(metrics, metricName("ingest_docs_accepted_total"), "counter");
     appendMetricType(metrics, metricName("ingest_docs_failed_total"), "counter");
     appendMetricType(metrics, metricName("query_requests_total"), "counter");
@@ -418,6 +464,10 @@ final class SyntheticDataProbe {
         metricName("window_buckets_with_expected_docs"),
         snapshot.bucketsWithExpectedDocs());
     appendGauge(
+        metrics,
+        metricName("ingest_coverage_backlog_buckets"),
+        ingestCoverageBacklogBuckets(activeBucketStartMs));
+    appendGauge(
         metrics, metricName("active_ingest_bucket_epoch_seconds"), activeBucketStartMs / 1000.0);
     appendGauge(
         metrics,
@@ -435,6 +485,8 @@ final class SyntheticDataProbe {
         metrics, metricName("ingest_batches_succeeded_total"), ingestBatchesSucceededTotal.sum());
     appendCounter(
         metrics, metricName("ingest_batches_failed_total"), ingestBatchesFailedTotal.sum());
+    appendCounter(
+        metrics, metricName("ingest_catchup_batches_total"), ingestCatchupBatchesTotal.sum());
     appendCounter(metrics, metricName("ingest_docs_accepted_total"), ingestDocsAcceptedTotal.sum());
     appendCounter(metrics, metricName("ingest_docs_failed_total"), ingestDocsFailedTotal.sum());
     appendCounter(metrics, metricName("query_requests_total"), queryRequestsTotal.sum());
@@ -461,7 +513,9 @@ final class SyntheticDataProbe {
     long maxAbsDeltaDocs = 0L;
     int bucketsWithExpectedDocs = 0;
 
-    for (int age = 1; age <= config.windowBuckets(); age++) {
+    for (int age = config.newestBucketAgeMinutes();
+        age <= config.oldestCheckedBucketAgeMinutes();
+        age++) {
       long bucketStartMs = activeBucketStartMs - (long) age * MINUTE_MS;
       BucketStats bucketStats = bucketStatsByStartMs.get(bucketStartMs);
       long expectedDocs = bucketStats == null ? 0L : bucketStats.expectedTargetDocs.sum();
@@ -491,7 +545,9 @@ final class SyntheticDataProbe {
 
   private boolean windowReady() {
     long activeBucketStartMs = activeBucketStartMs(clock.millis());
-    for (int age = 1; age <= config.windowBuckets(); age++) {
+    for (int age = config.newestBucketAgeMinutes();
+        age <= config.oldestCheckedBucketAgeMinutes();
+        age++) {
       long bucketStartMs = activeBucketStartMs - (long) age * MINUTE_MS;
       BucketStats bucketStats = bucketStatsByStartMs.get(bucketStartMs);
       if (bucketStats == null || bucketStats.expectedTargetDocs.sum() <= 0L) {
@@ -504,13 +560,21 @@ final class SyntheticDataProbe {
   private void pruneOldBuckets(long nowMs) {
     long activeBucketStartMs = activeBucketStartMs(nowMs);
     long keepAfterMs =
-        activeBucketStartMs
-            - (long) (config.windowBuckets() + config.ingestDelayMinutes() + 3) * MINUTE_MS;
+        activeBucketStartMs - (long) (config.oldestCheckedBucketAgeMinutes() + 3) * MINUTE_MS;
     bucketStatsByStartMs.keySet().removeIf(bucketStartMs -> bucketStartMs < keepAfterMs);
   }
 
+  private long ingestCoverageBacklogBuckets(long activeBucketStartMs) {
+    long lastCoveredBucketStartMs = this.lastCoveredBucketStartMs.get();
+    if (lastCoveredBucketStartMs == NO_COVERED_BUCKET
+        || lastCoveredBucketStartMs >= activeBucketStartMs) {
+      return 0L;
+    }
+    return (activeBucketStartMs - lastCoveredBucketStartMs) / MINUTE_MS;
+  }
+
   private long activeBucketStartMs(long nowMs) {
-    return truncateToMinute(nowMs) - (long) config.ingestDelayMinutes() * MINUTE_MS;
+    return truncateToMinute(nowMs);
   }
 
   private static long truncateToMinute(long epochMs) {
@@ -608,13 +672,30 @@ final class SyntheticDataProbe {
       int metricsPort,
       int batchSize,
       int windowBuckets,
-      int ingestDelayMinutes,
+      int newestBucketAgeMinutes,
+      int maxCatchupBucketsPerCycle,
       int messageBytes,
       long startId,
       Duration ingestInterval,
       Duration queryInterval,
       Duration connectTimeout,
       Duration requestTimeout) {
+
+    Config {
+      if (windowBuckets < 1) {
+        throw new IllegalArgumentException("windowBuckets must be at least 1");
+      }
+      if (newestBucketAgeMinutes < 1) {
+        throw new IllegalArgumentException("newestBucketAgeMinutes must be at least 1");
+      }
+      if (maxCatchupBucketsPerCycle < 1) {
+        throw new IllegalArgumentException("maxCatchupBucketsPerCycle must be at least 1");
+      }
+    }
+
+    int oldestCheckedBucketAgeMinutes() {
+      return newestBucketAgeMinutes + windowBuckets - 1;
+    }
 
     private static Config fromEnvironment() {
       String runId =
@@ -633,7 +714,8 @@ final class SyntheticDataProbe {
           Env.getInt("METRICS_PORT", 9464),
           Env.getInt("BATCH_SIZE", 50),
           Env.getInt("WINDOW_BUCKETS", 5),
-          Env.getInt("INGEST_DELAY_MINUTES", 2),
+          Env.getInt("NEWEST_BUCKET_AGE_MINUTES", 1),
+          Env.getInt("MAX_CATCHUP_BUCKETS_PER_CYCLE", 3),
           Env.getInt("MESSAGE_BYTES", 256),
           Env.getLong("START_ID", 1),
           Duration.ofMillis(Math.round(Env.getDouble("INTERVAL_SEC", 1.0) * 1000.0)),

@@ -67,6 +67,86 @@ class SyntheticDataProbeTest {
   }
 
   @Test
+  void checkedWindowCanBeShiftedToOlderCacheEligibleBuckets() throws Exception {
+    try (FakeKaldbServer fakeServer = new FakeKaldbServer()) {
+      MutableClock clock = new MutableClock(BASE_TIME);
+      SyntheticDataProbe probe = newProbe(fakeServer, clock, 2, 3);
+      try {
+        probe.ingestCycle();
+        clock.advance(Duration.ofMinutes(1));
+        probe.ingestCycle();
+
+        clock.advance(Duration.ofMinutes(3));
+        long baseMs = BASE_TIME.toEpochMilli();
+        long oneMinuteMs = Duration.ofMinutes(1).toMillis();
+        fakeServer.setQueryResponse(
+            200,
+            queryResponse(new QueryBucket(baseMs, 2), new QueryBucket(baseMs + oneMinuteMs, 2)));
+        probe.queryCycle();
+
+        String queryRequest = fakeServer.queryRequests().get(0);
+        assertContains(queryRequest, "\"gte\":" + baseMs);
+        assertContains(queryRequest, "\"lt\":" + (baseMs + 2 * oneMinuteMs));
+
+        String metrics = probe.buildMetricsPayload();
+        assertContains(metrics, "kaldb_synthetic_data_probe_window_ready 1.0\n");
+        assertContains(
+            metrics,
+            "kaldb_synthetic_data_probe_bucket_expected_docs{bucket_age_minutes=\"3\"} 2.0\n");
+        assertContains(
+            metrics,
+            "kaldb_synthetic_data_probe_bucket_observed_docs{bucket_age_minutes=\"3\"} 2.0\n");
+        assertContains(
+            metrics,
+            "kaldb_synthetic_data_probe_bucket_expected_docs{bucket_age_minutes=\"4\"} 2.0\n");
+        assertContains(
+            metrics,
+            "kaldb_synthetic_data_probe_bucket_observed_docs{bucket_age_minutes=\"4\"} 2.0\n");
+      } finally {
+        probe.stop();
+      }
+    }
+  }
+
+  @Test
+  void ingestCycleCatchesUpMissedBucketsWithCap() throws Exception {
+    try (FakeKaldbServer fakeServer = new FakeKaldbServer()) {
+      MutableClock clock = new MutableClock(BASE_TIME);
+      SyntheticDataProbe probe = newProbe(fakeServer, clock, 5, 1, 2);
+      try {
+        probe.ingestCycle();
+
+        clock.advance(Duration.ofMinutes(4));
+        probe.ingestCycle();
+
+        assertEquals(3, fakeServer.bulkRequests().size());
+        assertContains(
+            fakeServer.bulkRequests().get(1), "\"@timestamp\":\"2026-04-15T00:01:00.000Z\"");
+        assertContains(
+            fakeServer.bulkRequests().get(2), "\"@timestamp\":\"2026-04-15T00:02:00.000Z\"");
+
+        String metrics = probe.buildMetricsPayload();
+        assertContains(metrics, "kaldb_synthetic_data_probe_ingest_coverage_backlog_buckets 2.0\n");
+        assertContains(metrics, "kaldb_synthetic_data_probe_ingest_catchup_batches_total 2.0\n");
+
+        probe.ingestCycle();
+
+        assertEquals(5, fakeServer.bulkRequests().size());
+        assertContains(
+            fakeServer.bulkRequests().get(3), "\"@timestamp\":\"2026-04-15T00:03:00.000Z\"");
+        assertContains(
+            fakeServer.bulkRequests().get(4), "\"@timestamp\":\"2026-04-15T00:04:00.000Z\"");
+
+        metrics = probe.buildMetricsPayload();
+        assertContains(metrics, "kaldb_synthetic_data_probe_ingest_coverage_backlog_buckets 0.0\n");
+        assertContains(metrics, "kaldb_synthetic_data_probe_ingest_catchup_batches_total 4.0\n");
+      } finally {
+        probe.stop();
+      }
+    }
+  }
+
+  @Test
   void explicitIngestHttpFailureIncrementsFailureMetrics() throws Exception {
     try (FakeKaldbServer fakeServer = new FakeKaldbServer()) {
       fakeServer.setBulkResponse(500, "{\"error\":\"boom\"}");
@@ -198,6 +278,22 @@ class SyntheticDataProbeTest {
 
   private static SyntheticDataProbe newProbe(FakeKaldbServer fakeServer, MutableClock clock)
       throws IOException {
+    return newProbe(fakeServer, clock, 1, 1);
+  }
+
+  private static SyntheticDataProbe newProbe(
+      FakeKaldbServer fakeServer, MutableClock clock, int windowBuckets, int newestBucketAgeMinutes)
+      throws IOException {
+    return newProbe(fakeServer, clock, windowBuckets, newestBucketAgeMinutes, 3);
+  }
+
+  private static SyntheticDataProbe newProbe(
+      FakeKaldbServer fakeServer,
+      MutableClock clock,
+      int windowBuckets,
+      int newestBucketAgeMinutes,
+      int maxCatchupBucketsPerCycle)
+      throws IOException {
     return new SyntheticDataProbe(
         new SyntheticDataProbe.Config(
             fakeServer.bulkUri(),
@@ -210,8 +306,9 @@ class SyntheticDataProbeTest {
             "127.0.0.1",
             0,
             4,
-            1,
-            0,
+            windowBuckets,
+            newestBucketAgeMinutes,
+            maxCatchupBucketsPerCycle,
             1,
             1L,
             Duration.ofSeconds(1),
@@ -226,12 +323,27 @@ class SyntheticDataProbeTest {
   }
 
   private static String queryResponse(long bucketStartMs, long docCount) {
-    return "{\"responses\":[{\"status\":200,\"_shards\":{\"failed\":0},\"aggregations\":{\"per_minute\":{\"buckets\":[{\"key\":"
-        + bucketStartMs
-        + ",\"doc_count\":"
-        + docCount
-        + "}]}}}]}";
+    return queryResponse(new QueryBucket(bucketStartMs, docCount));
   }
+
+  private static String queryResponse(QueryBucket... buckets) {
+    StringBuilder body =
+        new StringBuilder(
+            "{\"responses\":[{\"status\":200,\"_shards\":{\"failed\":0},\"aggregations\":{\"per_minute\":{\"buckets\":[");
+    for (int index = 0; index < buckets.length; index++) {
+      if (index > 0) {
+        body.append(',');
+      }
+      body.append("{\"key\":")
+          .append(buckets[index].bucketStartMs())
+          .append(",\"doc_count\":")
+          .append(buckets[index].docCount())
+          .append('}');
+    }
+    return body.append("]}}}]}").toString();
+  }
+
+  private record QueryBucket(long bucketStartMs, long docCount) {}
 
   private static void assertContains(String text, String expected) {
     assertTrue(
