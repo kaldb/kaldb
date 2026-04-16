@@ -674,6 +674,66 @@ public class ManagerApiGrpcTest {
   }
 
   @Test
+  public void shouldRejectDedicatedAutoAssignmentWhenEqualShareWouldOverloadPartition() {
+    String datasetName = "dedicatedPooledCapacityDataset";
+    createPartition("1", 1);
+    createPartition("2", 100);
+    managerApiStub.createDatasetMetadata(
+        ManagerApi.CreateDatasetMetadataRequest.newBuilder()
+            .setName(datasetName)
+            .setOwner("owner")
+            .build());
+
+    StatusRuntimeException throwable =
+        (StatusRuntimeException)
+            catchThrowable(
+                () ->
+                    managerApiStub.updatePartitionAssignment(
+                        ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
+                            .setName(datasetName)
+                            .setThroughputBytes(101)
+                            .setRequireDedicatedPartition(true)
+                            .build()));
+
+    assertThat(throwable.getStatus().getCode()).isEqualTo(Status.FAILED_PRECONDITION.getCode());
+    assertThat(throwable.getStatus().getDescription())
+        .contains("Needed 2 partitions with enough capacity")
+        .contains("found 1: [2]");
+  }
+
+  @Test
+  public void shouldUseMoreDedicatedPartitionsWhenEqualShareNeedsCapacity() {
+    String datasetName = "dedicatedEqualShareDataset";
+    createPartition("1", 50);
+    createPartition("2", 55);
+    createPartition("3", 70);
+    managerApiStub.createDatasetMetadata(
+        ManagerApi.CreateDatasetMetadataRequest.newBuilder()
+            .setName(datasetName)
+            .setOwner("owner")
+            .build());
+
+    ManagerApi.UpdatePartitionAssignmentResponse response =
+        managerApiStub.updatePartitionAssignment(
+            ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
+                .setName(datasetName)
+                .setThroughputBytes(120)
+                .setRequireDedicatedPartition(true)
+                .build());
+
+    assertThat(response.getAssignedPartitionIdsList()).containsExactly("1", "2", "3");
+    AtomicReference<DatasetMetadata> datasetMetadata = new AtomicReference<>();
+    await()
+        .until(
+            () -> {
+              datasetMetadata.set(datasetMetadataStore.getSync(datasetName));
+              return datasetMetadata.get().isUsingDedicatedPartitions()
+                  && datasetMetadata.get().getLatestPartitionMetadata().isPresent();
+            });
+    assertThat(datasetMetadata.get().getLatestPerPartitionThroughput()).isEqualTo(40);
+  }
+
+  @Test
   public void shouldSerializeConcurrentAutoPartitionAssignments() throws Exception {
     String firstDatasetName = "serializedAutoDatasetA";
     String secondDatasetName = "serializedAutoDatasetB";

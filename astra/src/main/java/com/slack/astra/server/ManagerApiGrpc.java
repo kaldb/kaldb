@@ -702,36 +702,41 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
                   reusablePartitions.stream().sorted(compareByAvailableCapacityThenId),
                   emptyPartitions.stream().sorted(compareByAvailableCapacityThenId))
               .toList();
-      List<String> proposedPartitionIds = new ArrayList<>();
-      long proposedProvisionedCapacityUsage = 0;
-      for (CalculatedPartitionMetadata partition : sortedPartitions) {
-        if (proposedProvisionedCapacityUsage >= throughputBytes
-            && proposedPartitionIds.size()
-                >= partitionMetadataFromDatasetConfigs.minNumberOfPartitions) {
-          break;
-        }
-        proposedProvisionedCapacityUsage += partition.getAvailableCapacity();
-        proposedPartitionIds.add(partition.getPartitionID());
-      }
       LOG.debug(
-          "current empty partitions: {}, list to pull from {}, proposed cap {}",
+          "current empty partitions: {}, list to pull from {}",
           partitionMetadataAfterDroppingDatasetBeingModified.currentEmptyPartitions().stream()
               .map(CalculatedPartitionMetadata::getPartitionID)
               .toList(),
-          sortedPartitions.stream().map(CalculatedPartitionMetadata::getPartitionID).toList(),
-          proposedProvisionedCapacityUsage);
-      if (proposedProvisionedCapacityUsage >= throughputBytes
-          && proposedPartitionIds.size()
-              >= partitionMetadataFromDatasetConfigs.minNumberOfPartitions) {
-        return ImmutableList.copyOf(proposedPartitionIds);
+          sortedPartitions.stream().map(CalculatedPartitionMetadata::getPartitionID).toList());
+
+      ImmutableList<String> lastProposal = ImmutableList.of();
+      for (long proposedPartitionCt = partitionMetadataFromDatasetConfigs.minNumberOfPartitions;
+          proposedPartitionCt <= sortedPartitions.size();
+          proposedPartitionCt++) {
+        long nextPerPartitionThroughput = Math.ceilDiv(throughputBytes, proposedPartitionCt);
+        lastProposal =
+            sortedPartitions.stream()
+                .filter(p -> p.getAvailableCapacity() >= nextPerPartitionThroughput)
+                .limit(proposedPartitionCt)
+                .map(CalculatedPartitionMetadata::getPartitionID)
+                .collect(ImmutableList.toImmutableList());
+        LOG.debug(
+            "dedicated proposal for partition count: {}, per partition throughput: {}, proposal: {}",
+            proposedPartitionCt,
+            nextPerPartitionThroughput,
+            lastProposal);
+        if (lastProposal.size() == proposedPartitionCt) {
+          return lastProposal;
+        }
       }
+
       throw Status.FAILED_PRECONDITION
           .withDescription(
               "Needed %d partitions with enough capacity, found %d: %s"
                   .formatted(
                       partitionMetadataFromDatasetConfigs.minNumberOfPartitions,
-                      proposedPartitionIds.size(),
-                      proposedPartitionIds))
+                      lastProposal.size(),
+                      lastProposal))
           .asRuntimeException();
     }
 
