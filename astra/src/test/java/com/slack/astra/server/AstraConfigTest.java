@@ -223,6 +223,8 @@ public class AstraConfigTest {
     final AstraConfigs.ManagerConfig managerConfig = config.getManagerConfig();
     assertThat(managerConfig.getEventAggregationSecs()).isEqualTo(10);
     assertThat(managerConfig.getScheduleInitialDelayMins()).isEqualTo(1);
+    assertThat(managerConfig.getPartitionAssignmentConfig().getMinNumberOfPartitions())
+        .isEqualTo(2);
 
     final AstraConfigs.ManagerConfig.ReplicaCreationServiceConfig replicaCreationServiceConfig =
         managerConfig.getReplicaCreationServiceConfig();
@@ -290,6 +292,20 @@ public class AstraConfigTest {
   }
 
   @Test
+  public void shouldRejectManagerConfigsWithoutPositiveMinimumPartitionCount() {
+    AstraConfigs.AstraConfig config =
+        AstraConfigs.AstraConfig.newBuilder()
+            .addNodeRoles(AstraConfigs.NodeRole.MANAGER)
+            .setManagerConfig(AstraConfigs.ManagerConfig.newBuilder().build())
+            .build();
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> ValidateAstraConfig.validateConfig(config))
+        .withMessage(
+            "ManagerConfig partitionAssignmentConfig.minNumberOfPartitions must be greater than 0");
+  }
+
+  @Test
   public void testMapSubstitution() throws IOException {
     final File cfgFile =
         new File(getClass().getClassLoader().getResource("test_config.yaml").getFile());
@@ -323,6 +339,9 @@ public class AstraConfigTest {
     assertThat(config.getNodeRolesList().get(1)).isEqualTo(AstraConfigs.NodeRole.QUERY);
     assertThat(config.getNodeRolesList().get(2)).isEqualTo(AstraConfigs.NodeRole.CACHE);
     assertThat(config.getNodeRolesList().get(3)).isEqualTo(AstraConfigs.NodeRole.MANAGER);
+
+    assertThat(config.getManagerConfig().getPartitionAssignmentConfig().getMinNumberOfPartitions())
+        .isEqualTo(2);
 
     final AstraConfigs.KafkaConfig kafkaCfg = config.getIndexerConfig().getKafkaConfig();
 

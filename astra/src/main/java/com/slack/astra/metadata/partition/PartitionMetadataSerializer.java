@@ -1,0 +1,56 @@
+package com.slack.astra.metadata.partition;
+
+import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.util.JsonFormat;
+import com.slack.astra.metadata.core.MetadataSerializer;
+import com.slack.astra.proto.manager_api.ManagerApi;
+import com.slack.astra.proto.metadata.Metadata;
+
+public class PartitionMetadataSerializer implements MetadataSerializer<PartitionMetadata> {
+
+  public static PartitionMetadata fromPartitionMetadataProto(
+      Metadata.PartitionMetadata partitionMetadataProto) {
+    return new PartitionMetadata(
+        partitionMetadataProto.getPartitionId(), partitionMetadataProto.getMaxCapacity());
+  }
+
+  public static Metadata.PartitionMetadata toPartitionMetadataProto(PartitionMetadata metadata) {
+    return Metadata.PartitionMetadata.newBuilder()
+        .setPartitionId(metadata.getPartitionID())
+        .setMaxCapacity(metadata.getMaxCapacity())
+        .build();
+  }
+
+  public static CalculatedPartitionMetadata fromCalculatedPartitionMetadataProto(
+      ManagerApi.CalculatedPartitionMetadata partitionMetadataProto) {
+    return new CalculatedPartitionMetadata(
+        partitionMetadataProto.getPartitionId(),
+        partitionMetadataProto.getProvisionedCapacity(),
+        partitionMetadataProto.getMaxCapacity(),
+        partitionMetadataProto.getOwnerDataset());
+  }
+
+  public static ManagerApi.CalculatedPartitionMetadata toCalculatedPartitionMetadataProto(
+      CalculatedPartitionMetadata metadata) {
+    return ManagerApi.CalculatedPartitionMetadata.newBuilder()
+        .setPartitionId(metadata.getPartitionID())
+        .setProvisionedCapacity(metadata.getProvisionedCapacity())
+        .setMaxCapacity(metadata.getMaxCapacity())
+        .setOwnerDataset(metadata.getOwnerDataset())
+        .build();
+  }
+
+  @Override
+  public String toJsonStr(PartitionMetadata metadata) throws InvalidProtocolBufferException {
+    if (metadata == null) throw new IllegalArgumentException("metadata object can't be null");
+    return printer.print(toPartitionMetadataProto(metadata));
+  }
+
+  @Override
+  public PartitionMetadata fromJsonStr(String data) throws InvalidProtocolBufferException {
+    Metadata.PartitionMetadata.Builder partitionMetadataBuilder =
+        Metadata.PartitionMetadata.newBuilder();
+    JsonFormat.parser().ignoringUnknownFields().merge(data, partitionMetadataBuilder);
+    return fromPartitionMetadataProto(partitionMetadataBuilder.build());
+  }
+}

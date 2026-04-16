@@ -16,11 +16,9 @@ service ManagerApiService {
   // DeleteDataset deletes an existing dataset by name
   rpc DeleteDatasetMetadata(DeleteDatasetMetadataRequest) returns (DatasetMetadata) {}
 
-  // UpdatePartitionAssignment allocates a new partition assignment for a dataset. If a rate and a list of
-  // partition_ids are provided, it will use it use the list of partition ids as the current allocation
-  // and invalidates the existing assignment.
-  //
-  // In the future if only a rate is provided with an empty list the allocation will be automatically assigned.
+  // UpdatePartitionAssignment allocates a new partition assignment for a dataset. If partition_ids
+  // are provided, it records that exact partition list as the current allocation. If partition_ids
+  // is empty, partitions are automatically assigned from the partition catalog.
   rpc UpdatePartitionAssignment(UpdatePartitionAssignmentRequest) returns (UpdatePartitionAssignmentResponse) {}
 
   rpc RestoreReplica(RestoreReplicaRequest) returns (RestoreReplicaResponse) {}
@@ -28,6 +26,15 @@ service ManagerApiService {
 
   // Resets the partition offset data to allow using a newer offset for a partition ID
   rpc ResetPartitionData(ResetPartitionDataRequest) returns (ResetPartitionDataResponse) {}
+
+  // Create Partition in partition map
+  rpc CreatePartition(CreatePartitionRequest) returns (PartitionMetadata) {}
+
+  // Delete Partition in partition map
+  rpc DeletePartition(DeletePartitionRequest) returns (DeletePartitionResponse) {}
+
+  // List partitions used by Astra along with usage metadata
+  rpc ListPartition(ListPartitionRequest) returns (ListPartitionMetadataResponse) {}
 
   // CreateFieldRedaction initializes a new field redaction with a name and time range window
   rpc CreateFieldRedaction(CreateFieldRedactionRequest) returns (RedactedFieldMetadata) {}
@@ -124,6 +131,32 @@ message ResetPartitionDataRequest {
 
 message ResetPartitionDataResponse {
   string status = 1;
+}
+
+message CreatePartitionRequest {
+  string partition_id = 1;
+  int64 max_capacity = 2;
+}
+
+message DeletePartitionRequest {
+  string partition_id = 1;
+}
+
+message DeletePartitionResponse {
+  string status = 1;
+}
+
+message ListPartitionRequest {}
+
+message ListPartitionMetadataResponse {
+  repeated CalculatedPartitionMetadata partition_metadata = 1;
+}
+
+message CalculatedPartitionMetadata {
+  string partition_id = 1;
+  int64 max_capacity = 2;
+  int64 provisioned_capacity = 3;
+  string owner_dataset = 4;
 }
 
 // CreateNewFieldRedactionRequest represents a request to create a new field redaction

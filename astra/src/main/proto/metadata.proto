@@ -266,3 +266,8 @@ message RedactedFieldMetadata {
   // End or latest timestamp of the redaction window
   int64 end_time_epoch_ms = 4;
 }
+
+message PartitionMetadata {
+  string partition_id = 1;
+  int64 max_capacity = 2;
+}

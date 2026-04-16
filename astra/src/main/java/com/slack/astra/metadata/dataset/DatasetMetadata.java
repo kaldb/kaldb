@@ -4,9 +4,11 @@ import static com.google.common.base.Preconditions.checkArgument;
 
 import com.google.common.collect.ImmutableList;
 import com.slack.astra.metadata.core.AstraMetadata;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 /**
@@ -73,9 +75,8 @@ public class DatasetMetadata extends AstraMetadata {
   @Override
   public boolean equals(Object o) {
     if (this == o) return true;
-    if (!(o instanceof DatasetMetadata)) return false;
+    if (!(o instanceof DatasetMetadata that)) return false;
     if (!super.equals(o)) return false;
-    DatasetMetadata that = (DatasetMetadata) o;
     return throughputBytes == that.throughputBytes
         && name.equals(that.name)
         && owner.equals(that.owner)
@@ -128,5 +129,33 @@ public class DatasetMetadata extends AstraMetadata {
             errorMessage);
       }
     }
+  }
+
+  public Optional<DatasetPartitionMetadata> getLatestPartitionMetadata() {
+    return getPartitionConfigs().stream()
+        .filter(
+            datasetPartitionMetadata ->
+                datasetPartitionMetadata.getEndTimeEpochMs() == Long.MAX_VALUE)
+        .findFirst();
+  }
+
+  public List<DatasetPartitionMetadata> getAllButLatestDatasetPartitions() {
+    return getPartitionConfigs().stream()
+        .filter(
+            datasetPartitionMetadata ->
+                datasetPartitionMetadata.getEndTimeEpochMs() != Long.MAX_VALUE)
+        .toList();
+  }
+
+  public long getLatestPerPartitionThroughput() {
+    int partitionCount =
+        getLatestPartitionMetadata()
+            .map(DatasetPartitionMetadata::getPartitions)
+            .map(Collection::size)
+            .orElse(0);
+    if (partitionCount == 0) {
+      return 0;
+    }
+    return Math.ceilDiv(throughputBytes, partitionCount);
   }
 }
