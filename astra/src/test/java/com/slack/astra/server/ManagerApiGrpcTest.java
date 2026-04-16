@@ -5,7 +5,9 @@ import static com.slack.astra.server.ManagerApiGrpc.MAX_TIME;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.awaitility.Awaitility.await;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.spy;
 
@@ -42,6 +44,11 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.apache.curator.test.TestingServer;
 import org.apache.curator.x.async.AsyncCuratorFramework;
@@ -664,6 +671,80 @@ public class ManagerApiGrpcTest {
         .isEqualTo(dedicatedDatasetName);
     assertThat(listPartitionResponse.getPartitionMetadata(3).getDedicated().getDataset())
         .isEqualTo(dedicatedDatasetName);
+  }
+
+  @Test
+  public void shouldSerializeConcurrentAutoPartitionAssignments() throws Exception {
+    String firstDatasetName = "serializedAutoDatasetA";
+    String secondDatasetName = "serializedAutoDatasetB";
+    createPartitions(List.of("1", "2", "3", "4"));
+
+    managerApiStub.createDatasetMetadata(
+        ManagerApi.CreateDatasetMetadataRequest.newBuilder()
+            .setName(firstDatasetName)
+            .setOwner("owner")
+            .build());
+    managerApiStub.createDatasetMetadata(
+        ManagerApi.CreateDatasetMetadataRequest.newBuilder()
+            .setName(secondDatasetName)
+            .setOwner("owner")
+            .build());
+
+    CountDownLatch firstDatasetUpdateStarted = new CountDownLatch(1);
+    CountDownLatch releaseFirstDatasetUpdate = new CountDownLatch(1);
+    CountDownLatch secondDatasetUpdateStarted = new CountDownLatch(1);
+    doAnswer(
+            invocation -> {
+              DatasetMetadata updatedDatasetMetadata = invocation.getArgument(0);
+              if (updatedDatasetMetadata.getName().equals(firstDatasetName)) {
+                firstDatasetUpdateStarted.countDown();
+                if (!releaseFirstDatasetUpdate.await(5, TimeUnit.SECONDS)) {
+                  throw new AssertionError(
+                      "Timed out waiting to release first partition assignment update");
+                }
+              }
+              if (updatedDatasetMetadata.getName().equals(secondDatasetName)) {
+                secondDatasetUpdateStarted.countDown();
+              }
+              return invocation.callRealMethod();
+            })
+        .when(datasetMetadataStore)
+        .updateSync(any(DatasetMetadata.class));
+
+    ExecutorService executorService = Executors.newFixedThreadPool(2);
+    try {
+      Future<ManagerApi.UpdatePartitionAssignmentResponse> firstAssignment =
+          executorService.submit(
+              () ->
+                  managerApiStub.updatePartitionAssignment(
+                      ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
+                          .setName(firstDatasetName)
+                          .setThroughputBytes(100)
+                          .setRequireDedicatedPartition(true)
+                          .build()));
+      assertThat(firstDatasetUpdateStarted.await(5, TimeUnit.SECONDS)).isTrue();
+
+      Future<ManagerApi.UpdatePartitionAssignmentResponse> secondAssignment =
+          executorService.submit(
+              () ->
+                  managerApiStub.updatePartitionAssignment(
+                      ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
+                          .setName(secondDatasetName)
+                          .setThroughputBytes(100)
+                          .setRequireDedicatedPartition(true)
+                          .build()));
+
+      assertThat(secondDatasetUpdateStarted.await(250, TimeUnit.MILLISECONDS)).isFalse();
+      releaseFirstDatasetUpdate.countDown();
+
+      assertThat(firstAssignment.get(5, TimeUnit.SECONDS).getAssignedPartitionIdsList())
+          .containsExactly("1", "2");
+      assertThat(secondAssignment.get(5, TimeUnit.SECONDS).getAssignedPartitionIdsList())
+          .containsExactly("3", "4");
+    } finally {
+      releaseFirstDatasetUpdate.countDown();
+      executorService.shutdownNow();
+    }
   }
 
   @Test

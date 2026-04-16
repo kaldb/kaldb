@@ -48,7 +48,8 @@ import org.slf4j.LoggerFactory;
 /**
  * Administration API for managing dataset configurations, including throughput and partition
  * assignments. This API is available only on the cluster manager service, and the data created is
- * consumed primarily by the pre-processor and query services.
+ * consumed primarily by the pre-processor and query services. Mutating RPCs are synchronized to
+ * serialize dataset and partition-assignment changes within the singleton manager process.
  */
 public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplBase {
   private static final Logger LOG = LoggerFactory.getLogger(ManagerApiGrpc.class);
@@ -91,7 +92,7 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
 
   /** Initializes a new dataset in the metadata store with no initial allocated capacity */
   @Override
-  public void createDatasetMetadata(
+  public synchronized void createDatasetMetadata(
       ManagerApi.CreateDatasetMetadataRequest request,
       StreamObserver<Metadata.DatasetMetadata> responseObserver) {
 
@@ -115,7 +116,7 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
 
   /** Updates an existing dataset with new metadata */
   @Override
-  public void updateDatasetMetadata(
+  public synchronized void updateDatasetMetadata(
       ManagerApi.UpdateDatasetMetadataRequest request,
       StreamObserver<Metadata.DatasetMetadata> responseObserver) {
 
@@ -157,7 +158,7 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
 
   /** Deletes an existing dataset by name, rejecting if snapshots still reference its partitions */
   @Override
-  public void deleteDatasetMetadata(
+  public synchronized void deleteDatasetMetadata(
       ManagerApi.DeleteDatasetMetadataRequest request,
       StreamObserver<Metadata.DatasetMetadata> responseObserver) {
 
@@ -243,7 +244,7 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
    * partition catalog using the requested throughput and dedication requirement.
    */
   @Override
-  public void updatePartitionAssignment(
+  public synchronized void updatePartitionAssignment(
       ManagerApi.UpdatePartitionAssignmentRequest request,
       StreamObserver<ManagerApi.UpdatePartitionAssignmentResponse> responseObserver) {
 
@@ -560,7 +561,7 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
   }
 
   @Override
-  public void createPartition(
+  public synchronized void createPartition(
       ManagerApi.CreatePartitionRequest request,
       StreamObserver<Metadata.PartitionMetadata> responseObserver) {
     try {
@@ -600,7 +601,7 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
   }
 
   @Override
-  public void deletePartition(
+  public synchronized void deletePartition(
       ManagerApi.DeletePartitionRequest request,
       StreamObserver<ManagerApi.DeletePartitionResponse> responseObserver) {
     try {
@@ -641,7 +642,7 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
   }
 
   @Override
-  public void listPartition(
+  public synchronized void listPartition(
       ManagerApi.ListPartitionRequest request,
       StreamObserver<ManagerApi.ListPartitionMetadataResponse> responseObserver) {
     try {
