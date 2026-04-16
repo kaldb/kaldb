@@ -23,21 +23,45 @@ public class PartitionMetadataSerializer implements MetadataSerializer<Partition
 
   public static CalculatedPartitionMetadata fromCalculatedPartitionMetadataProto(
       ManagerApi.CalculatedPartitionMetadata partitionMetadataProto) {
+    PartitionOccupancy occupancy =
+        switch (partitionMetadataProto.getOccupancyCase()) {
+          case EMPTY -> new PartitionOccupancy.Empty();
+          case SHARED ->
+              new PartitionOccupancy.Shared(partitionMetadataProto.getShared().getDatasetsList());
+          case DEDICATED ->
+              new PartitionOccupancy.Dedicated(partitionMetadataProto.getDedicated().getDataset());
+          case OCCUPANCY_NOT_SET -> new PartitionOccupancy.Empty();
+        };
     return new CalculatedPartitionMetadata(
         partitionMetadataProto.getPartitionId(),
         partitionMetadataProto.getProvisionedCapacity(),
         partitionMetadataProto.getMaxCapacity(),
-        partitionMetadataProto.getOwnerDataset());
+        occupancy);
   }
 
   public static ManagerApi.CalculatedPartitionMetadata toCalculatedPartitionMetadataProto(
       CalculatedPartitionMetadata metadata) {
-    return ManagerApi.CalculatedPartitionMetadata.newBuilder()
-        .setPartitionId(metadata.getPartitionID())
-        .setProvisionedCapacity(metadata.getProvisionedCapacity())
-        .setMaxCapacity(metadata.getMaxCapacity())
-        .setOwnerDataset(metadata.getOwnerDataset())
-        .build();
+    ManagerApi.CalculatedPartitionMetadata.Builder builder =
+        ManagerApi.CalculatedPartitionMetadata.newBuilder()
+            .setPartitionId(metadata.getPartitionID())
+            .setProvisionedCapacity(metadata.getProvisionedCapacity())
+            .setMaxCapacity(metadata.getMaxCapacity());
+
+    PartitionOccupancy occupancy = metadata.getOccupancy();
+    if (occupancy instanceof PartitionOccupancy.Empty) {
+      builder.setEmpty(ManagerApi.EmptyPartitionOccupancy.newBuilder().build());
+    } else if (occupancy instanceof PartitionOccupancy.Shared shared) {
+      builder.setShared(
+          ManagerApi.SharedPartitionOccupancy.newBuilder()
+              .addAllDatasets(shared.datasets())
+              .build());
+    } else if (occupancy instanceof PartitionOccupancy.Dedicated dedicated) {
+      builder.setDedicated(
+          ManagerApi.DedicatedPartitionOccupancy.newBuilder()
+              .setDataset(dedicated.dataset())
+              .build());
+    }
+    return builder.build();
   }
 
   @Override

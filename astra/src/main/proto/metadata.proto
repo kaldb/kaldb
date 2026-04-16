@@ -157,6 +157,9 @@ message DatasetMetadata {
 
   // either same as name or a special value _all or * which matches all services
   string service_name_pattern = 5;
+
+  // True if this dataset requires dedicated partitions when auto assigning.
+  bool using_dedicated_partitions = 6;
 }
 
 message HpaMetricMetadata {

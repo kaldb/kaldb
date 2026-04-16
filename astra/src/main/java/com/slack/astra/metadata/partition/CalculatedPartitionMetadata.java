@@ -1,20 +1,37 @@
 package com.slack.astra.metadata.partition;
 
+import java.util.List;
 import java.util.Objects;
 
-/** Partition capacity plus currently calculated exclusive owner usage. */
+/** Partition capacity plus currently calculated usage from dataset assignments. */
 public class CalculatedPartitionMetadata {
   public final String partitionId;
   public final long provisionedCapacity;
   public final long maxCapacity;
-  public final String ownerDataset;
+  public final PartitionOccupancy occupancy;
 
   public CalculatedPartitionMetadata(
-      String partitionId, long provisionedCapacity, long maxCapacity, String ownerDataset) {
+      String partitionId,
+      long provisionedCapacity,
+      long maxCapacity,
+      PartitionOccupancy occupancy) {
     this.partitionId = partitionId;
     this.provisionedCapacity = provisionedCapacity;
     this.maxCapacity = maxCapacity;
-    this.ownerDataset = ownerDataset == null ? "" : ownerDataset;
+    this.occupancy = Objects.requireNonNull(occupancy, "occupancy");
+  }
+
+  public static CalculatedPartitionMetadata fromDatasetAssignments(
+      String partitionId,
+      long provisionedCapacity,
+      long maxCapacity,
+      List<String> datasets,
+      List<String> dedicatedDatasets) {
+    return new CalculatedPartitionMetadata(
+        partitionId,
+        provisionedCapacity,
+        maxCapacity,
+        PartitionOccupancy.from(datasets, dedicatedDatasets));
   }
 
   public String getPartitionID() {
@@ -29,12 +46,20 @@ public class CalculatedPartitionMetadata {
     return maxCapacity;
   }
 
-  public String getOwnerDataset() {
-    return ownerDataset;
+  public PartitionOccupancy getOccupancy() {
+    return occupancy;
   }
 
-  public boolean isUnassigned() {
-    return ownerDataset.isEmpty();
+  public boolean isEmpty() {
+    return occupancy.isEmpty();
+  }
+
+  public boolean canUseForSharedAssignment(String datasetName) {
+    return occupancy.canUseForSharedAssignment(datasetName);
+  }
+
+  public boolean isDedicatedOnlyTo(String datasetName) {
+    return occupancy.isDedicatedOnlyTo(datasetName);
   }
 
   public long getAvailableCapacity() {
@@ -48,12 +73,12 @@ public class CalculatedPartitionMetadata {
     return provisionedCapacity == that.provisionedCapacity
         && maxCapacity == that.maxCapacity
         && Objects.equals(partitionId, that.partitionId)
-        && Objects.equals(ownerDataset, that.ownerDataset);
+        && Objects.equals(occupancy, that.occupancy);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(partitionId, provisionedCapacity, maxCapacity, ownerDataset);
+    return Objects.hash(partitionId, provisionedCapacity, maxCapacity, occupancy);
   }
 
   @Override
@@ -61,14 +86,13 @@ public class CalculatedPartitionMetadata {
     return "CalculatedPartitionMetadata{"
         + "partitionId='"
         + partitionId
-        + '\''
+        + "'"
         + ", provisionedCapacity="
         + provisionedCapacity
         + ", maxCapacity="
         + maxCapacity
-        + ", ownerDataset='"
-        + ownerDataset
-        + '\''
+        + ", occupancy="
+        + occupancy
         + '}';
   }
 }

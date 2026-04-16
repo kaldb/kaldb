@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.catchThrowable;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.slack.astra.proto.manager_api.ManagerApi;
 import com.slack.astra.proto.metadata.Metadata;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 public class PartitionMetadataSerializerTest {
@@ -40,20 +41,33 @@ public class PartitionMetadataSerializerTest {
 
   @Test
   public void testCalculatedPartitionMetadataProtoConversion() {
-    CalculatedPartitionMetadata calculatedPartitionMetadata =
-        new CalculatedPartitionMetadata("partition-a", 25, 100, "dataset-a");
+    List<CalculatedPartitionMetadata> calculatedPartitionMetadata =
+        List.of(
+            new CalculatedPartitionMetadata(
+                "partition-empty", 0, 100, new PartitionOccupancy.Empty()),
+            new CalculatedPartitionMetadata(
+                "partition-shared",
+                25,
+                100,
+                new PartitionOccupancy.Shared(List.of("dataset-a", "dataset-b"))),
+            new CalculatedPartitionMetadata(
+                "partition-dedicated", 25, 100, new PartitionOccupancy.Dedicated("dataset-a")));
 
-    ManagerApi.CalculatedPartitionMetadata calculatedPartitionMetadataProto =
-        PartitionMetadataSerializer.toCalculatedPartitionMetadataProto(calculatedPartitionMetadata);
-    assertThat(calculatedPartitionMetadataProto.getPartitionId()).isEqualTo("partition-a");
-    assertThat(calculatedPartitionMetadataProto.getProvisionedCapacity()).isEqualTo(25);
-    assertThat(calculatedPartitionMetadataProto.getMaxCapacity()).isEqualTo(100);
-    assertThat(calculatedPartitionMetadataProto.getOwnerDataset()).isEqualTo("dataset-a");
+    List<ManagerApi.CalculatedPartitionMetadata> calculatedPartitionMetadataProto =
+        calculatedPartitionMetadata.stream()
+            .map(PartitionMetadataSerializer::toCalculatedPartitionMetadataProto)
+            .toList();
 
+    assertThat(calculatedPartitionMetadataProto.get(0).hasEmpty()).isTrue();
+    assertThat(calculatedPartitionMetadataProto.get(1).getShared().getDatasetsList())
+        .containsExactly("dataset-a", "dataset-b");
+    assertThat(calculatedPartitionMetadataProto.get(2).getDedicated().getDataset())
+        .isEqualTo("dataset-a");
     assertThat(
-            PartitionMetadataSerializer.fromCalculatedPartitionMetadataProto(
-                calculatedPartitionMetadataProto))
-        .isEqualTo(calculatedPartitionMetadata);
+            calculatedPartitionMetadataProto.stream()
+                .map(PartitionMetadataSerializer::fromCalculatedPartitionMetadataProto)
+                .toList())
+        .containsExactlyElementsOf(calculatedPartitionMetadata);
   }
 
   @Test

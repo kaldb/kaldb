@@ -24,6 +24,7 @@ public class DatasetMetadata extends AstraMetadata {
   public final String serviceNamePattern;
   public final long throughputBytes;
   public final ImmutableList<DatasetPartitionMetadata> partitionConfigs;
+  public final boolean usingDedicatedPartitions;
 
   public DatasetMetadata(
       String name,
@@ -31,6 +32,16 @@ public class DatasetMetadata extends AstraMetadata {
       long throughputBytes,
       List<DatasetPartitionMetadata> partitionConfigs,
       String serviceNamePattern) {
+    this(name, owner, throughputBytes, partitionConfigs, serviceNamePattern, false);
+  }
+
+  public DatasetMetadata(
+      String name,
+      String owner,
+      long throughputBytes,
+      List<DatasetPartitionMetadata> partitionConfigs,
+      String serviceNamePattern,
+      boolean usingDedicatedPartitions) {
     super(name);
     checkArgument(name.length() <= 256, "name must be no longer than 256 chars");
     checkArgument(name.matches("^[a-zA-Z0-9_-]*$"), "name must contain only [a-zA-Z0-9_-]");
@@ -50,6 +61,7 @@ public class DatasetMetadata extends AstraMetadata {
     this.serviceNamePattern = serviceNamePattern;
     this.throughputBytes = throughputBytes;
     this.partitionConfigs = ImmutableList.copyOf(partitionConfigs);
+    this.usingDedicatedPartitions = usingDedicatedPartitions;
   }
 
   public DatasetMetadata getDataset() {
@@ -72,12 +84,17 @@ public class DatasetMetadata extends AstraMetadata {
     return serviceNamePattern;
   }
 
+  public boolean isUsingDedicatedPartitions() {
+    return usingDedicatedPartitions;
+  }
+
   @Override
   public boolean equals(Object o) {
     if (this == o) return true;
     if (!(o instanceof DatasetMetadata that)) return false;
     if (!super.equals(o)) return false;
     return throughputBytes == that.throughputBytes
+        && usingDedicatedPartitions == that.usingDedicatedPartitions
         && name.equals(that.name)
         && owner.equals(that.owner)
         && serviceNamePattern.equals(that.serviceNamePattern)
@@ -87,7 +104,13 @@ public class DatasetMetadata extends AstraMetadata {
   @Override
   public int hashCode() {
     return Objects.hash(
-        super.hashCode(), name, owner, serviceNamePattern, throughputBytes, partitionConfigs);
+        super.hashCode(),
+        name,
+        owner,
+        serviceNamePattern,
+        throughputBytes,
+        partitionConfigs,
+        usingDedicatedPartitions);
   }
 
   @Override
@@ -106,6 +129,8 @@ public class DatasetMetadata extends AstraMetadata {
         + throughputBytes
         + ", partitionConfigs="
         + partitionConfigs
+        + ", usingDedicatedPartitions="
+        + usingDedicatedPartitions
         + '}';
   }
 

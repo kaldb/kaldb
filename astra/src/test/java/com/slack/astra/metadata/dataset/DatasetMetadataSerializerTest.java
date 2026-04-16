@@ -44,6 +44,21 @@ public class DatasetMetadataSerializerTest {
   }
 
   @Test
+  public void testDatasetMetadataSerializerWithDedicatedPartitions()
+      throws InvalidProtocolBufferException {
+    final DatasetMetadata datasetMetadata =
+        new DatasetMetadata(
+            "testDataset", "testOwner", 2000, Collections.emptyList(), "serviceName", true);
+
+    String serializedDatasetMetadata = serDe.toJsonStr(datasetMetadata);
+    assertThat(serializedDatasetMetadata).isNotEmpty();
+
+    DatasetMetadata deserializedDatasetMetadata = serDe.fromJsonStr(serializedDatasetMetadata);
+    assertThat(deserializedDatasetMetadata).isEqualTo(datasetMetadata);
+    assertThat(deserializedDatasetMetadata.isUsingDedicatedPartitions()).isTrue();
+  }
+
+  @Test
   public void testDatasetMetadataSerializerWithServiceNames()
       throws InvalidProtocolBufferException {
     final Instant partitionStart = Instant.now();
