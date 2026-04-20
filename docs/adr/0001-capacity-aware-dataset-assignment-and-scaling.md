@@ -56,7 +56,7 @@ The motivation for this ADR is to make dataset assignment capacity-aware while p
   Answer: From manager config, specifically `ManagerConfig.partition_assignment_config.min_number_of_partitions`. The assignment algorithm should take this value as an explicit input and use it when proposing both shared and dedicated assignments.
 
 - Question: How should the allocator choose which partition IDs to add or remove when multiple eligible assignments exist?
-  Answer: Preserve current partitions where possible. When adding capacity, prefer lower-numbered eligible partitions first. When removing capacity, prefer removing the highest-numbered currently assigned partitions first, while still satisfying capacity and minimum partition count constraints.
+  Answer: Open. The current implementation preserves reusable current partitions where possible, chooses the smallest partition count that satisfies the equal-share capacity check and minimum partition count, then prefers tighter available-capacity fits with partition ID as a deterministic tie-breaker. A simpler alternative is to choose among eligible partitions by partition ID order. Scaling up and scaling down are both outcomes of rerunning the same assignment algorithm with a new throughput value, but the candidate ordering policy and partition ID ordering semantics still need a final decision.
 
 ## Public Interfaces
 
@@ -121,43 +121,82 @@ When `UpdatePartitionAssignmentRequest.partition_ids` is empty, auto-assign part
 - Reject an assignment unless every selected partition can carry that per-partition requirement.
 - Use at least the configured minimum number of partitions.
 
-For shared assignments, eligible partitions are partitions that are not dedicated to another dataset. The allocator prefers keeping the dataset's existing partitions where possible, then fills from partitions with enough available capacity.
+For shared assignments, eligible partitions are partitions that are not dedicated to another dataset. The current implementation evaluates the dataset's current partitions first, then other eligible partitions by lowest available capacity, then partition ID as a deterministic tie-breaker.
 
-For dedicated assignments, eligible partitions are empty partitions and partitions already dedicated to the same dataset. The allocator must not treat selected partitions as a single pooled capacity bucket. Even if total capacity is sufficient, each selected partition must individually have enough capacity for the equal traffic share.
+For dedicated assignments, eligible partitions are empty partitions and partitions already dedicated to the same dataset. The current implementation evaluates partitions already dedicated to the same dataset before empty partitions. Within each group, it sorts by lowest available capacity, then partition ID as a deterministic tie-breaker. The allocator must not treat selected partitions as a single pooled capacity bucket. Even if total capacity is sufficient, each selected partition must individually have enough capacity for the equal traffic share.
 
 Manual assignment remains supported when `partition_ids` is non-empty.
 
-### Partition Ordering Policy
+### Partition Selection and Dataset Scaling Policy
 
-The assignment algorithm should produce stable, predictable partition sets in addition to satisfying capacity constraints.
+The assignment algorithm should produce stable, predictable partition sets while satisfying capacity constraints. Some parts of the algorithm are fixed by correctness requirements:
 
-- Preserve a dataset's current partitions where possible.
-- When adding capacity, prefer the lowest-numbered eligible partitions first.
-- When removing capacity, prefer removing the highest-numbered currently assigned partitions first.
-- Apply the ordering policy only after filtering to partitions that are eligible for the dataset's mode and that satisfy the required per-partition capacity.
-- Treat partition ID ordering as numeric ordering. If partition IDs are stored as strings, the algorithm should still compare them numerically so that `10` sorts after `2`, not before it.
+- Remove the dataset being updated from the calculated live occupancy view before proposing the next assignment. This lets the allocator evaluate the dataset's current partitions as reusable capacity rather than as capacity consumed by another assignment.
+- For each proposed partition count, calculate `ceil(throughput_bytes / proposed_partition_count)`.
+- Reject a proposed partition count unless every selected partition can carry that per-partition requirement.
+- Return the first valid proposal that also satisfies `min_number_of_partitions`.
 
-This ordering matches common operational expectations from systems like Kafka and Kubernetes, where partition or shard numbering starts at `0` and grows upward.
+Scaling up and scaling down are not separate operations. A throughput increase may cause the first valid proposal to require more partitions. A throughput decrease may cause the first valid proposal to require fewer partitions. In both cases, the allocator uses the same eligibility, equal-share, minimum-count, and candidate-ordering rules.
 
-### Pros and Cons of Lowest-First Fill / Highest-First Removal
+The open decision is how candidate partitions should be ordered when multiple valid assignments exist.
+
+#### Option A: Reuse-First Capacity-Fit Selection
+
+This is what the current implementation does, and it came from the copied Airbnb branch.
+
+- For shared assignments, sort candidate partitions by current-membership first, then lowest available capacity, then lexicographic partition ID.
+- For dedicated assignments, sort reusable same-dataset dedicated partitions before empty partitions. Within each group, sort by lowest available capacity, then lexicographic partition ID.
+- Store and return the selected partition IDs in stable lexicographic partition ID order after selection.
+
+This policy does not try to keep low-numbered partition IDs full or remove high-numbered partition IDs first. Partition catalog lifecycle and cluster-wide partition count changes are out of scope, so numeric partition order is not a primary assignment goal under this option.
 
 Pros:
 
-- Keeps assignment behavior predictable for operators and easier to explain in runbooks and dashboards.
-- Aligns with Kafka-style and Kubernetes-style numbering where lower IDs are created first and are the most familiar operational reference points.
-- Tends to keep lower-numbered partitions densely utilized and leaves higher-numbered partitions available for later growth.
-- Makes scale down more stable by preserving the lower-numbered partitions that operators are most likely to expect to remain in service.
+- Avoids unnecessary churn by evaluating reusable current partitions before unrelated partitions.
+- Uses one algorithm for initial assignment, throughput growth, and throughput reduction.
+- Chooses the fewest valid partitions, subject to the configured minimum partition count.
+- Favors tighter available-capacity fits after reuse, which leaves larger remaining-capacity partitions available for future assignments that may need them.
+- Keeps behavior deterministic through stable partition ID tie-breaking.
 
 Cons:
 
-- This policy must not override hard capacity constraints, so it adds ordering logic on top of the capacity calculation.
-- It assumes partition IDs have a meaningful numeric order and therefore needs explicit numeric comparison semantics.
-- A pure low-ID preference can be less flexible than a strategy that optimizes only for available headroom, especially if higher-numbered partitions have better spare capacity.
-- If the system later introduces non-numeric or externally managed partition identifiers, this policy may need to be revisited.
+- More complex to explain than simple partition ID ordering.
+- The resulting partition set may not be the lowest-ID valid set.
+- A throughput reduction may remove a lower-sorting partition ID and keep a higher-sorting partition ID if that is the tighter available-capacity fit.
+- The algorithm is greedy and local to the dataset being updated; it does not globally rebalance all datasets.
+- Partition ID ordering is only a deterministic tie-breaker and should not be treated as a capacity or lifecycle policy.
+- This option still needs an explicit partition ID ordering choice: treat partition IDs as opaque strings sorted lexicographically, or require numeric-like identifiers sorted numerically.
+
+#### Option B: Partition-ID-Ordered Selection
+
+This is closer to the earlier ADR wording. The allocator would still filter by eligibility and per-partition capacity, but candidate ordering would primarily use partition ID order instead of available-capacity fit.
+
+Pros:
+
+- Simpler to explain and reason about in runbooks.
+- Makes scale-up and scale-down examples easier to predict.
+- Avoids implying that the manager is trying to optimize future placement based on a local greedy capacity-fit heuristic.
+- If partition IDs are assigned in an operationally meaningful order, this can align with operator intuition.
+
+Cons:
+
+- May churn away from current partitions more often unless current-membership is still given priority.
+- May consume larger-capacity partitions earlier than necessary and leave smaller fragments that are harder to use later.
+- Requires deciding whether partition IDs are opaque strings sorted lexicographically or constrained numeric identifiers sorted numerically.
+- The simpler policy would require changing the current implementation and updating tests.
+
+#### Partition ID Ordering Choices
+
+Both candidate-ordering options need an explicit partition ID ordering choice:
+
+- Opaque string IDs with lexicographic ordering. This matches the current data model and current implementation because partition IDs are strings. It avoids assuming the IDs are generated from numbers, but `10` sorts before `2`.
+- Numeric-like IDs with numeric ordering. This matches operator intuition if partitions are intentionally named after Kafka-style partition numbers, but it requires validating or defining what happens when a partition ID is not numeric.
 
 ### Examples
 
 Unless stated otherwise, these examples assume `ManagerConfig.partition_assignment_config.min_number_of_partitions = 2`.
+
+Examples that depend on candidate ordering describe the current reuse-first capacity-fit implementation. If the final decision is partition-ID-ordered selection, update those examples to match the chosen policy.
 
 #### Example 1: Minimum Partition Count Is an Algorithm Input
 
@@ -184,7 +223,7 @@ Result:
 - The dataset defaults to shared mode.
 - The allocator still chooses two partitions because `min_number_of_partitions = 2`.
 - It chooses partitions `0` and `1`, not just `0`.
-- It fills the lowest-numbered eligible partitions first.
+- Because all partitions have equal available capacity, the partition ID tie-breaker chooses `0` and `1`.
 - Per-partition throughput is `ceil(20 / 2) = 10`.
 
 If the config were `min_number_of_partitions = 3`, the same request would assign `0`, `1`, and `2`, and per-partition throughput would be `ceil(20 / 3) = 7`.
@@ -213,7 +252,7 @@ Result:
 
 - The dataset defaults to shared mode.
 - The allocator chooses partitions `0` and `1`.
-- It chooses `0` and `1` instead of `1` and `2` because expansion prefers the lowest-numbered eligible partitions first.
+- Because all three partitions have equal available capacity, the partition ID tie-breaker chooses `0` and `1`.
 - Per-partition throughput is `ceil(100 / 2) = 50`.
 - `ListPartition` reports provisioned capacity `50` on `0`, `50` on `1`, and `0` on `2`.
 
@@ -238,7 +277,7 @@ UpdatePartitionAssignment(
 Result:
 
 - The allocator chooses partitions `2` and `3`, not `0` and `1`.
-- It chooses `2` before any higher partition IDs because dedicated growth also prefers the lowest-numbered eligible partitions first.
+- It chooses `2` and `3` because they are empty, while `0` and `1` are already occupied by a shared dataset.
 - Per-partition throughput is `ceil(150 / 2) = 75`.
 - `ListPartition` reports `2` and `3` as dedicated to `payments`.
 
@@ -269,7 +308,7 @@ Result:
 - Partition `0` cannot carry `51`, so the request fails.
 - This is intentional. Dedicated assignment does not use pooled capacity math.
 
-#### Example 5: Scaling a Dedicated Dataset Expands Onto Lower-Numbered Eligible Partitions First
+#### Example 5: Dedicated Scaling Uses the Smallest Valid Partition Count
 
 Declared partition catalog:
 
@@ -296,38 +335,49 @@ Result:
 - With three partitions, per-partition throughput is `ceil(120 / 3) = 40`.
 - The allocator assigns `0`, `1`, and `2`.
 - This is how scaling works in practice: the manager grows the dataset's partition set until each selected partition can carry its equal share.
-- Because all three partitions are needed, the ordering policy keeps the lower-numbered partitions in the assignment rather than preferring any higher-numbered alternative.
+- No two-partition assignment is valid, so growth to three partitions is required by the per-partition capacity rule.
 
-#### Example 6: Shared Dataset Growth Adds Lower-Numbered Partitions First
+#### Example 6: Shared Growth Preserves Current Partitions and Adds the Tightest Fit
 
 Starting state:
 
 - Dataset `logs` is currently assigned to partitions `0` and `1`.
-- Eligible free partitions `2` and `3` are also available.
-- All partitions have enough capacity for the dataset's equal per-partition share.
+- After removing `logs` from the live occupancy view, partitions `0` and `1` each have `100` bytes of available capacity.
+- Eligible free partition `2` has `100` bytes of available capacity.
+- Eligible free partition `3` has `80` bytes of available capacity.
 
 Growth request:
 
 ```text
 UpdatePartitionAssignment(
   name = "logs",
-  throughput_bytes = 150,
+  throughput_bytes = 240,
   partition_ids = []
 )
 ```
 
 Result:
 
-- The allocator preserves `0` and `1`.
-- It adds `2` before `3` because growth prefers lower-numbered eligible partitions first.
-- The resulting assignment is `0, 1, 2`.
-- If `3` had been the only eligible partition with enough capacity, the capacity rule would override the numeric preference.
+- Two partitions are not enough because `ceil(240 / 2) = 120`.
+- With three partitions, per-partition throughput is `ceil(240 / 3) = 80`.
+- The allocator preserves current partitions `0` and `1`.
+- It adds `3` before `2` because `3` is the tighter available-capacity fit that can still carry `80`.
+- The resulting assignment is `0, 1, 3`.
 
-#### Example 7: Throughput Reduction Shrinks by Removing Highest-Numbered Partitions First
+#### Example 7: Shared Throughput Reduction Shrinks to the Tightest Current Fit
 
 Starting state:
 
 - Dataset `logs` is currently assigned to partitions `0`, `1`, `2`, and `3`.
+- After removing `logs` from the live occupancy view, current partitions have this available capacity:
+
+```text
+0: available_capacity=100
+1: available_capacity=40
+2: available_capacity=50
+3: available_capacity=60
+```
+
 - A lower throughput now allows the dataset to fit on only two partitions while still meeting the configured minimum partition count.
 
 Shrink request:
@@ -342,25 +392,25 @@ UpdatePartitionAssignment(
 
 Result:
 
-- The allocator keeps `0` and `1`.
-- It removes `3` and `2` before considering removal of `1` or `0`.
-- The resulting assignment is `0, 1`.
-- This keeps the lower-numbered partitions stable across contraction.
+- With two partitions, per-partition throughput is `ceil(80 / 2) = 40`.
+- The allocator considers the dataset's current partitions first.
+- Among current partitions that can carry `40`, it prefers the tighter available-capacity fit.
+- The resulting assignment is `1, 2`, not `0, 1`.
 
-#### Example 8: Prefer Low IDs When Growing and Remove High IDs When Shrinking
+#### Example 8: Growth and Shrink Are Both Capacity Replanning
 
 The growth and shrink policy can be summarized as:
 
 ```text
-grow:   0, 1   -> 0, 1, 2
-shrink: 0, 1, 2, 3 -> 0, 1
+grow:   current partitions first, then tightest eligible added capacity
+shrink: smallest valid count using current partitions ordered by available-capacity fit
 ```
 
 Result:
 
-- When extra capacity is needed, preserve the current low IDs and add the next-lowest eligible partition.
-- When less capacity is needed, preserve the current low IDs and remove the highest-numbered currently assigned partitions first.
-- This matches the goal of filling lower-numbered partitions first and trimming higher-numbered ones first.
+- When extra capacity is needed, the allocator grows to the smallest valid partition count whose equal per-partition share fits.
+- When less capacity is needed, the allocator shrinks to the smallest valid partition count that still satisfies the minimum and equal-share capacity checks.
+- In the current implementation, partition IDs are used as a stable tie-breaker after reuse and available-capacity ordering, not as the primary scale-up or scale-down policy.
 
 #### Example 9: Preserving Dedicated Mode vs. Explicitly Clearing It
 
@@ -407,9 +457,8 @@ Result:
 - A dataset switching from dedicated to shared may keep the same partition IDs on the transition update if those partitions are otherwise valid for shared use.
 - Omitting `require_dedicated_partition` preserves the current dataset mode. This avoids accidental mode flips during ordinary throughput updates.
 - New datasets default to shared mode unless the request explicitly requires dedicated partitions.
-- Auto-assignment prefers keeping a dataset on its current partitions where possible, which reduces unnecessary churn during throughput changes.
-- When new capacity is needed, the allocator should fill lower-numbered eligible partitions first.
-- When capacity can be removed, the allocator should prefer removing the highest-numbered currently assigned partitions first.
+- The current implementation prefers keeping a dataset on its current partitions where possible, which reduces unnecessary churn during throughput changes. If partition-ID-ordered selection is chosen instead, decide whether current partitions still get priority over unrelated partitions.
+- Growth and shrink must still satisfy the same eligibility, minimum partition count, and equal-share capacity checks regardless of the chosen candidate-ordering policy.
 - Manual assignment to nonexistent partition IDs must be rejected.
 - Auto-assignment must fail clearly when there are not enough eligible partitions with sufficient capacity to satisfy the configured minimum partition count and per-partition capacity check.
 
@@ -420,14 +469,15 @@ Result:
 3. Implement calculated partition occupancy from partition catalog plus active dataset assignments.
 4. Expose the calculated view through `ListPartition`.
 5. Add auto-assignment when `UpdatePartitionAssignmentRequest.partition_ids` is empty.
-6. Add deterministic partition ordering for growth and shrink decisions.
+6. Finalize the candidate-ordering policy and ensure growth and shrink decisions use that deterministic policy.
 7. Optionally add validation for manual assignment against the same capacity rules.
 
 ### Open Questions
 
 - Should manual assignment be strictly validated against the same capacity checks as auto-assignment, or only optionally validated?
 - Should additional operator-facing diagnostics be returned when no feasible assignment exists?
-- Should the partition ordering policy apply strictly numerically in every case, or should it be allowed to yield to stronger locality or balancing heuristics in the future?
+- Should auto-assignment keep the current reuse-first capacity-fit candidate ordering, or switch to simpler partition-ID-ordered selection?
+- Should partition IDs be treated as opaque strings sorted lexicographically, or constrained numeric-like identifiers sorted numerically?
 
 ## Compatibility, Deprecation, and Migration Plan
 
@@ -450,8 +500,9 @@ Validate the design with a mix of unit and integration tests:
 - Unit tests for equal-share capacity checks using `ceil(throughput / partition_count)`.
 - Unit tests with different values of `ManagerConfig.partition_assignment_config.min_number_of_partitions`.
 - Unit tests ensuring the allocator prefers existing dataset partitions when feasible.
-- Unit tests ensuring growth fills lower-numbered eligible partitions first.
-- Unit tests ensuring shrink removes highest-numbered currently assigned partitions first.
+- Unit tests for the chosen candidate-ordering policy, including growth and shrink behavior.
+- If reuse-first capacity-fit selection is retained, unit tests ensuring growth adds the tightest eligible available-capacity fit after reusable current partitions.
+- If reuse-first capacity-fit selection is retained, unit tests ensuring shrink uses the smallest valid partition count and keeps reusable current partitions by available-capacity fit.
 - Integration tests for `UpdatePartitionAssignment` with empty `partition_ids`.
 - Integration tests for manual assignment behavior, including any chosen validation rules.
 - Regression tests showing historical queries continue to resolve partition IDs from `DatasetMetadata` and `SnapshotMetadata` rather than current partition catalog state.
