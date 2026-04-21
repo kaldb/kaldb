@@ -56,7 +56,7 @@ The motivation for this ADR is to make dataset assignment capacity-aware while p
   Answer: From manager config, specifically `ManagerConfig.partition_assignment_config.min_number_of_partitions`. The assignment algorithm should take this value as an explicit input and use it when proposing both shared and dedicated assignments.
 
 - Question: How should the allocator choose which partition IDs to add or remove when multiple eligible assignments exist?
-  Answer: Open. The current implementation preserves reusable current partitions where possible, chooses the smallest partition count that satisfies the equal-share capacity check and minimum partition count, then prefers tighter available-capacity fits with partition ID as a deterministic tie-breaker. A simpler alternative is to choose among eligible partitions by partition ID order. Scaling up and scaling down are both outcomes of rerunning the same assignment algorithm with a new throughput value, but the candidate ordering policy and partition ID ordering semantics still need a final decision.
+  Answer: The current implementation preserves reusable current partitions where possible, chooses the smallest partition count that satisfies the equal-share capacity check and minimum partition count, then prefers tighter available-capacity fits with numeric partition ID as a deterministic tie-breaker. Scaling up and scaling down are both outcomes of rerunning the same assignment algorithm with a new throughput value. This allocator ordering is now an implemented design choice, not an open question.
 
 ## Public Interfaces
 
@@ -138,15 +138,13 @@ The assignment algorithm should produce stable, predictable partition sets while
 
 Scaling up and scaling down are not separate operations. A throughput increase may cause the first valid proposal to require more partitions. A throughput decrease may cause the first valid proposal to require fewer partitions. In both cases, the allocator uses the same eligibility, equal-share, minimum-count, and candidate-ordering rules.
 
-The open decision is how candidate partitions should be ordered when multiple valid assignments exist.
+#### Current Policy: Reuse-First Capacity-Fit Selection
 
-#### Option A: Reuse-First Capacity-Fit Selection
+This is what the current implementation does.
 
-This is what the current implementation does, and it came from the copied Airbnb branch.
-
-- For shared assignments, sort candidate partitions by current-membership first, then lowest available capacity, then lexicographic partition ID.
-- For dedicated assignments, sort reusable same-dataset dedicated partitions before empty partitions. Within each group, sort by lowest available capacity, then lexicographic partition ID.
-- Store and return the selected partition IDs in stable lexicographic partition ID order after selection.
+- For shared assignments, sort candidate partitions by current-membership first, then lowest available capacity, then numeric partition ID.
+- For dedicated assignments, sort reusable same-dataset dedicated partitions before empty partitions. Within each group, sort by lowest available capacity, then numeric partition ID.
+- Return the selected partition IDs in allocator order. The implementation does not re-sort the chosen set after selection.
 
 This policy does not try to keep low-numbered partition IDs full or remove high-numbered partition IDs first. Partition catalog lifecycle and cluster-wide partition count changes are out of scope, so numeric partition order is not a primary assignment goal under this option.
 
@@ -165,11 +163,10 @@ Cons:
 - A throughput reduction may remove a lower-sorting partition ID and keep a higher-sorting partition ID if that is the tighter available-capacity fit.
 - The algorithm is greedy and local to the dataset being updated; it does not globally rebalance all datasets.
 - Partition ID ordering is only a deterministic tie-breaker and should not be treated as a capacity or lifecycle policy.
-- This option still needs an explicit partition ID ordering choice: treat partition IDs as opaque strings sorted lexicographically, or require numeric-like identifiers sorted numerically.
 
 #### Option B: Partition-ID-Ordered Selection
 
-This is closer to the earlier ADR wording. The allocator would still filter by eligibility and per-partition capacity, but candidate ordering would primarily use partition ID order instead of available-capacity fit.
+This is closer to the earlier ADR wording. The allocator would still filter by eligibility and per-partition capacity, but candidate ordering would primarily use partition ID order instead of available-capacity fit. This is not the current implementation.
 
 Pros:
 
@@ -182,21 +179,23 @@ Cons:
 
 - May churn away from current partitions more often unless current-membership is still given priority.
 - May consume larger-capacity partitions earlier than necessary and leave smaller fragments that are harder to use later.
-- Requires deciding whether partition IDs are opaque strings sorted lexicographically or constrained numeric identifiers sorted numerically.
 - The simpler policy would require changing the current implementation and updating tests.
 
 #### Partition ID Ordering Choices
 
-Both candidate-ordering options need an explicit partition ID ordering choice:
+The current implementation uses numeric-like partition ordering in allocator paths. Partition IDs remain stored as strings, but when the allocator needs a deterministic tie-breaker it parses them as numeric identifiers and fails fast if a configured partition ID is not numeric.
 
-- Opaque string IDs with lexicographic ordering. This matches the current data model and current implementation because partition IDs are strings. It avoids assuming the IDs are generated from numbers, but `10` sorts before `2`.
-- Numeric-like IDs with numeric ordering. This matches operator intuition if partitions are intentionally named after Kafka-style partition numbers, but it requires validating or defining what happens when a partition ID is not numeric.
+This is intentionally narrower than a global ordering contract:
+
+- allocator tie-breaking uses numeric ordering
+- `ListPartition` does not promise a sorted response order
+- persisted dataset assignment history keeps the allocator's chosen order rather than applying a second canonical sort
 
 ### Examples
 
 Unless stated otherwise, these examples assume `ManagerConfig.partition_assignment_config.min_number_of_partitions = 2`.
 
-Examples that depend on candidate ordering describe the current reuse-first capacity-fit implementation. If the final decision is partition-ID-ordered selection, update those examples to match the chosen policy.
+Examples that depend on candidate ordering describe the current reuse-first capacity-fit implementation.
 
 #### Example 1: Minimum Partition Count Is an Algorithm Input
 
@@ -476,8 +475,7 @@ Result:
 
 - Should manual assignment be strictly validated against the same capacity checks as auto-assignment, or only optionally validated?
 - Should additional operator-facing diagnostics be returned when no feasible assignment exists?
-- Should auto-assignment keep the current reuse-first capacity-fit candidate ordering, or switch to simpler partition-ID-ordered selection?
-- Should partition IDs be treated as opaque strings sorted lexicographically, or constrained numeric-like identifiers sorted numerically?
+- How should the manager handle the case where it has just written a new partition assignment, but a follow-up assignment decision is still computed from older cached metadata? In plain terms: if request A updates dataset X, and request B immediately assigns dataset Y, how do we ensure request B sees dataset X's new usage before choosing partitions? Is using fresh reads in selected paths enough, or should the design move toward stronger coordination such as optimistic locking or another mechanism?
 
 ## Compatibility, Deprecation, and Migration Plan
 
