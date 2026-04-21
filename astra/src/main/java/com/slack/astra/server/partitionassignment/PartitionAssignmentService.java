@@ -30,10 +30,8 @@ public class PartitionAssignmentService {
       DatasetMetadataStore datasetMetadataStore,
       PartitionMetadataStore partitionMetadataStore,
       int minNumberOfPartitions) {
-    this.datasetMetadataStore =
-        Objects.requireNonNull(datasetMetadataStore, "datasetMetadataStore");
-    this.partitionMetadataStore =
-        Objects.requireNonNull(partitionMetadataStore, "partitionMetadataStore");
+    this.datasetMetadataStore = datasetMetadataStore;
+    this.partitionMetadataStore = partitionMetadataStore;
     this.minNumberOfPartitions = minNumberOfPartitions <= 0 ? 2 : minNumberOfPartitions;
   }
 
