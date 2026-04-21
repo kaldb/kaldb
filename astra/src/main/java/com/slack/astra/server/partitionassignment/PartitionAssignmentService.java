@@ -46,7 +46,7 @@ public class PartitionAssignmentService {
       String datasetName,
       long requestedThroughputBytes,
       List<String> requestedPartitionIds,
-      Boolean requireDedicatedPartitionOverride) {
+      DedicatedPartitionModeOverride dedicatedPartitionModeOverride) {
     Preconditions.checkArgument(
         requestedPartitionIds.stream().noneMatch(String::isBlank),
         "PartitionIds list must not contain blank strings");
@@ -58,9 +58,13 @@ public class PartitionAssignmentService {
             ? existingDatasetMetadata.getThroughputBytes()
             : requestedThroughputBytes;
     boolean requireDedicatedPartition =
-        requireDedicatedPartitionOverride != null
-            ? requireDedicatedPartitionOverride
-            : existingDatasetMetadata.isUsingDedicatedPartitions();
+        switch (
+            Objects.requireNonNull(
+                dedicatedPartitionModeOverride, "dedicatedPartitionModeOverride")) {
+          case PRESERVE_EXISTING -> existingDatasetMetadata.isUsingDedicatedPartitions();
+          case REQUIRE_DEDICATED -> true;
+          case REQUIRE_SHARED -> false;
+        };
 
     List<String> assignedPartitionIds;
     if (requestedPartitionIds.isEmpty()) {

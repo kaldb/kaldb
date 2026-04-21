@@ -22,6 +22,7 @@ import com.slack.astra.metadata.snapshot.SnapshotMetadataStore;
 import com.slack.astra.proto.manager_api.ManagerApi;
 import com.slack.astra.proto.manager_api.ManagerApiServiceGrpc;
 import com.slack.astra.proto.metadata.Metadata;
+import com.slack.astra.server.partitionassignment.DedicatedPartitionModeOverride;
 import com.slack.astra.server.partitionassignment.LivePartitionState;
 import com.slack.astra.server.partitionassignment.PartitionAssignmentService;
 import com.slack.astra.server.partitionassignment.PartitionOccupancy;
@@ -221,9 +222,7 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
               request.getName(),
               request.getThroughputBytes(),
               request.getPartitionIdsList(),
-              request.hasRequireDedicatedPartition()
-                  ? request.getRequireDedicatedPartition()
-                  : null);
+              toDedicatedPartitionModeOverride(request));
 
       responseObserver.onNext(
           ManagerApi.UpdatePartitionAssignmentResponse.newBuilder()
@@ -538,6 +537,16 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
               .build());
     }
     return builder.build();
+  }
+
+  private static DedicatedPartitionModeOverride toDedicatedPartitionModeOverride(
+      ManagerApi.UpdatePartitionAssignmentRequest request) {
+    if (!request.hasRequireDedicatedPartition()) {
+      return DedicatedPartitionModeOverride.PRESERVE_EXISTING;
+    }
+    return request.getRequireDedicatedPartition()
+        ? DedicatedPartitionModeOverride.REQUIRE_DEDICATED
+        : DedicatedPartitionModeOverride.REQUIRE_SHARED;
   }
 
   /** Creates a new field redaction */
