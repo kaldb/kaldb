@@ -1,11 +1,11 @@
 package com.slack.astra.server.partitionassignment;
 
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
 import com.slack.astra.metadata.dataset.DatasetMetadata;
 import com.slack.astra.metadata.dataset.DatasetPartitionMetadata;
 import io.grpc.Status;
 import java.util.Comparator;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Stream;
@@ -15,6 +15,9 @@ import org.slf4j.LoggerFactory;
 /** Assignment policy for selecting partitions from the current live partition state. */
 public final class PartitionAutoAssigner {
   private static final Logger LOG = LoggerFactory.getLogger(PartitionAutoAssigner.class);
+
+  private static final String DEDICATED_BRANCH_LABEL = "dedicated proposal";
+  private static final String SHARED_BRANCH_LABEL = "proposal";
 
   private PartitionAutoAssigner() {}
 
@@ -31,75 +34,73 @@ public final class PartitionAutoAssigner {
           .asRuntimeException();
     }
 
-    Set<String> currentPartitions =
-        datasetMetadata
-            .getActivePartitionMetadata()
-            .map(DatasetPartitionMetadata::getPartitions)
-            .map(HashSet::new)
-            .orElseGet(Set::of);
+    Set<String> currentIds = currentPartitionIds(datasetMetadata);
+    List<LivePartitionState> statesWithoutSelf =
+        withSelfContributionRemoved(datasetMetadata, currentIds, livePartitionStates);
 
-    List<LivePartitionState> adjustedLivePartitionStates =
-        withoutDatasetContribution(datasetMetadata, livePartitionStates);
+    List<LivePartitionState> sortedCandidates;
+    long startCount;
+    String branchLabel;
     if (requireDedicatedPartition) {
-      List<LivePartitionState> reusablePartitions =
-          adjustedLivePartitionStates.stream()
-              .filter(p -> p.isExclusivelyUsedBy(datasetMetadata.getName()))
-              .toList();
-      Comparator<LivePartitionState> compareByAvailableCapacityThenId =
-          Comparator.comparing(LivePartitionState::getAvailableCapacity)
-              .thenComparing(
-                  LivePartitionState::getPartitionID, PartitionIdOrdering.numericComparator());
-      List<LivePartitionState> emptyPartitions =
-          adjustedLivePartitionStates.stream().filter(LivePartitionState::isEmpty).toList();
-      List<LivePartitionState> sortedPartitions =
-          Stream.concat(
-                  reusablePartitions.stream().sorted(compareByAvailableCapacityThenId),
-                  emptyPartitions.stream().sorted(compareByAvailableCapacityThenId))
-              .toList();
-      LOG.debug(
-          "current empty partitions: {}, list to pull from {}",
-          adjustedLivePartitionStates.stream()
-              .filter(LivePartitionState::isEmpty)
-              .map(LivePartitionState::getPartitionID)
-              .toList(),
-          sortedPartitions.stream().map(LivePartitionState::getPartitionID).toList());
-
-      ImmutableList<String> lastProposal = ImmutableList.of();
-      for (long proposedPartitionCt = minNumberOfPartitions;
-          proposedPartitionCt <= sortedPartitions.size();
-          proposedPartitionCt++) {
-        long nextPerPartitionThroughput = Math.ceilDiv(throughputBytes, proposedPartitionCt);
-        lastProposal =
-            sortedPartitions.stream()
-                .filter(p -> p.getAvailableCapacity() >= nextPerPartitionThroughput)
-                .limit(proposedPartitionCt)
-                .map(LivePartitionState::getPartitionID)
-                .collect(ImmutableList.toImmutableList());
-        LOG.debug(
-            "dedicated proposal for partition count: {}, per partition throughput: {}, proposal: {}",
-            proposedPartitionCt,
-            nextPerPartitionThroughput,
-            lastProposal);
-        if (lastProposal.size() == proposedPartitionCt) {
-          return lastProposal;
-        }
-      }
-
-      throw Status.FAILED_PRECONDITION
-          .withDescription(
-              "Needed %d partitions with enough capacity, found %d: %s"
-                  .formatted(minNumberOfPartitions, lastProposal.size(), lastProposal))
-          .asRuntimeException();
+      sortedCandidates = dedicatedCandidates(datasetMetadata, statesWithoutSelf);
+      startCount = minNumberOfPartitions;
+      branchLabel = DEDICATED_BRANCH_LABEL;
+    } else {
+      sortedCandidates = sharedCandidates(datasetMetadata, currentIds, statesWithoutSelf);
+      startCount = 1L;
+      branchLabel = SHARED_BRANCH_LABEL;
     }
 
-    List<LivePartitionState> partitionsSorted =
-        adjustedLivePartitionStates.stream()
+    return findSmallestSatisfyingAssignment(
+        sortedCandidates, throughputBytes, startCount, minNumberOfPartitions, branchLabel);
+  }
+
+  private static Set<String> currentPartitionIds(DatasetMetadata datasetMetadata) {
+    return datasetMetadata
+        .getActivePartitionMetadata()
+        .map(DatasetPartitionMetadata::getPartitions)
+        .<Set<String>>map(ImmutableSet::copyOf)
+        .orElseGet(ImmutableSet::of);
+  }
+
+  private static long perPartitionDemand(long totalThroughput, long partitionCount) {
+    return Math.ceilDiv(totalThroughput, partitionCount);
+  }
+
+  private static List<LivePartitionState> dedicatedCandidates(
+      DatasetMetadata datasetMetadata, List<LivePartitionState> statesWithoutSelf) {
+    Comparator<LivePartitionState> byAvailableCapacityThenId =
+        Comparator.comparing(LivePartitionState::getAvailableCapacity)
+            .thenComparing(
+                LivePartitionState::getPartitionID, PartitionIdOrdering.numericComparator());
+    List<LivePartitionState> reusable =
+        statesWithoutSelf.stream()
+            .filter(p -> p.isExclusivelyUsedBy(datasetMetadata.getName()))
+            .sorted(byAvailableCapacityThenId)
+            .toList();
+    List<LivePartitionState> empty =
+        statesWithoutSelf.stream()
+            .filter(LivePartitionState::isEmpty)
+            .sorted(byAvailableCapacityThenId)
+            .toList();
+    List<LivePartitionState> sortedCandidates =
+        Stream.concat(reusable.stream(), empty.stream()).toList();
+    LOG.debug(
+        "current empty partitions: {}, list to pull from {}",
+        empty.stream().map(LivePartitionState::getPartitionID).toList(),
+        sortedCandidates.stream().map(LivePartitionState::getPartitionID).toList());
+    return sortedCandidates;
+  }
+
+  private static List<LivePartitionState> sharedCandidates(
+      DatasetMetadata datasetMetadata,
+      Set<String> currentIds,
+      List<LivePartitionState> statesWithoutSelf) {
+    List<LivePartitionState> sortedCandidates =
+        statesWithoutSelf.stream()
             .filter(partition -> partition.canUseForSharedAssignment(datasetMetadata.getName()))
             .sorted(
-                Comparator.comparing(
-                        (LivePartitionState partition) ->
-                            currentPartitions.contains(partition.getPartitionID()))
-                    .reversed()
+                preferCurrentAssignment(currentIds)
                     .thenComparing(LivePartitionState::getAvailableCapacity)
                     .thenComparing(
                         LivePartitionState::getPartitionID,
@@ -107,46 +108,56 @@ public final class PartitionAutoAssigner {
             .toList();
     LOG.debug(
         "partitions sorted: {}",
-        partitionsSorted.stream().map(LivePartitionState::getPartitionID).toList());
+        sortedCandidates.stream().map(LivePartitionState::getPartitionID).toList());
+    return sortedCandidates;
+  }
 
-    ImmutableList<String> lastProposal = ImmutableList.of();
-    for (long proposedPartitionCt = 1;
-        proposedPartitionCt <= partitionsSorted.size();
-        proposedPartitionCt++) {
-      long nextPerPartitionThroughput = Math.ceilDiv(throughputBytes, proposedPartitionCt);
-      lastProposal =
-          partitionsSorted.stream()
-              .filter(p -> p.getAvailableCapacity() >= nextPerPartitionThroughput)
-              .limit(proposedPartitionCt)
+  private static Comparator<LivePartitionState> preferCurrentAssignment(Set<String> currentIds) {
+    return Comparator.comparing(
+            (LivePartitionState partition) -> currentIds.contains(partition.getPartitionID()))
+        .reversed();
+  }
+
+  private static ImmutableList<String> findSmallestSatisfyingAssignment(
+      List<LivePartitionState> sortedCandidates,
+      long throughputBytes,
+      long startCount,
+      long minAcceptable,
+      String branchLabel) {
+    ImmutableList<String> bestAttempt = ImmutableList.of();
+    for (long targetPartitionCount = startCount;
+        targetPartitionCount <= sortedCandidates.size();
+        targetPartitionCount++) {
+      final long demandPerPartition = perPartitionDemand(throughputBytes, targetPartitionCount);
+      final long targetCount = targetPartitionCount;
+      bestAttempt =
+          sortedCandidates.stream()
+              .filter(p -> p.getAvailableCapacity() >= demandPerPartition)
+              .limit(targetCount)
               .map(LivePartitionState::getPartitionID)
               .collect(ImmutableList.toImmutableList());
       LOG.debug(
-          "proposal for partition count: {}, per partition throughput: {}, proposal: {}",
-          proposedPartitionCt,
-          nextPerPartitionThroughput,
-          lastProposal);
-      if (lastProposal.size() == proposedPartitionCt
-          && proposedPartitionCt >= minNumberOfPartitions) {
-        return lastProposal;
+          "{} for partition count: {}, per partition throughput: {}, proposal: {}",
+          branchLabel,
+          targetPartitionCount,
+          demandPerPartition,
+          bestAttempt);
+      if (bestAttempt.size() == targetPartitionCount && targetPartitionCount >= minAcceptable) {
+        return bestAttempt;
       }
     }
     throw Status.FAILED_PRECONDITION
         .withDescription(
             "Needed %d partitions with enough capacity, found %d: %s"
-                .formatted(minNumberOfPartitions, lastProposal.size(), lastProposal))
+                .formatted(minAcceptable, bestAttempt.size(), bestAttempt))
         .asRuntimeException();
   }
 
-  private static List<LivePartitionState> withoutDatasetContribution(
-      DatasetMetadata datasetMetadata, List<LivePartitionState> livePartitionStates) {
+  private static List<LivePartitionState> withSelfContributionRemoved(
+      DatasetMetadata datasetMetadata,
+      Set<String> currentIds,
+      List<LivePartitionState> livePartitionStates) {
     long currentPerPartitionThroughput = datasetMetadata.getActivePerPartitionThroughput();
-    Set<String> currentIds =
-        datasetMetadata
-            .getActivePartitionMetadata()
-            .map(DatasetPartitionMetadata::getPartitions)
-            .map(HashSet::new)
-            .orElseGet(Set::of);
-
     return livePartitionStates.stream()
         .map(
             partition -> {
