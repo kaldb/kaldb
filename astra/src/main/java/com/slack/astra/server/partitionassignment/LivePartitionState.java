@@ -1,9 +1,23 @@
 package com.slack.astra.server.partitionassignment;
 
+import com.google.common.base.Preconditions;
+import com.google.common.collect.ImmutableList;
+import com.slack.astra.metadata.dataset.DatasetMetadata;
+import com.slack.astra.metadata.dataset.DatasetPartitionMetadata;
+import com.slack.astra.metadata.partition.PartitionMetadata;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Partition capacity plus currently calculated usage from dataset assignments. */
 public class LivePartitionState {
+  private static final Logger LOG = LoggerFactory.getLogger(LivePartitionState.class);
   public final String partitionId;
   public final long provisionedCapacity;
   public final long maxCapacity;
@@ -50,6 +64,79 @@ public class LivePartitionState {
 
   public long getAvailableCapacity() {
     return maxCapacity - provisionedCapacity;
+  }
+
+  public static List<LivePartitionState> calculateAll(
+      List<DatasetMetadata> datasetMetadataList, List<PartitionMetadata> partitionMetadataList) {
+    final Map<String, List<String>> partitionDatasets = new HashMap<>();
+    final Map<String, Long> partitionProvisioning = new HashMap<>();
+    final Map<String, String> partitionDedicatedOwner = new HashMap<>();
+    for (PartitionMetadata partitionMetadata : partitionMetadataList) {
+      partitionProvisioning.put(partitionMetadata.getPartitionID(), 0L);
+      partitionDatasets.put(partitionMetadata.getPartitionID(), new ArrayList<>());
+    }
+
+    for (DatasetMetadata datasetMetadata : datasetMetadataList) {
+      Optional<DatasetPartitionMetadata> latest = datasetMetadata.getLatestPartitionMetadata();
+      long perPartitionValue = datasetMetadata.getLatestPerPartitionThroughput();
+      boolean useDedicatedPartition = datasetMetadata.isUsingDedicatedPartitions();
+      for (String partitionId :
+          latest.map(DatasetPartitionMetadata::getPartitions).orElse(ImmutableList.of())) {
+        if (!partitionProvisioning.containsKey(partitionId)) {
+          LOG.warn(
+              "Dataset {} references partition {} that is not in the partition catalog",
+              datasetMetadata.getName(),
+              partitionId);
+          continue;
+        }
+        partitionProvisioning.put(
+            partitionId, perPartitionValue + partitionProvisioning.getOrDefault(partitionId, 0L));
+        partitionDatasets.get(partitionId).add(datasetMetadata.getName());
+        if (useDedicatedPartition) {
+          String existingDedicatedOwner =
+              partitionDedicatedOwner.putIfAbsent(partitionId, datasetMetadata.getName());
+          Preconditions.checkArgument(
+              existingDedicatedOwner == null
+                  || existingDedicatedOwner.equals(datasetMetadata.getName()),
+              "partition %s cannot be dedicated to multiple datasets".formatted(partitionId));
+        }
+      }
+    }
+
+    return partitionMetadataList.stream()
+        .sorted(Comparator.comparing(PartitionMetadata::getPartitionID))
+        .map(
+            partitionMetadata ->
+                fromCurrentAssignments(
+                    partitionMetadata,
+                    partitionProvisioning.get(partitionMetadata.getPartitionID()),
+                    partitionDatasets.get(partitionMetadata.getPartitionID()),
+                    partitionDedicatedOwner.get(partitionMetadata.getPartitionID())))
+        .toList();
+  }
+
+  private static LivePartitionState fromCurrentAssignments(
+      PartitionMetadata partitionMetadata,
+      long provisionedCapacity,
+      List<String> datasets,
+      String dedicatedOwner) {
+    PartitionOccupancy occupancy;
+    if (datasets.isEmpty()) {
+      occupancy = new PartitionOccupancy.Empty();
+    } else if (dedicatedOwner == null) {
+      occupancy = new PartitionOccupancy.Shared(datasets);
+    } else {
+      Preconditions.checkArgument(
+          datasets.size() == 1 && datasets.get(0).equals(dedicatedOwner),
+          "partition occupancy must be empty, shared, or dedicated to exactly one dataset");
+      occupancy = new PartitionOccupancy.Dedicated(dedicatedOwner);
+    }
+
+    return new LivePartitionState(
+        partitionMetadata.getPartitionID(),
+        provisionedCapacity,
+        partitionMetadata.getMaxCapacity(),
+        occupancy);
   }
 
   @Override
