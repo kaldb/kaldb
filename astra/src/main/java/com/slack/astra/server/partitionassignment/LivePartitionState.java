@@ -5,7 +5,6 @@ import com.slack.astra.metadata.dataset.DatasetMetadata;
 import com.slack.astra.metadata.dataset.DatasetPartitionMetadata;
 import com.slack.astra.metadata.partition.PartitionMetadata;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -111,7 +110,6 @@ public class LivePartitionState {
     }
 
     return partitionMetadataList.stream()
-        .sorted(Comparator.comparing(PartitionMetadata::getPartitionID))
         .map(
             partitionMetadata ->
                 fromCurrentAssignments(
