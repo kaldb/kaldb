@@ -40,7 +40,7 @@ public final class PartitionAutoAssigner {
     if (requireDedicatedPartition) {
       List<LivePartitionState> reusablePartitions =
           adjustedLivePartitionStates.stream()
-              .filter(p -> p.isDedicatedOnlyTo(datasetMetadata.getName()))
+              .filter(p -> p.isExclusivelyUsedBy(datasetMetadata.getName()))
               .toList();
       Comparator<LivePartitionState> compareByAvailableCapacityThenId =
           Comparator.comparing(LivePartitionState::getAvailableCapacity)

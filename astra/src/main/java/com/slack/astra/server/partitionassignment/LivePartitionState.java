@@ -62,6 +62,10 @@ public class LivePartitionState {
     return occupancy.isDedicatedOnlyTo(datasetName);
   }
 
+  public boolean isExclusivelyUsedBy(String datasetName) {
+    return occupancy.isExclusivelyUsedBy(datasetName);
+  }
+
   public long getAvailableCapacity() {
     return maxCapacity - provisionedCapacity;
   }

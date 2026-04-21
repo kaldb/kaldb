@@ -21,6 +21,16 @@ public sealed interface PartitionOccupancy
     return this instanceof Dedicated dedicated && dedicated.dataset().equals(datasetName);
   }
 
+  default boolean isExclusivelyUsedBy(String datasetName) {
+    if (this instanceof Dedicated dedicated) {
+      return dedicated.dataset().equals(datasetName);
+    }
+    if (this instanceof Shared shared) {
+      return shared.datasets().size() == 1 && shared.datasets().get(0).equals(datasetName);
+    }
+    return false;
+  }
+
   record Empty() implements PartitionOccupancy {
     @Override
     public List<String> datasets() {
