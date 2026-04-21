@@ -43,6 +43,7 @@ import java.time.Instant;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -50,6 +51,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import org.apache.curator.test.TestingServer;
 import org.apache.curator.x.async.AsyncCuratorFramework;
 import org.junit.jupiter.api.AfterEach;
@@ -613,16 +616,14 @@ public class ManagerApiGrpcTest {
 
     ManagerApi.ListPartitionMetadataResponse listPartitionResponse =
         managerApiStub.listPartition(ManagerApi.ListPartitionRequest.newBuilder().build());
-    assertThat(listPartitionResponse.getPartitionMetadataList())
-        .extracting(ManagerApi.CalculatedPartitionMetadata::getPartitionId)
-        .containsExactly("1", "2", "3");
-    assertThat(listPartitionResponse.getPartitionMetadata(0).getProvisionedCapacity())
-        .isEqualTo(50);
-    assertThat(listPartitionResponse.getPartitionMetadata(0).getShared().getDatasetsList())
-        .containsExactly(datasetName);
-    assertThat(listPartitionResponse.getPartitionMetadata(1).getProvisionedCapacity())
-        .isEqualTo(50);
-    assertThat(listPartitionResponse.getPartitionMetadata(2).getProvisionedCapacity()).isZero();
+    Map<String, ManagerApi.CalculatedPartitionMetadata> partitionsById =
+        partitionMetadataById(listPartitionResponse);
+    assertThat(partitionsById.keySet()).containsExactlyInAnyOrder("1", "2", "3");
+    assertThat(partitionsById.get("1").getProvisionedCapacity()).isEqualTo(50);
+    assertThat(partitionsById.get("1").getShared().getDatasetsList()).containsExactly(datasetName);
+    assertThat(partitionsById.get("2").getProvisionedCapacity()).isEqualTo(50);
+    assertThat(partitionsById.get("2").getShared().getDatasetsList()).containsExactly(datasetName);
+    assertThat(partitionsById.get("3").getProvisionedCapacity()).isZero();
   }
 
   @Test
@@ -735,10 +736,10 @@ public class ManagerApiGrpcTest {
 
     ManagerApi.ListPartitionMetadataResponse listPartitionResponse =
         managerApiStub.listPartition(ManagerApi.ListPartitionRequest.newBuilder().build());
-    assertThat(listPartitionResponse.getPartitionMetadata(2).getDedicated().getDataset())
-        .isEqualTo(dedicatedDatasetName);
-    assertThat(listPartitionResponse.getPartitionMetadata(3).getDedicated().getDataset())
-        .isEqualTo(dedicatedDatasetName);
+    Map<String, ManagerApi.CalculatedPartitionMetadata> partitionsById =
+        partitionMetadataById(listPartitionResponse);
+    assertThat(partitionsById.get("3").getDedicated().getDataset()).isEqualTo(dedicatedDatasetName);
+    assertThat(partitionsById.get("4").getDedicated().getDataset()).isEqualTo(dedicatedDatasetName);
   }
 
   @Test
@@ -1991,5 +1992,13 @@ public class ManagerApiGrpcTest {
 
     assertThat(AstraMetadataTestUtils.listSyncUncached(fieldRedactionMetadataStore).size())
         .isEqualTo(0);
+  }
+
+  private static Map<String, ManagerApi.CalculatedPartitionMetadata> partitionMetadataById(
+      ManagerApi.ListPartitionMetadataResponse response) {
+    return response.getPartitionMetadataList().stream()
+        .collect(
+            Collectors.toMap(
+                ManagerApi.CalculatedPartitionMetadata::getPartitionId, Function.identity()));
   }
 }
