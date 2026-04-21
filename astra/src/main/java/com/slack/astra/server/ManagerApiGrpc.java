@@ -51,11 +51,15 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
   private static final Logger LOG = LoggerFactory.getLogger(ManagerApiGrpc.class);
   private final DatasetMetadataStore datasetMetadataStore;
   private final SnapshotMetadataStore snapshotMetadataStore;
-  public static final long MAX_TIME = Long.MAX_VALUE;
+
+  /** Open-ended upper bound for manager query windows and snapshot scans. */
+  public static final long MAX_TIME = ChunkInfo.MAX_FUTURE_TIME;
+
   private final ReplicaRestoreService replicaRestoreService;
   private final FieldRedactionMetadataStore fieldRedactionMetadataStore;
   private final PartitionMetadataStore partitionMetadataStore;
-  private final PartitionAssignmentService partitionAssignmentService;
+  private final LivePartitionStateLoader livePartitionStateLoader;
+  private final PartitionAssignmentUpdater partitionAssignmentUpdater;
 
   public ManagerApiGrpc(
       DatasetMetadataStore datasetMetadataStore,
