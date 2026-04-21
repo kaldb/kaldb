@@ -186,6 +186,30 @@ public class PreprocessorRateLimiterTest {
   }
 
   @Test
+  public void shouldUseActivePerPartitionThroughputForMetrics() {
+    MeterRegistry meterRegistry = new SimpleMeterRegistry();
+    PreprocessorRateLimiter rateLimiter = new PreprocessorRateLimiter(meterRegistry, 1, 1, false);
+
+    DatasetMetadata datasetMetadata =
+        new DatasetMetadata(
+            "rateLimiter",
+            "rateLimiter",
+            5,
+            List.of(new DatasetPartitionMetadata(100, Long.MAX_VALUE, List.of("0", "1"))),
+            DatasetMetadata.MATCH_ALL_SERVICE);
+
+    rateLimiter.createBulkIngestRateLimiter(List.of(datasetMetadata));
+
+    assertThat(
+            meterRegistry
+                .get(RATE_LIMIT_BYTES)
+                .tag("service", datasetMetadata.getName())
+                .gauge()
+                .value())
+        .isEqualTo(3);
+  }
+
+  @Test
   public void shouldApplyScaledRateLimitWithAllServices() throws InterruptedException {
     MeterRegistry meterRegistry = new SimpleMeterRegistry();
     int preprocessorCount = 2;
