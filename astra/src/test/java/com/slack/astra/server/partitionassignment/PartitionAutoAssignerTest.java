@@ -1,6 +1,7 @@
 package com.slack.astra.server.partitionassignment;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.slack.astra.metadata.dataset.DatasetMetadata;
 import com.slack.astra.metadata.dataset.DatasetPartitionMetadata;
@@ -42,6 +43,42 @@ public class PartitionAutoAssignerTest {
                     new LivePartitionState("3", 0, 100, new PartitionOccupancy.Empty())),
                 3))
         .containsExactly("1", "2", "3");
+  }
+
+  @Test
+  public void shouldUseNumericPartitionOrderingForSharedTieBreaks() {
+    DatasetMetadata datasetMetadata =
+        new DatasetMetadata("shared-dataset", "owner", 0, List.of(), "", false);
+
+    assertThat(
+            PartitionAutoAssigner.autoAssign(
+                datasetMetadata,
+                100,
+                false,
+                List.of(
+                    new LivePartitionState("10", 0, 60, new PartitionOccupancy.Empty()),
+                    new LivePartitionState("2", 0, 60, new PartitionOccupancy.Empty()),
+                    new LivePartitionState("11", 0, 60, new PartitionOccupancy.Empty())),
+                2))
+        .containsExactly("2", "10");
+  }
+
+  @Test
+  public void shouldUseNumericPartitionOrderingForDedicatedTieBreaks() {
+    DatasetMetadata datasetMetadata =
+        new DatasetMetadata("dedicated-dataset", "owner", 0, List.of(), "", true);
+
+    assertThat(
+            PartitionAutoAssigner.autoAssign(
+                datasetMetadata,
+                100,
+                true,
+                List.of(
+                    new LivePartitionState("10", 0, 60, new PartitionOccupancy.Empty()),
+                    new LivePartitionState("2", 0, 60, new PartitionOccupancy.Empty()),
+                    new LivePartitionState("11", 0, 60, new PartitionOccupancy.Empty())),
+                2))
+        .containsExactly("2", "10");
   }
 
   @Test
@@ -124,5 +161,25 @@ public class PartitionAutoAssignerTest {
                     new LivePartitionState("3", 0, 100, new PartitionOccupancy.Empty())),
                 2))
         .containsExactly("1", "2");
+  }
+
+  @Test
+  public void shouldFailFastWhenPartitionIdIsNotNumericForOrdering() {
+    DatasetMetadata datasetMetadata =
+        new DatasetMetadata("shared-dataset", "owner", 0, List.of(), "", false);
+
+    assertThatThrownBy(
+            () ->
+                PartitionAutoAssigner.autoAssign(
+                    datasetMetadata,
+                    100,
+                    false,
+                    List.of(
+                        new LivePartitionState("a", 0, 60, new PartitionOccupancy.Empty()),
+                        new LivePartitionState("2", 0, 60, new PartitionOccupancy.Empty()),
+                        new LivePartitionState("3", 0, 60, new PartitionOccupancy.Empty())),
+                    2))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Partition ID must be numeric for ordering: a");
   }
 }

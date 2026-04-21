@@ -44,7 +44,8 @@ public final class PartitionAutoAssigner {
               .toList();
       Comparator<LivePartitionState> compareByAvailableCapacityThenId =
           Comparator.comparing(LivePartitionState::getAvailableCapacity)
-              .thenComparing(LivePartitionState::getPartitionID);
+              .thenComparing(
+                  LivePartitionState::getPartitionID, PartitionIdOrdering.numericComparator());
       List<LivePartitionState> emptyPartitions =
           livePartitionStates.stream().filter(LivePartitionState::isEmpty).toList();
       List<LivePartitionState> sortedPartitions =
@@ -97,7 +98,9 @@ public final class PartitionAutoAssigner {
                             currentPartitions.contains(partition.getPartitionID()))
                     .reversed()
                     .thenComparing(LivePartitionState::getAvailableCapacity)
-                    .thenComparing(LivePartitionState::getPartitionID))
+                    .thenComparing(
+                        LivePartitionState::getPartitionID,
+                        PartitionIdOrdering.numericComparator()))
             .toList();
     LOG.debug(
         "partitions sorted: {}",
