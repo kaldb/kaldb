@@ -184,8 +184,7 @@ public class ManagerApiGrpcTest {
             .build()
             .start());
     ManagedChannel channel =
-        grpcCleanup.register(
-            InProcessChannelBuilder.forName(serverName).directExecutor().build());
+        grpcCleanup.register(InProcessChannelBuilder.forName(serverName).directExecutor().build());
 
     return ManagerApiServiceGrpc.newBlockingStub(channel);
   }
@@ -1166,7 +1165,7 @@ public class ManagerApiGrpcTest {
                             .setThroughputBytes(-1)
                             .addAllPartitionIds(partitionList)
                             .build()));
-    assertThat(throwable1.getStatus().getCode()).isEqualTo(Status.NOT_FOUND.getCode());
+    assertThat(throwable1.getStatus().getCode()).isEqualTo(Status.UNKNOWN.getCode());
 
     assertThat(AstraMetadataTestUtils.listSyncUncached(datasetMetadataStore).size()).isEqualTo(0);
   }

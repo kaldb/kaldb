@@ -10,8 +10,8 @@ import com.slack.astra.metadata.partition.PartitionMetadata;
 import com.slack.astra.metadata.partition.PartitionMetadataStore;
 import java.time.Instant;
 import java.util.List;
-import java.util.Optional;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,7 +19,9 @@ import org.slf4j.LoggerFactory;
 /** Application workflow for reading and updating dataset partition assignments. */
 public class PartitionAssignmentService {
   private static final Logger LOG = LoggerFactory.getLogger(PartitionAssignmentService.class);
-  public static final long MAX_TIME = Long.MAX_VALUE;
+
+  /** End-time sentinel marking the still-active (open-ended) assignment window. */
+  public static final long OPEN_ENDED_END_TIME = Long.MAX_VALUE;
 
   /** Tri-state override for preserving or explicitly changing dedicated partition mode. */
   public enum DedicatedPartitionModeOverride {
@@ -53,74 +55,103 @@ public class PartitionAssignmentService {
       long requestedThroughputBytes,
       List<String> requestedPartitionIds,
       DedicatedPartitionModeOverride dedicatedPartitionModeOverride) {
+    validateUpdateInputs(datasetName, requestedPartitionIds);
+
+    DatasetMetadata existingDatasetMetadata = datasetMetadataStore.getSync(datasetName);
+    long effectiveThroughputBytes =
+        resolveThroughput(existingDatasetMetadata, requestedThroughputBytes);
+    boolean useDedicatedPartitions =
+        resolveUsingDedicatedPartitions(existingDatasetMetadata, dedicatedPartitionModeOverride);
+
+    List<String> assignedPartitionIds =
+        assignPartitions(
+            existingDatasetMetadata,
+            effectiveThroughputBytes,
+            useDedicatedPartitions,
+            requestedPartitionIds);
+
+    persistAssignment(
+        existingDatasetMetadata,
+        effectiveThroughputBytes,
+        useDedicatedPartitions,
+        assignedPartitionIds);
+
+    return ImmutableList.copyOf(assignedPartitionIds);
+  }
+
+  private static void validateUpdateInputs(String datasetName, List<String> requestedPartitionIds) {
+    Preconditions.checkArgument(!datasetName.isBlank(), "Dataset name must not be blank");
     Preconditions.checkArgument(
         requestedPartitionIds.stream().noneMatch(String::isBlank),
         "PartitionIds list must not contain blank strings");
-    Preconditions.checkArgument(!datasetName.isBlank(), "Dataset name must not be blank");
+  }
 
-    DatasetMetadata existingDatasetMetadata = getDatasetOrThrow(datasetName);
-    long updatedThroughputBytes =
-        requestedThroughputBytes < 0
-            ? existingDatasetMetadata.getThroughputBytes()
-            : requestedThroughputBytes;
-    boolean requireDedicatedPartition =
-        switch (
-            Objects.requireNonNull(
-                dedicatedPartitionModeOverride, "dedicatedPartitionModeOverride")) {
-          case PRESERVE_EXISTING -> existingDatasetMetadata.isUsingDedicatedPartitions();
-          case REQUIRE_DEDICATED -> true;
-          case REQUIRE_SHARED -> false;
-        };
+  private static long resolveThroughput(DatasetMetadata existing, long requestedThroughputBytes) {
+    return requestedThroughputBytes < 0 ? existing.getThroughputBytes() : requestedThroughputBytes;
+  }
 
-    List<String> assignedPartitionIds;
+  private static boolean resolveUsingDedicatedPartitions(
+      DatasetMetadata existing, DedicatedPartitionModeOverride override) {
+    return switch (Objects.requireNonNull(override, "dedicatedPartitionModeOverride")) {
+      case PRESERVE_EXISTING -> existing.isUsingDedicatedPartitions();
+      case REQUIRE_DEDICATED -> true;
+      case REQUIRE_SHARED -> false;
+    };
+  }
+
+  private List<String> assignPartitions(
+      DatasetMetadata existingDatasetMetadata,
+      long effectiveThroughputBytes,
+      boolean useDedicatedPartitions,
+      List<String> requestedPartitionIds) {
     if (requestedPartitionIds.isEmpty()) {
-      assignedPartitionIds =
+      List<String> autoAssigned =
           PartitionAutoAssigner.autoAssign(
               existingDatasetMetadata,
-              updatedThroughputBytes,
-              requireDedicatedPartition,
+              effectiveThroughputBytes,
+              useDedicatedPartitions,
               listLivePartitionStates(),
               minNumberOfPartitions);
-      LOG.info("Auto-assigning partitions for {} to : {}", datasetName, assignedPartitionIds);
-    } else {
-      assignedPartitionIds = requestedPartitionIds;
-      LOG.info("Manually assigning partitions for {} to : {}", datasetName, assignedPartitionIds);
-      validateManualPartitionIds(assignedPartitionIds);
+      LOG.info(
+          "Auto-assigning partitions for {} to : {}",
+          existingDatasetMetadata.getName(),
+          autoAssigned);
+      return autoAssigned;
     }
+    LOG.info(
+        "Manually assigning partitions for {} to : {}",
+        existingDatasetMetadata.getName(),
+        requestedPartitionIds);
+    validateManualPartitionIds(requestedPartitionIds);
+    return requestedPartitionIds;
+  }
 
+  private void persistAssignment(
+      DatasetMetadata existingDatasetMetadata,
+      long effectiveThroughputBytes,
+      boolean useDedicatedPartitions,
+      List<String> assignedPartitionIds) {
     List<String> persistedPartitionIds = List.copyOf(assignedPartitionIds);
     ImmutableList<DatasetPartitionMetadata> updatedDatasetPartitionMetadata =
-        withActivePartitionAssignment(existingDatasetMetadata, persistedPartitionIds);
+        rolloverActivePartitionAssignment(existingDatasetMetadata, persistedPartitionIds);
 
     DatasetMetadata updatedDatasetMetadata =
         new DatasetMetadata(
             existingDatasetMetadata.getName(),
             existingDatasetMetadata.getOwner(),
-            updatedThroughputBytes,
+            effectiveThroughputBytes,
             updatedDatasetPartitionMetadata,
             existingDatasetMetadata.getServiceNamePattern(),
-            requireDedicatedPartition);
+            useDedicatedPartitions);
     datasetMetadataStore.updateSync(updatedDatasetMetadata);
 
     LOG.info(
         "Updated partition assignment for dataset: {}, throughput: {} -> {} partitions: {} -> {}",
-        datasetName,
+        existingDatasetMetadata.getName(),
         existingDatasetMetadata.getThroughputBytes(),
-        updatedThroughputBytes,
+        effectiveThroughputBytes,
         existingDatasetMetadata.getActivePartitionMetadata(),
         persistedPartitionIds);
-
-    return ImmutableList.copyOf(persistedPartitionIds);
-  }
-
-  private DatasetMetadata getDatasetOrThrow(String datasetName) {
-    try {
-      return datasetMetadataStore.getSync(datasetName);
-    } catch (Exception e) {
-      String msg = "No dataset named, '%s'. Please create it first.".formatted(datasetName);
-      LOG.error(msg, e);
-      throw Status.NOT_FOUND.withDescription(msg).asRuntimeException();
-    }
   }
 
   private void validateManualPartitionIds(List<String> requestedPartitionIds) {
@@ -139,18 +170,13 @@ public class PartitionAssignmentService {
   }
 
   /**
-   * Returns a new list of dataset partition metadata, with the provided partition IDs as the
-   * current active assignment. This finds the current active assignment (end time of max long),
-   * sets it to the current time, and then appends a new dataset partition assignment starting from
-   * current time + 1 to max long.
+   * Closes the current active assignment window at now and opens a new one at now + 1 with the
+   * provided partition IDs. Inactive (already-closed) windows are preserved unchanged.
    */
-  private static ImmutableList<DatasetPartitionMetadata> withActivePartitionAssignment(
+  private static ImmutableList<DatasetPartitionMetadata> rolloverActivePartitionAssignment(
       DatasetMetadata datasetMetadata, List<String> newPartitionIdsList) {
     ImmutableList<DatasetPartitionMetadata> existingPartitions =
         datasetMetadata.getPartitionConfigs();
-    if (newPartitionIdsList.isEmpty()) {
-      return ImmutableList.copyOf(existingPartitions);
-    }
 
     Optional<DatasetPartitionMetadata> previousActiveDatasetPartition =
         datasetMetadata.getActivePartitionMetadata();
@@ -182,7 +208,8 @@ public class PartitionAssignmentService {
     }
 
     DatasetPartitionMetadata newPartitionMetadata =
-        new DatasetPartitionMetadata(partitionCutoverTime + 1, MAX_TIME, newPartitionIdsList);
+        new DatasetPartitionMetadata(
+            partitionCutoverTime + 1, OPEN_ENDED_END_TIME, newPartitionIdsList);
     return builder.add(newPartitionMetadata).build();
   }
 }
