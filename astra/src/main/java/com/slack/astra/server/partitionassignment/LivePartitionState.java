@@ -1,16 +1,15 @@
-package com.slack.astra.metadata.partition;
+package com.slack.astra.server.partitionassignment;
 
-import java.util.List;
 import java.util.Objects;
 
 /** Partition capacity plus currently calculated usage from dataset assignments. */
-public class CalculatedPartitionMetadata {
+public class LivePartitionState {
   public final String partitionId;
   public final long provisionedCapacity;
   public final long maxCapacity;
   public final PartitionOccupancy occupancy;
 
-  public CalculatedPartitionMetadata(
+  public LivePartitionState(
       String partitionId,
       long provisionedCapacity,
       long maxCapacity,
@@ -19,19 +18,6 @@ public class CalculatedPartitionMetadata {
     this.provisionedCapacity = provisionedCapacity;
     this.maxCapacity = maxCapacity;
     this.occupancy = Objects.requireNonNull(occupancy, "occupancy");
-  }
-
-  public static CalculatedPartitionMetadata fromDatasetAssignments(
-      String partitionId,
-      long provisionedCapacity,
-      long maxCapacity,
-      List<String> datasets,
-      List<String> dedicatedDatasets) {
-    return new CalculatedPartitionMetadata(
-        partitionId,
-        provisionedCapacity,
-        maxCapacity,
-        PartitionOccupancy.from(datasets, dedicatedDatasets));
   }
 
   public String getPartitionID() {
@@ -69,7 +55,7 @@ public class CalculatedPartitionMetadata {
   @Override
   public boolean equals(Object o) {
     if (this == o) return true;
-    if (!(o instanceof CalculatedPartitionMetadata that)) return false;
+    if (!(o instanceof LivePartitionState that)) return false;
     return provisionedCapacity == that.provisionedCapacity
         && maxCapacity == that.maxCapacity
         && Objects.equals(partitionId, that.partitionId)
@@ -83,7 +69,7 @@ public class CalculatedPartitionMetadata {
 
   @Override
   public String toString() {
-    return "CalculatedPartitionMetadata{"
+    return "LivePartitionState{"
         + "partitionId='"
         + partitionId
         + "'"

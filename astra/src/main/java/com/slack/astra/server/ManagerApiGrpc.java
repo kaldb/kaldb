@@ -16,15 +16,15 @@ import com.slack.astra.metadata.dataset.DatasetPartitionMetadata;
 import com.slack.astra.metadata.fieldredaction.FieldRedactionMetadata;
 import com.slack.astra.metadata.fieldredaction.FieldRedactionMetadataSerializer;
 import com.slack.astra.metadata.fieldredaction.FieldRedactionMetadataStore;
-import com.slack.astra.metadata.partition.CalculatedPartitionMetadata;
 import com.slack.astra.metadata.partition.PartitionMetadata;
-import com.slack.astra.metadata.partition.PartitionMetadataSerializer;
 import com.slack.astra.metadata.partition.PartitionMetadataStore;
 import com.slack.astra.metadata.snapshot.SnapshotMetadata;
 import com.slack.astra.metadata.snapshot.SnapshotMetadataStore;
 import com.slack.astra.proto.manager_api.ManagerApi;
 import com.slack.astra.proto.manager_api.ManagerApiServiceGrpc;
 import com.slack.astra.proto.metadata.Metadata;
+import com.slack.astra.server.partitionassignment.LivePartitionState;
+import com.slack.astra.server.partitionassignment.PartitionOccupancy;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
@@ -650,7 +650,7 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
           ManagerApi.ListPartitionMetadataResponse.newBuilder()
               .addAllPartitionMetadata(
                   createPartitionMetadataFromDatasetConfigs().getLivePMDs().stream()
-                      .map(PartitionMetadataSerializer::toCalculatedPartitionMetadataProto)
+                      .map(ManagerApiGrpc::toCalculatedPartitionMetadataProto)
                       .toList())
               .build());
       responseObserver.onCompleted();
@@ -661,6 +661,31 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
       LOG.error("Error fetching partition list", e);
       responseObserver.onError(Status.UNKNOWN.withDescription(e.getMessage()).asException());
     }
+  }
+
+  private static ManagerApi.CalculatedPartitionMetadata toCalculatedPartitionMetadataProto(
+      LivePartitionState metadata) {
+    ManagerApi.CalculatedPartitionMetadata.Builder builder =
+        ManagerApi.CalculatedPartitionMetadata.newBuilder()
+            .setPartitionId(metadata.getPartitionID())
+            .setProvisionedCapacity(metadata.getProvisionedCapacity())
+            .setMaxCapacity(metadata.getMaxCapacity());
+
+    PartitionOccupancy occupancy = metadata.getOccupancy();
+    if (occupancy instanceof PartitionOccupancy.Empty) {
+      builder.setEmpty(ManagerApi.EmptyPartitionOccupancy.newBuilder().build());
+    } else if (occupancy instanceof PartitionOccupancy.Shared shared) {
+      builder.setShared(
+          ManagerApi.SharedPartitionOccupancy.newBuilder()
+              .addAllDatasets(shared.datasets())
+              .build());
+    } else if (occupancy instanceof PartitionOccupancy.Dedicated dedicated) {
+      builder.setDedicated(
+          ManagerApi.DedicatedPartitionOccupancy.newBuilder()
+              .setDataset(dedicated.dataset())
+              .build());
+    }
+    return builder.build();
   }
 
   /**
@@ -689,15 +714,15 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
     PartitionMetadataFromDatasetConfigs partitionMetadataAfterDroppingDatasetBeingModified =
         partitionMetadataFromDatasetConfigs.minusDataset(datasetMetadata);
     if (requireDedicatedPartition) {
-      List<CalculatedPartitionMetadata> reusablePartitions =
+      List<LivePartitionState> reusablePartitions =
           partitionMetadataAfterDroppingDatasetBeingModified.existingDedicatedPartitions(
               datasetMetadata);
-      Comparator<CalculatedPartitionMetadata> compareByAvailableCapacityThenId =
-          Comparator.comparing(CalculatedPartitionMetadata::getAvailableCapacity)
-              .thenComparing(CalculatedPartitionMetadata::getPartitionID);
-      List<CalculatedPartitionMetadata> emptyPartitions =
+      Comparator<LivePartitionState> compareByAvailableCapacityThenId =
+          Comparator.comparing(LivePartitionState::getAvailableCapacity)
+              .thenComparing(LivePartitionState::getPartitionID);
+      List<LivePartitionState> emptyPartitions =
           partitionMetadataFromDatasetConfigs.currentEmptyPartitions();
-      List<CalculatedPartitionMetadata> sortedPartitions =
+      List<LivePartitionState> sortedPartitions =
           Stream.concat(
                   reusablePartitions.stream().sorted(compareByAvailableCapacityThenId),
                   emptyPartitions.stream().sorted(compareByAvailableCapacityThenId))
@@ -705,9 +730,9 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
       LOG.debug(
           "current empty partitions: {}, list to pull from {}",
           partitionMetadataAfterDroppingDatasetBeingModified.currentEmptyPartitions().stream()
-              .map(CalculatedPartitionMetadata::getPartitionID)
+              .map(LivePartitionState::getPartitionID)
               .toList(),
-          sortedPartitions.stream().map(CalculatedPartitionMetadata::getPartitionID).toList());
+          sortedPartitions.stream().map(LivePartitionState::getPartitionID).toList());
 
       ImmutableList<String> lastProposal = ImmutableList.of();
       for (long proposedPartitionCt = partitionMetadataFromDatasetConfigs.minNumberOfPartitions;
@@ -718,7 +743,7 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
             sortedPartitions.stream()
                 .filter(p -> p.getAvailableCapacity() >= nextPerPartitionThroughput)
                 .limit(proposedPartitionCt)
-                .map(CalculatedPartitionMetadata::getPartitionID)
+                .map(LivePartitionState::getPartitionID)
                 .collect(ImmutableList.toImmutableList());
         LOG.debug(
             "dedicated proposal for partition count: {}, per partition throughput: {}, proposal: {}",
@@ -740,20 +765,20 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
           .asRuntimeException();
     }
 
-    List<CalculatedPartitionMetadata> partitionsSorted =
+    List<LivePartitionState> partitionsSorted =
         partitionMetadataAfterDroppingDatasetBeingModified.getLivePMDs().stream()
             .filter(partition -> partition.canUseForSharedAssignment(datasetMetadata.getName()))
             .sorted(
                 Comparator.comparing(
-                        (CalculatedPartitionMetadata p) ->
+                        (LivePartitionState p) ->
                             currentPartitions.contains(p.getPartitionID()))
                     .reversed()
-                    .thenComparing(CalculatedPartitionMetadata::getAvailableCapacity)
-                    .thenComparing(CalculatedPartitionMetadata::getPartitionID))
+                    .thenComparing(LivePartitionState::getAvailableCapacity)
+                    .thenComparing(LivePartitionState::getPartitionID))
             .toList();
     LOG.debug(
         "partitions sorted: {}",
-        partitionsSorted.stream().map(CalculatedPartitionMetadata::getPartitionID).toList());
+        partitionsSorted.stream().map(LivePartitionState::getPartitionID).toList());
 
     ImmutableList<String> lastProposal = ImmutableList.of();
     for (long proposedPartitionCt = 1;
@@ -764,7 +789,7 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
           partitionsSorted.stream()
               .filter(p -> p.getAvailableCapacity() >= nextPerPartitionThroughput)
               .limit(proposedPartitionCt)
-              .map(CalculatedPartitionMetadata::getPartitionID)
+              .map(LivePartitionState::getPartitionID)
               .collect(ImmutableList.toImmutableList());
       LOG.debug(
           "proposal for partition count: {}, per partition throughput: {}, proposal: {}",
@@ -789,7 +814,7 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
   /** Holds the calculated live partition state used for assignment and partition listing. */
   private static class PartitionMetadataFromDatasetConfigs {
     private final long minNumberOfPartitions;
-    private final List<CalculatedPartitionMetadata> livePMDs;
+    private final List<LivePartitionState> livePMDs;
 
     PartitionMetadataFromDatasetConfigs(
         List<DatasetMetadata> datasetMetadataList,
@@ -801,7 +826,7 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
     }
 
     PartitionMetadataFromDatasetConfigs(
-        List<CalculatedPartitionMetadata> livePMDs, long minNumberOfPartitions) {
+        List<LivePartitionState> livePMDs, long minNumberOfPartitions) {
       this.livePMDs = livePMDs;
       this.minNumberOfPartitions = minNumberOfPartitions;
     }
@@ -814,12 +839,12 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
               .map(DatasetPartitionMetadata::getPartitions)
               .orElse(ImmutableList.of());
 
-      List<CalculatedPartitionMetadata> newList =
+      List<LivePartitionState> newList =
           livePMDs.stream()
               .map(
                   p -> {
                     if (currentIds.contains(p.getPartitionID())) {
-                      return new CalculatedPartitionMetadata(
+                      return new LivePartitionState(
                           p.getPartitionID(),
                           Math.max(0, p.getProvisionedCapacity() - currentPerPartitionThroughput),
                           p.getMaxCapacity(),
@@ -835,31 +860,30 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
       return livePMDs.isEmpty();
     }
 
-    List<CalculatedPartitionMetadata> currentEmptyPartitions() {
-      return livePMDs.stream().filter(CalculatedPartitionMetadata::isEmpty).toList();
+    List<LivePartitionState> currentEmptyPartitions() {
+      return livePMDs.stream().filter(LivePartitionState::isEmpty).toList();
     }
 
-    List<CalculatedPartitionMetadata> getLivePMDs() {
+    List<LivePartitionState> getLivePMDs() {
       return livePMDs;
     }
 
     List<String> getPartitionIds() {
-      return livePMDs.stream().map(CalculatedPartitionMetadata::getPartitionID).toList();
+      return livePMDs.stream().map(LivePartitionState::getPartitionID).toList();
     }
 
-    List<CalculatedPartitionMetadata> existingDedicatedPartitions(DatasetMetadata datasetMetadata) {
+    List<LivePartitionState> existingDedicatedPartitions(DatasetMetadata datasetMetadata) {
       return livePMDs.stream().filter(p -> p.isDedicatedOnlyTo(datasetMetadata.getName())).toList();
     }
   }
 
-  private static List<CalculatedPartitionMetadata> calculatePartitionMetadataFromConfig(
+  private static List<LivePartitionState> calculatePartitionMetadataFromConfig(
       List<DatasetMetadata> datasetMetadataList, List<PartitionMetadata> partitionMetadataList) {
     final Map<String, List<String>> partitionDatasets = new HashMap<>();
     final Map<String, Long> partitionProvisioning = new HashMap<>();
-    final Map<String, List<String>> partitionDedication = new HashMap<>();
+    final Map<String, String> partitionDedicatedOwner = new HashMap<>();
     for (PartitionMetadata partitionMetadata : partitionMetadataList) {
       partitionProvisioning.put(partitionMetadata.getPartitionID(), 0L);
-      partitionDedication.put(partitionMetadata.getPartitionID(), new ArrayList<>());
       partitionDatasets.put(partitionMetadata.getPartitionID(), new ArrayList<>());
     }
 
@@ -880,7 +904,12 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
             partitionId, perPartitionValue + partitionProvisioning.getOrDefault(partitionId, 0L));
         partitionDatasets.get(partitionId).add(datasetMetadata.getName());
         if (useDedicatedPartition) {
-          partitionDedication.get(partitionId).add(datasetMetadata.getName());
+          String existingDedicatedOwner =
+              partitionDedicatedOwner.putIfAbsent(partitionId, datasetMetadata.getName());
+          Preconditions.checkArgument(
+              existingDedicatedOwner == null
+                  || existingDedicatedOwner.equals(datasetMetadata.getName()),
+              "partition %s cannot be dedicated to multiple datasets".formatted(partitionId));
         }
       }
     }
@@ -888,13 +917,28 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
     return partitionMetadataList.stream()
         .sorted(Comparator.comparing(PartitionMetadata::getPartitionID))
         .map(
-            p ->
-                CalculatedPartitionMetadata.fromDatasetAssignments(
-                    p.getPartitionID(),
-                    partitionProvisioning.get(p.getPartitionID()),
-                    p.getMaxCapacity(),
-                    partitionDatasets.get(p.getPartitionID()),
-                    partitionDedication.get(p.getPartitionID())))
+            p -> {
+              List<String> datasets = partitionDatasets.get(p.getPartitionID());
+              String dedicatedOwner = partitionDedicatedOwner.get(p.getPartitionID());
+
+              PartitionOccupancy occupancy;
+              if (datasets.isEmpty()) {
+                occupancy = new PartitionOccupancy.Empty();
+              } else if (dedicatedOwner == null) {
+                occupancy = new PartitionOccupancy.Shared(datasets);
+              } else {
+                Preconditions.checkArgument(
+                    datasets.size() == 1 && datasets.get(0).equals(dedicatedOwner),
+                    "partition occupancy must be empty, shared, or dedicated to exactly one dataset");
+                occupancy = new PartitionOccupancy.Dedicated(dedicatedOwner);
+              }
+
+              return new LivePartitionState(
+                  p.getPartitionID(),
+                  partitionProvisioning.get(p.getPartitionID()),
+                  p.getMaxCapacity(),
+                  occupancy);
+            })
         .toList();
   }
 
