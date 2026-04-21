@@ -5,7 +5,6 @@ import static com.slack.astra.metadata.fieldredaction.FieldRedactionMetadataSeri
 import static com.slack.astra.metadata.partition.PartitionMetadataSerializer.toPartitionMetadataProto;
 
 import com.google.common.base.Preconditions;
-import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Sets;
 import com.slack.astra.chunk.ChunkInfo;
 import com.slack.astra.clusterManager.ReplicaRestoreService;
@@ -24,12 +23,12 @@ import com.slack.astra.proto.manager_api.ManagerApi;
 import com.slack.astra.proto.manager_api.ManagerApiServiceGrpc;
 import com.slack.astra.proto.metadata.Metadata;
 import com.slack.astra.server.partitionassignment.LivePartitionState;
-import com.slack.astra.server.partitionassignment.PartitionAutoAssigner;
+import com.slack.astra.server.partitionassignment.PartitionAssignmentService;
 import com.slack.astra.server.partitionassignment.PartitionOccupancy;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
-import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
@@ -54,7 +53,7 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
   private final ReplicaRestoreService replicaRestoreService;
   private final FieldRedactionMetadataStore fieldRedactionMetadataStore;
   private final PartitionMetadataStore partitionMetadataStore;
-  private final int minNumberOfPartitions;
+  private final PartitionAssignmentService partitionAssignmentService;
 
   public ManagerApiGrpc(
       DatasetMetadataStore datasetMetadataStore,
@@ -69,7 +68,9 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
     this.fieldRedactionMetadataStore = fieldRedactionMetadataStore;
     this.partitionMetadataStore =
         Objects.requireNonNull(partitionMetadataStore, "partitionMetadataStore");
-    this.minNumberOfPartitions = minNumberOfPartitions <= 0 ? 2 : minNumberOfPartitions;
+    this.partitionAssignmentService =
+        new PartitionAssignmentService(
+            datasetMetadataStore, this.partitionMetadataStore, minNumberOfPartitions);
   }
 
   /** Initializes a new dataset in the metadata store with no initial allocated capacity */
@@ -204,11 +205,6 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
     }
   }
 
-  private List<LivePartitionState> listLivePartitionStates() {
-    return LivePartitionState.fromMetadata(
-        datasetMetadataStore.listSync(), partitionMetadataStore.listSync());
-  }
-
   /**
    * Allocates a new partition assignment for a dataset. If partition IDs are provided, it uses
    * those IDs as the current allocation. If no partition IDs are provided, it auto-assigns from the
@@ -220,90 +216,20 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
       StreamObserver<ManagerApi.UpdatePartitionAssignmentResponse> responseObserver) {
 
     try {
-      Preconditions.checkArgument(
-          request.getPartitionIdsList().stream().noneMatch(String::isBlank),
-          "PartitionIds list must not contain blank strings");
-      Preconditions.checkArgument(!request.getName().isBlank(), "Dataset name must not be blank");
-
-      DatasetMetadata datasetMetadata;
-      try {
-        datasetMetadata = datasetMetadataStore.getSync(request.getName());
-      } catch (Exception e) {
-        String msg = "No dataset named, '%s'. Please create it first.".formatted(request.getName());
-        LOG.error(msg, e);
-        responseObserver.onError(Status.NOT_FOUND.withDescription(msg).asException());
-        return;
-      }
-
-      long updatedThroughputBytes =
-          request.getThroughputBytes() < 0
-              ? datasetMetadata.getThroughputBytes()
-              : request.getThroughputBytes();
-      boolean requireDedicatedPartition =
-          request.hasRequireDedicatedPartition()
-              ? request.getRequireDedicatedPartition()
-              : datasetMetadata.isUsingDedicatedPartitions();
-
-      List<String> partitionIdList;
-      if (request.getPartitionIdsList().isEmpty()) {
-        partitionIdList =
-            PartitionAutoAssigner.autoAssign(
-                datasetMetadata,
-                updatedThroughputBytes,
-                requireDedicatedPartition,
-                listLivePartitionStates(),
-                minNumberOfPartitions);
-        LOG.info("Auto-assigning partitions for {} to : {}", request.getName(), partitionIdList);
-        if (partitionIdList.isEmpty()) {
-          String msg = "Error updating partition assignment, could not find partitions to assign";
-          LOG.error(msg);
-          responseObserver.onError(Status.UNKNOWN.withDescription(msg).asException());
-          return;
-        }
-      } else {
-        partitionIdList = request.getPartitionIdsList();
-        LOG.info(
-            "Manually assigning partitions for {} to : {}", request.getName(), partitionIdList);
-        List<String> configuredPartitionIds =
-            partitionMetadataStore.listSync().stream()
-                .map(PartitionMetadata::getPartitionID)
-                .toList();
-        List<String> nonExistentRequestedPartitionIds =
-            partitionIdList.stream()
-                .filter(id -> !configuredPartitionIds.contains(id))
-                .sorted()
-                .toList();
-        Preconditions.checkArgument(
-            nonExistentRequestedPartitionIds.isEmpty(),
-            "Requested partition IDs do not exist: %s".formatted(nonExistentRequestedPartitionIds));
-      }
-      partitionIdList = partitionIdList.stream().sorted().toList();
-
-      ImmutableList<DatasetPartitionMetadata> updatedDatasetPartitionMetadata =
-          addNewPartition(datasetMetadata, partitionIdList);
-
-      DatasetMetadata updatedDatasetMetadata =
-          new DatasetMetadata(
-              datasetMetadata.getName(),
-              datasetMetadata.getOwner(),
-              updatedThroughputBytes,
-              updatedDatasetPartitionMetadata,
-              datasetMetadata.getServiceNamePattern(),
-              requireDedicatedPartition);
-      datasetMetadataStore.updateSync(updatedDatasetMetadata);
+      List<String> assignedPartitionIds =
+          partitionAssignmentService.updateAssignment(
+              request.getName(),
+              request.getThroughputBytes(),
+              request.getPartitionIdsList(),
+              request.hasRequireDedicatedPartition()
+                  ? request.getRequireDedicatedPartition()
+                  : null);
 
       responseObserver.onNext(
           ManagerApi.UpdatePartitionAssignmentResponse.newBuilder()
-              .addAllAssignedPartitionIds(partitionIdList)
+              .addAllAssignedPartitionIds(assignedPartitionIds)
               .build());
       responseObserver.onCompleted();
-      LOG.info(
-          "Updated partition assignment for dataset: {}, throughput: {} -> {} partitions: {} -> {}",
-          request.getName(),
-          datasetMetadata.getThroughputBytes(),
-          updatedThroughputBytes,
-          datasetMetadata.getActivePartitionMetadata(),
-          partitionIdList);
     } catch (IllegalArgumentException e) {
       LOG.error("Error updating partition assignment", e);
       responseObserver.onError(
@@ -450,49 +376,6 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
         && partitionIdsWithQueriedData.contains(snapshot.partitionId);
   }
 
-  /**
-   * Returns a new list of dataset partition metadata, with the provided partition IDs as the
-   * current active assignment. This finds the current active assignment (end time of max long),
-   * sets it to the current time, and then appends a new dataset partition assignment starting from
-   * current time + 1 to max long.
-   */
-  private static ImmutableList<DatasetPartitionMetadata> addNewPartition(
-      DatasetMetadata datasetMetadata, List<String> newPartitionIdsList) {
-    ImmutableList<DatasetPartitionMetadata> existingPartitions =
-        datasetMetadata.getPartitionConfigs();
-    if (newPartitionIdsList.isEmpty()) {
-      return ImmutableList.copyOf(existingPartitions);
-    }
-
-    Optional<DatasetPartitionMetadata> previousActiveDatasetPartition =
-        datasetMetadata.getActivePartitionMetadata();
-    List<DatasetPartitionMetadata> remainingDatasetPartitions =
-        datasetMetadata.getInactivePartitionMetadata();
-
-    if (previousActiveDatasetPartition.isPresent()
-        && previousActiveDatasetPartition.get().getPartitions().equals(newPartitionIdsList)) {
-      return ImmutableList.copyOf(existingPartitions);
-    }
-
-    long partitionCutoverTime = Instant.now().toEpochMilli();
-
-    ImmutableList.Builder<DatasetPartitionMetadata> builder =
-        ImmutableList.<DatasetPartitionMetadata>builder().addAll(remainingDatasetPartitions);
-
-    if (previousActiveDatasetPartition.isPresent()) {
-      DatasetPartitionMetadata updatedPreviousActivePartition =
-          new DatasetPartitionMetadata(
-              previousActiveDatasetPartition.get().getStartTimeEpochMs(),
-              partitionCutoverTime,
-              previousActiveDatasetPartition.get().getPartitions());
-      builder.add(updatedPreviousActivePartition);
-    }
-
-    DatasetPartitionMetadata newPartitionMetadata =
-        new DatasetPartitionMetadata(partitionCutoverTime + 1, MAX_TIME, newPartitionIdsList);
-    return builder.add(newPartitionMetadata).build();
-  }
-
   @Override
   public void resetPartitionData(
       ManagerApi.ResetPartitionDataRequest request,
@@ -618,7 +501,7 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
       responseObserver.onNext(
           ManagerApi.ListPartitionMetadataResponse.newBuilder()
               .addAllPartitionMetadata(
-                  listLivePartitionStates().stream()
+                  partitionAssignmentService.listLivePartitionStates().stream()
                       .map(ManagerApiGrpc::toCalculatedPartitionMetadataProto)
                       .toList())
               .build());
