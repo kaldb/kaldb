@@ -598,10 +598,10 @@ public class ManagerApiGrpcTest {
             () -> {
               datasetMetadata.set(datasetMetadataStore.getSync(datasetName));
               return datasetMetadata.get().getThroughputBytes() == 100
-                  && datasetMetadata.get().getLatestPartitionMetadata().isPresent();
+                  && datasetMetadata.get().getActivePartitionMetadata().isPresent();
             });
     assertThat(datasetMetadata.get().isUsingDedicatedPartitions()).isFalse();
-    assertThat(datasetMetadata.get().getLatestPerPartitionThroughput()).isEqualTo(50);
+    assertThat(datasetMetadata.get().getActivePerPartitionThroughput()).isEqualTo(50);
 
     ManagerApi.ListPartitionMetadataResponse listPartitionResponse =
         managerApiStub.listPartition(ManagerApi.ListPartitionRequest.newBuilder().build());
@@ -638,7 +638,7 @@ public class ManagerApiGrpcTest {
             () ->
                 datasetMetadataStore
                     .getSync(sharedDatasetName)
-                    .getLatestPartitionMetadata()
+                    .getActivePartitionMetadata()
                     .isPresent());
 
     managerApiStub.createDatasetMetadata(
@@ -661,9 +661,9 @@ public class ManagerApiGrpcTest {
             () -> {
               dedicatedDatasetMetadata.set(datasetMetadataStore.getSync(dedicatedDatasetName));
               return dedicatedDatasetMetadata.get().isUsingDedicatedPartitions()
-                  && dedicatedDatasetMetadata.get().getLatestPartitionMetadata().isPresent();
+                  && dedicatedDatasetMetadata.get().getActivePartitionMetadata().isPresent();
             });
-    assertThat(dedicatedDatasetMetadata.get().getLatestPerPartitionThroughput()).isEqualTo(75);
+    assertThat(dedicatedDatasetMetadata.get().getActivePerPartitionThroughput()).isEqualTo(75);
 
     ManagerApi.ListPartitionMetadataResponse listPartitionResponse =
         managerApiStub.listPartition(ManagerApi.ListPartitionRequest.newBuilder().build());
@@ -728,9 +728,9 @@ public class ManagerApiGrpcTest {
             () -> {
               datasetMetadata.set(datasetMetadataStore.getSync(datasetName));
               return datasetMetadata.get().isUsingDedicatedPartitions()
-                  && datasetMetadata.get().getLatestPartitionMetadata().isPresent();
+                  && datasetMetadata.get().getActivePartitionMetadata().isPresent();
             });
-    assertThat(datasetMetadata.get().getLatestPerPartitionThroughput()).isEqualTo(40);
+    assertThat(datasetMetadata.get().getActivePerPartitionThroughput()).isEqualTo(40);
   }
 
   @Test
@@ -832,7 +832,7 @@ public class ManagerApiGrpcTest {
             () -> {
               datasetMetadata.set(datasetMetadataStore.getSync(datasetName));
               return datasetMetadata.get().isUsingDedicatedPartitions()
-                  && datasetMetadata.get().getLatestPartitionMetadata().isPresent();
+                  && datasetMetadata.get().getActivePartitionMetadata().isPresent();
             });
 
     ManagerApi.UpdatePartitionAssignmentResponse preservedResponse =
@@ -850,7 +850,7 @@ public class ManagerApiGrpcTest {
               return datasetMetadata.get().getThroughputBytes() == 80
                   && datasetMetadata.get().isUsingDedicatedPartitions();
             });
-    assertThat(datasetMetadata.get().getLatestPartitionMetadata().orElseThrow().getPartitions())
+    assertThat(datasetMetadata.get().getActivePartitionMetadata().orElseThrow().getPartitions())
         .containsExactly("1", "2");
 
     ManagerApi.UpdatePartitionAssignmentResponse clearedResponse =
@@ -951,7 +951,7 @@ public class ManagerApiGrpcTest {
             () ->
                 datasetMetadataStore
                     .getSync(datasetName)
-                    .getLatestPartitionMetadata()
+                    .getActivePartitionMetadata()
                     .map(
                         partitionMetadata ->
                             partitionMetadata.getPartitions().contains("referenced"))

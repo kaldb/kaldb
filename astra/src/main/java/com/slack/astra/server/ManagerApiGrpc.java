@@ -327,7 +327,7 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
           request.getName(),
           datasetMetadata.getThroughputBytes(),
           updatedThroughputBytes,
-          datasetMetadata.getLatestPartitionMetadata(),
+          datasetMetadata.getActivePartitionMetadata(),
           partitionIdList);
     } catch (IllegalArgumentException e) {
       LOG.error("Error updating partition assignment", e);
@@ -490,9 +490,9 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
     }
 
     Optional<DatasetPartitionMetadata> previousActiveDatasetPartition =
-        datasetMetadata.getLatestPartitionMetadata();
+        datasetMetadata.getActivePartitionMetadata();
     List<DatasetPartitionMetadata> remainingDatasetPartitions =
-        datasetMetadata.getAllButLatestDatasetPartitions();
+        datasetMetadata.getInactivePartitionMetadata();
 
     if (previousActiveDatasetPartition.isPresent()
         && previousActiveDatasetPartition.get().getPartitions().equals(newPartitionIdsList)) {

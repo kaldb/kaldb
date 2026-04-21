@@ -156,7 +156,7 @@ public class DatasetMetadata extends AstraMetadata {
     }
   }
 
-  public Optional<DatasetPartitionMetadata> getLatestPartitionMetadata() {
+  public Optional<DatasetPartitionMetadata> getActivePartitionMetadata() {
     return getPartitionConfigs().stream()
         .filter(
             datasetPartitionMetadata ->
@@ -164,7 +164,7 @@ public class DatasetMetadata extends AstraMetadata {
         .findFirst();
   }
 
-  public List<DatasetPartitionMetadata> getAllButLatestDatasetPartitions() {
+  public List<DatasetPartitionMetadata> getInactivePartitionMetadata() {
     return getPartitionConfigs().stream()
         .filter(
             datasetPartitionMetadata ->
@@ -172,9 +172,9 @@ public class DatasetMetadata extends AstraMetadata {
         .toList();
   }
 
-  public long getLatestPerPartitionThroughput() {
+  public long getActivePerPartitionThroughput() {
     int partitionCount =
-        getLatestPartitionMetadata()
+        getActivePartitionMetadata()
             .map(DatasetPartitionMetadata::getPartitions)
             .map(Collection::size)
             .orElse(0);

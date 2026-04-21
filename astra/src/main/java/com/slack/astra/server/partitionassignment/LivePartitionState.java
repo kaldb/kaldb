@@ -77,11 +77,14 @@ public class LivePartitionState {
     }
 
     for (DatasetMetadata datasetMetadata : datasetMetadataList) {
-      Optional<DatasetPartitionMetadata> latest = datasetMetadata.getLatestPartitionMetadata();
-      long perPartitionValue = datasetMetadata.getLatestPerPartitionThroughput();
+      Optional<DatasetPartitionMetadata> activePartitionMetadata =
+          datasetMetadata.getActivePartitionMetadata();
+      long perPartitionValue = datasetMetadata.getActivePerPartitionThroughput();
       boolean useDedicatedPartition = datasetMetadata.isUsingDedicatedPartitions();
       for (String partitionId :
-          latest.map(DatasetPartitionMetadata::getPartitions).orElse(ImmutableList.of())) {
+          activePartitionMetadata
+              .map(DatasetPartitionMetadata::getPartitions)
+              .orElse(ImmutableList.of())) {
         if (!partitionProvisioning.containsKey(partitionId)) {
           LOG.warn(
               "Dataset {} references partition {} that is not in the partition catalog",

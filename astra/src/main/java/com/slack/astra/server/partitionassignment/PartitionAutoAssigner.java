@@ -31,7 +31,7 @@ public final class PartitionAutoAssigner {
 
     List<String> currentPartitions =
         datasetMetadata
-            .getLatestPartitionMetadata()
+            .getActivePartitionMetadata()
             .map(DatasetPartitionMetadata::getPartitions)
             .orElseGet(ImmutableList::of);
 
@@ -133,10 +133,10 @@ public final class PartitionAutoAssigner {
 
   private static List<LivePartitionState> withoutDatasetContribution(
       DatasetMetadata datasetMetadata, List<LivePartitionState> livePartitionStates) {
-    long currentPerPartitionThroughput = datasetMetadata.getLatestPerPartitionThroughput();
+    long currentPerPartitionThroughput = datasetMetadata.getActivePerPartitionThroughput();
     ImmutableList<String> currentIds =
         datasetMetadata
-            .getLatestPartitionMetadata()
+            .getActivePartitionMetadata()
             .map(DatasetPartitionMetadata::getPartitions)
             .orElse(ImmutableList.of());
 
