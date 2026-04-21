@@ -803,6 +803,38 @@ public class ManagerApiGrpcTest {
   }
 
   @Test
+  public void shouldReturnFailedPreconditionWhenDedicatedOwnershipConflicts() {
+    createPartition("1", 100);
+    datasetMetadataStore.createSync(
+        new DatasetMetadata(
+            "dataset-a",
+            "owner",
+            100,
+            List.of(new DatasetPartitionMetadata(1, MAX_TIME, List.of("1"))),
+            "",
+            true));
+    datasetMetadataStore.createSync(
+        new DatasetMetadata(
+            "dataset-b",
+            "owner",
+            100,
+            List.of(new DatasetPartitionMetadata(1, MAX_TIME, List.of("1"))),
+            "",
+            true));
+
+    StatusRuntimeException throwable =
+        (StatusRuntimeException)
+            catchThrowable(
+                () ->
+                    managerApiStub.listPartition(
+                        ManagerApi.ListPartitionRequest.newBuilder().build()));
+
+    assertThat(throwable.getStatus().getCode()).isEqualTo(Status.FAILED_PRECONDITION.getCode());
+    assertThat(throwable.getStatus().getDescription())
+        .contains("partition 1 cannot be dedicated to multiple datasets");
+  }
+
+  @Test
   public void shouldSerializeConcurrentAutoPartitionAssignments() throws Exception {
     String firstDatasetName = "serializedAutoDatasetA";
     String secondDatasetName = "serializedAutoDatasetB";

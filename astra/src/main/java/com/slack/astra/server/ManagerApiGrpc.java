@@ -23,6 +23,7 @@ import com.slack.astra.proto.manager_api.ManagerApi;
 import com.slack.astra.proto.manager_api.ManagerApiServiceGrpc;
 import com.slack.astra.proto.metadata.Metadata;
 import com.slack.astra.server.partitionassignment.LivePartitionState;
+import com.slack.astra.server.partitionassignment.InvalidPartitionAssignmentStateException;
 import com.slack.astra.server.partitionassignment.PartitionAssignmentService;
 import com.slack.astra.server.partitionassignment.PartitionAssignmentService.DedicatedPartitionModeOverride;
 import com.slack.astra.server.partitionassignment.PartitionOccupancy;
@@ -229,6 +230,10 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
               .addAllAssignedPartitionIds(assignedPartitionIds)
               .build());
       responseObserver.onCompleted();
+    } catch (InvalidPartitionAssignmentStateException e) {
+      LOG.error("Error updating partition assignment", e);
+      responseObserver.onError(
+          Status.FAILED_PRECONDITION.withDescription(e.getMessage()).asException());
     } catch (IllegalArgumentException e) {
       LOG.error("Error updating partition assignment", e);
       responseObserver.onError(
@@ -505,6 +510,10 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
                       .toList())
               .build());
       responseObserver.onCompleted();
+    } catch (InvalidPartitionAssignmentStateException e) {
+      LOG.error("Error fetching partition list", e);
+      responseObserver.onError(
+          Status.FAILED_PRECONDITION.withDescription(e.getMessage()).asException());
     } catch (StatusRuntimeException e) {
       LOG.error("Error fetching partition list", e);
       responseObserver.onError(e);

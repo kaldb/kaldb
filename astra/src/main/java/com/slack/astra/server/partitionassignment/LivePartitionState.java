@@ -1,6 +1,5 @@
 package com.slack.astra.server.partitionassignment;
 
-import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.slack.astra.metadata.dataset.DatasetMetadata;
 import com.slack.astra.metadata.dataset.DatasetPartitionMetadata;
@@ -102,10 +101,11 @@ public class LivePartitionState {
         if (useDedicatedPartition) {
           String existingDedicatedOwner =
               partitionDedicatedOwner.putIfAbsent(partitionId, datasetMetadata.getName());
-          Preconditions.checkArgument(
-              existingDedicatedOwner == null
-                  || existingDedicatedOwner.equals(datasetMetadata.getName()),
-              "partition %s cannot be dedicated to multiple datasets".formatted(partitionId));
+          if (existingDedicatedOwner != null
+              && !existingDedicatedOwner.equals(datasetMetadata.getName())) {
+            throw new InvalidPartitionAssignmentStateException(
+                "partition %s cannot be dedicated to multiple datasets".formatted(partitionId));
+          }
         }
       }
     }
@@ -133,9 +133,10 @@ public class LivePartitionState {
     } else if (dedicatedOwner == null) {
       occupancy = new PartitionOccupancy.Shared(datasets);
     } else {
-      Preconditions.checkArgument(
-          datasets.size() == 1 && datasets.get(0).equals(dedicatedOwner),
-          "partition occupancy must be empty, shared, or dedicated to exactly one dataset");
+      if (datasets.size() != 1 || !datasets.get(0).equals(dedicatedOwner)) {
+        throw new InvalidPartitionAssignmentStateException(
+            "partition occupancy must be empty, shared, or dedicated to exactly one dataset");
+      }
       occupancy = new PartitionOccupancy.Dedicated(dedicatedOwner);
     }
 
