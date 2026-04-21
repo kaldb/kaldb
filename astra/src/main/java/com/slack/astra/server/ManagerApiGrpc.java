@@ -24,8 +24,9 @@ import com.slack.astra.proto.manager_api.ManagerApiServiceGrpc;
 import com.slack.astra.proto.metadata.Metadata;
 import com.slack.astra.server.partitionassignment.InvalidPartitionAssignmentStateException;
 import com.slack.astra.server.partitionassignment.LivePartitionState;
-import com.slack.astra.server.partitionassignment.PartitionAssignmentService;
-import com.slack.astra.server.partitionassignment.PartitionAssignmentService.DedicatedPartitionModeOverride;
+import com.slack.astra.server.partitionassignment.LivePartitionStateLoader;
+import com.slack.astra.server.partitionassignment.PartitionAssignmentUpdater;
+import com.slack.astra.server.partitionassignment.PartitionAssignmentUpdater.DedicatedPartitionModeOverride;
 import com.slack.astra.server.partitionassignment.PartitionOccupancy;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
@@ -74,9 +75,14 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
     this.fieldRedactionMetadataStore = fieldRedactionMetadataStore;
     this.partitionMetadataStore =
         Objects.requireNonNull(partitionMetadataStore, "partitionMetadataStore");
-    this.partitionAssignmentService =
-        new PartitionAssignmentService(
-            datasetMetadataStore, this.partitionMetadataStore, minNumberOfPartitions);
+    this.livePartitionStateLoader =
+        new LivePartitionStateLoader(datasetMetadataStore, this.partitionMetadataStore);
+    this.partitionAssignmentUpdater =
+        new PartitionAssignmentUpdater(
+            datasetMetadataStore,
+            this.partitionMetadataStore,
+            livePartitionStateLoader,
+            minNumberOfPartitions);
   }
 
   /** Initializes a new dataset in the metadata store with no initial allocated capacity */
@@ -223,7 +229,7 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
 
     try {
       List<String> assignedPartitionIds =
-          partitionAssignmentService.updateAssignment(
+          partitionAssignmentUpdater.updateAssignment(
               request.getName(),
               request.getThroughputBytes(),
               request.getPartitionIdsList(),
@@ -505,7 +511,7 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
       responseObserver.onNext(
           ManagerApi.ListPartitionMetadataResponse.newBuilder()
               .addAllPartitionMetadata(
-                  partitionAssignmentService.listLivePartitionStates().stream()
+                  livePartitionStateLoader.loadAll().stream()
                       .map(ManagerApiGrpc::toCalculatedPartitionMetadataProto)
                       .toList())
               .build());

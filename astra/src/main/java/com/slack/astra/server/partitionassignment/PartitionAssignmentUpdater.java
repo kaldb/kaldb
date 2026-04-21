@@ -16,12 +16,9 @@ import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/** Application workflow for reading and updating dataset partition assignments. */
-public class PartitionAssignmentService {
-  private static final Logger LOG = LoggerFactory.getLogger(PartitionAssignmentService.class);
-
-  /** End-time sentinel marking the still-active (open-ended) assignment window. */
-  public static final long OPEN_ENDED_END_TIME = Long.MAX_VALUE;
+/** Application workflow for updating dataset partition assignments. */
+public class PartitionAssignmentUpdater {
+  private static final Logger LOG = LoggerFactory.getLogger(PartitionAssignmentUpdater.class);
 
   /** Tri-state override for preserving or explicitly changing dedicated partition mode. */
   public enum DedicatedPartitionModeOverride {
@@ -32,22 +29,20 @@ public class PartitionAssignmentService {
 
   private final DatasetMetadataStore datasetMetadataStore;
   private final PartitionMetadataStore partitionMetadataStore;
+  private final LivePartitionStateLoader livePartitionStateLoader;
   private final int minNumberOfPartitions;
 
-  public PartitionAssignmentService(
+  public PartitionAssignmentUpdater(
       DatasetMetadataStore datasetMetadataStore,
       PartitionMetadataStore partitionMetadataStore,
+      LivePartitionStateLoader livePartitionStateLoader,
       int minNumberOfPartitions) {
     Preconditions.checkArgument(
         minNumberOfPartitions > 0, "minNumberOfPartitions must be greater than 0");
     this.datasetMetadataStore = datasetMetadataStore;
     this.partitionMetadataStore = partitionMetadataStore;
+    this.livePartitionStateLoader = livePartitionStateLoader;
     this.minNumberOfPartitions = minNumberOfPartitions;
-  }
-
-  public List<LivePartitionState> listLivePartitionStates() {
-    return LivePartitionState.fromMetadata(
-        datasetMetadataStore.listSync(), partitionMetadataStore.listSync());
   }
 
   public ImmutableList<String> updateAssignment(
@@ -110,7 +105,7 @@ public class PartitionAssignmentService {
               existingDatasetMetadata,
               effectiveThroughputBytes,
               useDedicatedPartitions,
-              listLivePartitionStates(),
+              livePartitionStateLoader.loadAll(),
               minNumberOfPartitions);
       LOG.info(
           "Auto-assigning partitions for {} to : {}",
@@ -208,8 +203,7 @@ public class PartitionAssignmentService {
     }
 
     DatasetPartitionMetadata newPartitionMetadata =
-        new DatasetPartitionMetadata(
-            partitionCutoverTime + 1, OPEN_ENDED_END_TIME, newPartitionIdsList);
+        DatasetPartitionMetadata.createActive(partitionCutoverTime + 1, newPartitionIdsList);
     return builder.add(newPartitionMetadata).build();
   }
 }
