@@ -13,7 +13,8 @@ public class LivePartitionStateTest {
   public void shouldPreservePartitionMetadataInputOrder() {
     assertThat(
             LivePartitionState.fromMetadata(
-                List.of(), List.of(new PartitionMetadata("2", 100), new PartitionMetadata("10", 100))))
+                List.of(),
+                List.of(new PartitionMetadata("2", 100), new PartitionMetadata("10", 100))))
         .containsExactly(
             new LivePartitionState("2", 0, 100, new PartitionOccupancy.Empty()),
             new LivePartitionState("10", 0, 100, new PartitionOccupancy.Empty()));
