@@ -22,6 +22,13 @@ public class PartitionAssignmentService {
   private static final Logger LOG = LoggerFactory.getLogger(PartitionAssignmentService.class);
   public static final long MAX_TIME = Long.MAX_VALUE;
 
+  /** Tri-state override for preserving or explicitly changing dedicated partition mode. */
+  public enum DedicatedPartitionModeOverride {
+    PRESERVE_EXISTING,
+    REQUIRE_DEDICATED,
+    REQUIRE_SHARED
+  }
+
   private final DatasetMetadataStore datasetMetadataStore;
   private final PartitionMetadataStore partitionMetadataStore;
   private final int minNumberOfPartitions;
