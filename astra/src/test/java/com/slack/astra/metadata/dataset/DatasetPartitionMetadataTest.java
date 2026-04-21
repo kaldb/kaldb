@@ -80,6 +80,17 @@ public class DatasetPartitionMetadataTest {
   }
 
   @Test
+  public void testActivePartitionMetadataHelper() {
+    DatasetPartitionMetadata activePartitionMetadata =
+        DatasetPartitionMetadata.createActive(100, List.of("1", "2"));
+
+    assertThat(activePartitionMetadata.isActive()).isTrue();
+    assertThat(activePartitionMetadata.getEndTimeEpochMs())
+        .isEqualTo(DatasetPartitionMetadata.ACTIVE_END_TIME_EPOCH_MS);
+    assertThat(activePartitionMetadata.getPartitions()).containsExactly("1", "2");
+  }
+
+  @Test
   public void testEqualsAndHashCode() {
     final Instant start = Instant.now();
     final Instant end = Instant.now().plus(1, ChronoUnit.DAYS);

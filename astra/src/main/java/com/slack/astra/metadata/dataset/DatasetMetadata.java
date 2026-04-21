@@ -157,18 +157,12 @@ public class DatasetMetadata extends AstraMetadata {
   }
 
   public Optional<DatasetPartitionMetadata> getActivePartitionMetadata() {
-    return getPartitionConfigs().stream()
-        .filter(
-            datasetPartitionMetadata ->
-                datasetPartitionMetadata.getEndTimeEpochMs() == Long.MAX_VALUE)
-        .findFirst();
+    return getPartitionConfigs().stream().filter(DatasetPartitionMetadata::isActive).findFirst();
   }
 
   public List<DatasetPartitionMetadata> getInactivePartitionMetadata() {
     return getPartitionConfigs().stream()
-        .filter(
-            datasetPartitionMetadata ->
-                datasetPartitionMetadata.getEndTimeEpochMs() != Long.MAX_VALUE)
+        .filter(datasetPartitionMetadata -> !datasetPartitionMetadata.isActive())
         .toList();
   }
 

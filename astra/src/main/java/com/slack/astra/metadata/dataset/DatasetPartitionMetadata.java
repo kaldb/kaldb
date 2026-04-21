@@ -11,9 +11,11 @@ import java.util.stream.Collectors;
 
 /**
  * Metadata for a specific partition configuration at a point in time. For partitions that are
- * currently active we would expect to have an endTime of max long.
+ * currently active we use {@link #ACTIVE_END_TIME_EPOCH_MS} as the open-ended end time.
  */
 public class DatasetPartitionMetadata {
+  /** Sentinel end time used for the currently active partition assignment window. */
+  public static final long ACTIVE_END_TIME_EPOCH_MS = Long.MAX_VALUE;
 
   public final long startTimeEpochMs;
   public final long endTimeEpochMs;
@@ -34,6 +36,11 @@ public class DatasetPartitionMetadata {
     this.partitions = ImmutableList.copyOf(partitions);
   }
 
+  public static DatasetPartitionMetadata createActive(
+      long startTimeEpochMs, List<String> partitions) {
+    return new DatasetPartitionMetadata(startTimeEpochMs, ACTIVE_END_TIME_EPOCH_MS, partitions);
+  }
+
   public long getStartTimeEpochMs() {
     return startTimeEpochMs;
   }
@@ -44,6 +51,10 @@ public class DatasetPartitionMetadata {
 
   public ImmutableList<String> getPartitions() {
     return partitions;
+  }
+
+  public boolean isActive() {
+    return endTimeEpochMs == ACTIVE_END_TIME_EPOCH_MS;
   }
 
   @Override
