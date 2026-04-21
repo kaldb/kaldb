@@ -58,20 +58,6 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
 
   public ManagerApiGrpc(
       DatasetMetadataStore datasetMetadataStore,
-      SnapshotMetadataStore snapshotMetadataStore,
-      ReplicaRestoreService replicaRestoreService,
-      FieldRedactionMetadataStore fieldRedactionMetadataStore) {
-    this(
-        datasetMetadataStore,
-        null,
-        snapshotMetadataStore,
-        replicaRestoreService,
-        fieldRedactionMetadataStore,
-        2);
-  }
-
-  public ManagerApiGrpc(
-      DatasetMetadataStore datasetMetadataStore,
       PartitionMetadataStore partitionMetadataStore,
       SnapshotMetadataStore snapshotMetadataStore,
       ReplicaRestoreService replicaRestoreService,
@@ -81,7 +67,8 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
     this.snapshotMetadataStore = snapshotMetadataStore;
     this.replicaRestoreService = replicaRestoreService;
     this.fieldRedactionMetadataStore = fieldRedactionMetadataStore;
-    this.partitionMetadataStore = partitionMetadataStore;
+    this.partitionMetadataStore =
+        Objects.requireNonNull(partitionMetadataStore, "partitionMetadataStore");
     this.minNumberOfPartitions = minNumberOfPartitions <= 0 ? 2 : minNumberOfPartitions;
   }
 
@@ -217,18 +204,9 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
     }
   }
 
-  private PartitionMetadataStore requirePartitionMetadataStore() {
-    if (partitionMetadataStore == null) {
-      throw Status.FAILED_PRECONDITION
-          .withDescription("Partition metadata store is not configured")
-          .asRuntimeException();
-    }
-    return partitionMetadataStore;
-  }
-
   private List<LivePartitionState> listLivePartitionStates() {
     return LivePartitionState.fromMetadata(
-        datasetMetadataStore.listSync(), requirePartitionMetadataStore().listSync());
+        datasetMetadataStore.listSync(), partitionMetadataStore.listSync());
   }
 
   /**
@@ -286,21 +264,18 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
         partitionIdList = request.getPartitionIdsList();
         LOG.info(
             "Manually assigning partitions for {} to : {}", request.getName(), partitionIdList);
-        if (partitionMetadataStore != null) {
-          List<String> configuredPartitionIds =
-              requirePartitionMetadataStore().listSync().stream()
-                  .map(PartitionMetadata::getPartitionID)
-                  .toList();
-          List<String> nonExistentRequestedPartitionIds =
-              partitionIdList.stream()
-                  .filter(id -> !configuredPartitionIds.contains(id))
-                  .sorted()
-                  .toList();
-          Preconditions.checkArgument(
-              nonExistentRequestedPartitionIds.isEmpty(),
-              "Requested partition IDs do not exist: %s"
-                  .formatted(nonExistentRequestedPartitionIds));
-        }
+        List<String> configuredPartitionIds =
+            partitionMetadataStore.listSync().stream()
+                .map(PartitionMetadata::getPartitionID)
+                .toList();
+        List<String> nonExistentRequestedPartitionIds =
+            partitionIdList.stream()
+                .filter(id -> !configuredPartitionIds.contains(id))
+                .sorted()
+                .toList();
+        Preconditions.checkArgument(
+            nonExistentRequestedPartitionIds.isEmpty(),
+            "Requested partition IDs do not exist: %s".formatted(nonExistentRequestedPartitionIds));
       }
       partitionIdList = partitionIdList.stream().sorted().toList();
 
@@ -566,8 +541,7 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
       Preconditions.checkArgument(
           request.getMaxCapacity() > 0, "Max capacity must be set when creating a new partition");
 
-      PartitionMetadataStore store = requirePartitionMetadataStore();
-      if (store.hasSync(request.getPartitionId())) {
+      if (partitionMetadataStore.hasSync(request.getPartitionId())) {
         String msg = "Partition with id '%s' already exists".formatted(request.getPartitionId());
         LOG.error(msg);
         responseObserver.onError(Status.ALREADY_EXISTS.withDescription(msg).asException());
@@ -576,7 +550,7 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
 
       PartitionMetadata newPartitionMetadata =
           new PartitionMetadata(request.getPartitionId(), request.getMaxCapacity());
-      store.createSync(newPartitionMetadata);
+      partitionMetadataStore.createSync(newPartitionMetadata);
       responseObserver.onNext(toPartitionMetadataProto(newPartitionMetadata));
       responseObserver.onCompleted();
       LOG.info(
@@ -601,8 +575,7 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
       ManagerApi.DeletePartitionRequest request,
       StreamObserver<ManagerApi.DeletePartitionResponse> responseObserver) {
     try {
-      PartitionMetadataStore store = requirePartitionMetadataStore();
-      if (!store.hasSync(request.getPartitionId())) {
+      if (!partitionMetadataStore.hasSync(request.getPartitionId())) {
         String msg = "Partition with id '%s' does not exist".formatted(request.getPartitionId());
         responseObserver.onError(Status.NOT_FOUND.withDescription(msg).asException());
         return;
@@ -621,7 +594,7 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
         return;
       }
 
-      store.deleteSync(request.getPartitionId());
+      partitionMetadataStore.deleteSync(request.getPartitionId());
       responseObserver.onNext(
           ManagerApi.DeletePartitionResponse.newBuilder()
               .setStatus(
