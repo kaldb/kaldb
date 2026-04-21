@@ -29,7 +29,7 @@ public class LivePartitionStateTest {
             true);
 
     assertThat(
-            LivePartitionState.calculateAll(
+            LivePartitionState.fromMetadata(
                 List.of(sharedDataset, dedicatedDataset),
                 List.of(
                     new PartitionMetadata("1", 100),

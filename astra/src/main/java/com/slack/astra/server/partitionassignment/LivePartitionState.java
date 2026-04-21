@@ -66,7 +66,7 @@ public class LivePartitionState {
     return maxCapacity - provisionedCapacity;
   }
 
-  public static List<LivePartitionState> calculateAll(
+  public static List<LivePartitionState> fromMetadata(
       List<DatasetMetadata> datasetMetadataList, List<PartitionMetadata> partitionMetadataList) {
     final Map<String, List<String>> partitionDatasets = new HashMap<>();
     final Map<String, Long> partitionProvisioning = new HashMap<>();

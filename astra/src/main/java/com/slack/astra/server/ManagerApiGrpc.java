@@ -227,7 +227,7 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
   }
 
   private List<LivePartitionState> listLivePartitionStates() {
-    return LivePartitionState.calculateAll(
+    return LivePartitionState.fromMetadata(
         datasetMetadataStore.listSync(), requirePartitionMetadataStore().listSync());
   }
 
