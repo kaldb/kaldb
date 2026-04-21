@@ -8,7 +8,6 @@ import com.slack.astra.metadata.dataset.DatasetMetadataStore;
 import com.slack.astra.metadata.dataset.DatasetPartitionMetadata;
 import com.slack.astra.metadata.partition.PartitionMetadata;
 import com.slack.astra.metadata.partition.PartitionMetadataStore;
-import io.grpc.Status;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -83,12 +82,6 @@ public class PartitionAssignmentService {
               listLivePartitionStates(),
               minNumberOfPartitions);
       LOG.info("Auto-assigning partitions for {} to : {}", datasetName, assignedPartitionIds);
-      if (assignedPartitionIds.isEmpty()) {
-        throw Status.UNKNOWN
-            .withDescription(
-                "Error updating partition assignment, could not find partitions to assign")
-            .asRuntimeException();
-      }
     } else {
       assignedPartitionIds = requestedPartitionIds;
       LOG.info("Manually assigning partitions for {} to : {}", datasetName, assignedPartitionIds);

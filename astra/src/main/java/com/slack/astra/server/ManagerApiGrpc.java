@@ -448,9 +448,6 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
       LOG.error("Error creating new partition", e);
       responseObserver.onError(
           Status.INVALID_ARGUMENT.withDescription(e.getMessage()).asException());
-    } catch (StatusRuntimeException e) {
-      LOG.error("Error creating new partition", e);
-      responseObserver.onError(e);
     } catch (Exception e) {
       LOG.error("Error creating new partition", e);
       responseObserver.onError(Status.UNKNOWN.withDescription(e.getMessage()).asException());
@@ -469,7 +466,6 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
       }
       boolean partitionIsReferenced =
           datasetMetadataStore.listSync().stream()
-              .map(dataset -> datasetMetadataStore.getSync(dataset.getName()))
               .flatMap(dataset -> dataset.getPartitionConfigs().stream())
               .flatMap(partitionConfig -> partitionConfig.getPartitions().stream())
               .anyMatch(request.getPartitionId()::equals);

@@ -5,7 +5,9 @@ import com.slack.astra.metadata.dataset.DatasetMetadata;
 import com.slack.astra.metadata.dataset.DatasetPartitionMetadata;
 import io.grpc.Status;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Stream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,11 +31,12 @@ public final class PartitionAutoAssigner {
           .asRuntimeException();
     }
 
-    List<String> currentPartitions =
+    Set<String> currentPartitions =
         datasetMetadata
             .getActivePartitionMetadata()
             .map(DatasetPartitionMetadata::getPartitions)
-            .orElseGet(ImmutableList::of);
+            .map(HashSet::new)
+            .orElseGet(Set::of);
 
     List<LivePartitionState> adjustedLivePartitionStates =
         withoutDatasetContribution(datasetMetadata, livePartitionStates);
@@ -47,7 +50,7 @@ public final class PartitionAutoAssigner {
               .thenComparing(
                   LivePartitionState::getPartitionID, PartitionIdOrdering.numericComparator());
       List<LivePartitionState> emptyPartitions =
-          livePartitionStates.stream().filter(LivePartitionState::isEmpty).toList();
+          adjustedLivePartitionStates.stream().filter(LivePartitionState::isEmpty).toList();
       List<LivePartitionState> sortedPartitions =
           Stream.concat(
                   reusablePartitions.stream().sorted(compareByAvailableCapacityThenId),
@@ -137,11 +140,12 @@ public final class PartitionAutoAssigner {
   private static List<LivePartitionState> withoutDatasetContribution(
       DatasetMetadata datasetMetadata, List<LivePartitionState> livePartitionStates) {
     long currentPerPartitionThroughput = datasetMetadata.getActivePerPartitionThroughput();
-    ImmutableList<String> currentIds =
+    Set<String> currentIds =
         datasetMetadata
             .getActivePartitionMetadata()
             .map(DatasetPartitionMetadata::getPartitions)
-            .orElse(ImmutableList.of());
+            .map(HashSet::new)
+            .orElseGet(Set::of);
 
     return livePartitionStates.stream()
         .map(
