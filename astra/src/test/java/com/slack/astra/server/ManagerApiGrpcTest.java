@@ -658,6 +658,35 @@ public class ManagerApiGrpcTest {
   }
 
   @Test
+  public void shouldPreserveAutoAssignmentOrderingWhenPersistingAndReturningPartitions() {
+    String datasetName = "numericOrderingDataset";
+    createPartitions(List.of("10", "2"));
+    managerApiStub.createDatasetMetadata(
+        ManagerApi.CreateDatasetMetadataRequest.newBuilder()
+            .setName(datasetName)
+            .setOwner("owner")
+            .build());
+
+    ManagerApi.UpdatePartitionAssignmentResponse response =
+        managerApiStub.updatePartitionAssignment(
+            ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
+                .setName(datasetName)
+                .setThroughputBytes(100)
+                .build());
+
+    assertThat(response.getAssignedPartitionIdsList()).containsExactly("2", "10");
+    AtomicReference<DatasetMetadata> datasetMetadata = new AtomicReference<>();
+    await()
+        .until(
+            () -> {
+              datasetMetadata.set(datasetMetadataStore.getSync(datasetName));
+              return datasetMetadata.get().getActivePartitionMetadata().isPresent();
+            });
+    assertThat(datasetMetadata.get().getActivePartitionMetadata().orElseThrow().getPartitions())
+        .containsExactly("2", "10");
+  }
+
+  @Test
   public void shouldAutoAssignDedicatedPartitions() {
     String sharedDatasetName = "sharedDataset";
     String dedicatedDatasetName = "dedicatedDataset";

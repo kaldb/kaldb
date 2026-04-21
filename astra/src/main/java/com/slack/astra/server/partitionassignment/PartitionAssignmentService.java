@@ -95,9 +95,9 @@ public class PartitionAssignmentService {
       validateManualPartitionIds(assignedPartitionIds);
     }
 
-    List<String> sortedPartitionIds = assignedPartitionIds.stream().sorted().toList();
+    List<String> persistedPartitionIds = List.copyOf(assignedPartitionIds);
     ImmutableList<DatasetPartitionMetadata> updatedDatasetPartitionMetadata =
-        withActivePartitionAssignment(existingDatasetMetadata, sortedPartitionIds);
+        withActivePartitionAssignment(existingDatasetMetadata, persistedPartitionIds);
 
     DatasetMetadata updatedDatasetMetadata =
         new DatasetMetadata(
@@ -115,9 +115,9 @@ public class PartitionAssignmentService {
         existingDatasetMetadata.getThroughputBytes(),
         updatedThroughputBytes,
         existingDatasetMetadata.getActivePartitionMetadata(),
-        sortedPartitionIds);
+        persistedPartitionIds);
 
-    return ImmutableList.copyOf(sortedPartitionIds);
+    return ImmutableList.copyOf(persistedPartitionIds);
   }
 
   private DatasetMetadata getDatasetOrThrow(String datasetName) {
