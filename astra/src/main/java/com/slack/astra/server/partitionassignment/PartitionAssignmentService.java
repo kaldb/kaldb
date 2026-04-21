@@ -37,9 +37,11 @@ public class PartitionAssignmentService {
       DatasetMetadataStore datasetMetadataStore,
       PartitionMetadataStore partitionMetadataStore,
       int minNumberOfPartitions) {
+    Preconditions.checkArgument(
+        minNumberOfPartitions > 0, "minNumberOfPartitions must be greater than 0");
     this.datasetMetadataStore = datasetMetadataStore;
     this.partitionMetadataStore = partitionMetadataStore;
-    this.minNumberOfPartitions = minNumberOfPartitions <= 0 ? 2 : minNumberOfPartitions;
+    this.minNumberOfPartitions = minNumberOfPartitions;
   }
 
   public List<LivePartitionState> listLivePartitionStates() {
