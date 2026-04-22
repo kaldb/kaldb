@@ -2,11 +2,9 @@ package com.slack.astra.server.partitionassignment;
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableSet;
 import com.slack.astra.metadata.dataset.DatasetMetadata;
 import com.slack.astra.metadata.dataset.DatasetMetadataStore;
 import com.slack.astra.metadata.dataset.DatasetPartitionMetadata;
-import com.slack.astra.metadata.partition.PartitionMetadata;
 import com.slack.astra.metadata.partition.PartitionMetadataStore;
 import java.time.Instant;
 import java.util.List;
@@ -150,10 +148,7 @@ public class PartitionAssignmentUpdater {
   }
 
   private void validateManualPartitionIds(List<String> requestedPartitionIds) {
-    Set<String> configuredPartitionIds =
-        partitionMetadataStore.listSync().stream()
-            .map(PartitionMetadata::getPartitionID)
-            .collect(ImmutableSet.toImmutableSet());
+    Set<String> configuredPartitionIds = partitionMetadataStore.listPartitionIdsSync();
     List<String> nonExistentRequestedPartitionIds =
         requestedPartitionIds.stream()
             .filter(id -> !configuredPartitionIds.contains(id))
