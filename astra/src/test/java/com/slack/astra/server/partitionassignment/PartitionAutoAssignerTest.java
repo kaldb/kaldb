@@ -130,7 +130,8 @@ public class PartitionAutoAssignerTest {
                     new LivePartitionState(
                         "1", 200, 200, new PartitionOccupancy.Shared(List.of("logs", "other-b"))),
                     new LivePartitionState("2", 0, 100, new PartitionOccupancy.Empty()),
-                    new LivePartitionState("3", 20, 100, new PartitionOccupancy.Empty())),
+                    new LivePartitionState(
+                        "3", 20, 100, new PartitionOccupancy.Shared(List.of("other-c")))),
                 2))
         .containsExactly("0", "1", "3");
   }
