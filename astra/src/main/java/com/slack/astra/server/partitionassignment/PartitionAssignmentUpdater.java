@@ -104,10 +104,17 @@ public class PartitionAssignmentUpdater {
       boolean useDedicatedPartitions,
       List<String> requestedPartitionIds) {
     return switch (assignmentMode(requestedPartitionIds)) {
-      case AUTO_ASSIGN -> autoAssignPartitions(
-          existingDatasetMetadata, effectiveThroughputBytes, useDedicatedPartitions);
-      case MANUAL -> validateAndUseRequestedPartitionIds(
-          existingDatasetMetadata.getName(), requestedPartitionIds);
+      case AUTO_ASSIGN ->
+          autoAssignPartitions(
+              existingDatasetMetadata, effectiveThroughputBytes, useDedicatedPartitions);
+      case MANUAL -> {
+        LOG.info(
+            "Manually assigning partitions for {} to : {}",
+            existingDatasetMetadata.getName(),
+            requestedPartitionIds);
+        validateRequestedPartitionIds(requestedPartitionIds);
+        yield requestedPartitionIds;
+      }
     };
   }
 
@@ -131,13 +138,6 @@ public class PartitionAssignmentUpdater {
         existingDatasetMetadata.getName(),
         autoAssigned);
     return autoAssigned;
-  }
-
-  private List<String> validateAndUseRequestedPartitionIds(
-      String datasetName, List<String> requestedPartitionIds) {
-    LOG.info("Manually assigning partitions for {} to : {}", datasetName, requestedPartitionIds);
-    validateManualPartitionIds(requestedPartitionIds);
-    return requestedPartitionIds;
   }
 
   private void persistAssignment(
@@ -168,7 +168,7 @@ public class PartitionAssignmentUpdater {
         persistedPartitionIds);
   }
 
-  private void validateManualPartitionIds(List<String> requestedPartitionIds) {
+  private void validateRequestedPartitionIds(List<String> requestedPartitionIds) {
     Set<String> configuredPartitionIds = partitionMetadataStore.listPartitionIdsSync();
     List<String> nonExistentRequestedPartitionIds =
         requestedPartitionIds.stream()
