@@ -64,6 +64,25 @@ public class PartitionAutoAssignerTest {
   }
 
   @Test
+  public void shouldNotUseOtherDatasetsDedicatedPartitionsForSharedAssignments() {
+    DatasetMetadata datasetMetadata =
+        new DatasetMetadata("shared-dataset", "owner", 0, List.of(), "", false);
+
+    assertThat(
+            PartitionAutoAssigner.autoAssign(
+                datasetMetadata,
+                100,
+                false,
+                List.of(
+                    new LivePartitionState(
+                        "1", 50, 100, new PartitionOccupancy.Dedicated("payments")),
+                    new LivePartitionState("2", 0, 60, new PartitionOccupancy.Empty()),
+                    new LivePartitionState("3", 0, 60, new PartitionOccupancy.Empty())),
+                2))
+        .containsExactly("2", "3");
+  }
+
+  @Test
   public void shouldUseNumericPartitionOrderingForDedicatedTieBreaks() {
     DatasetMetadata datasetMetadata =
         new DatasetMetadata("dedicated-dataset", "owner", 0, List.of(), "", true);
