@@ -3,7 +3,6 @@ package com.slack.astra.server.partitionassignment;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.slack.astra.metadata.dataset.DatasetMetadata;
-import com.slack.astra.metadata.dataset.DatasetPartitionMetadata;
 import io.grpc.Status;
 import java.util.Comparator;
 import java.util.List;
@@ -34,7 +33,7 @@ public final class PartitionAutoAssigner {
           .asRuntimeException();
     }
 
-    Set<String> currentIds = currentPartitionIds(datasetMetadata);
+    Set<String> currentIds = ImmutableSet.copyOf(datasetMetadata.getActivePartitionIds());
     List<LivePartitionState> statesWithoutSelf =
         withSelfContributionRemoved(datasetMetadata, currentIds, livePartitionStates);
 
@@ -54,14 +53,6 @@ public final class PartitionAutoAssigner {
         minNumberOfPartitions,
         minNumberOfPartitions,
         branchLabel);
-  }
-
-  private static Set<String> currentPartitionIds(DatasetMetadata datasetMetadata) {
-    return datasetMetadata
-        .getActivePartitionMetadata()
-        .map(DatasetPartitionMetadata::getPartitions)
-        .<Set<String>>map(ImmutableSet::copyOf)
-        .orElseGet(ImmutableSet::of);
   }
 
   private static long perPartitionDemand(long totalThroughput, long partitionCount) {

@@ -4,7 +4,6 @@ import static com.google.common.base.Preconditions.checkArgument;
 
 import com.google.common.collect.ImmutableList;
 import com.slack.astra.metadata.core.AstraMetadata;
-import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
@@ -160,6 +159,12 @@ public class DatasetMetadata extends AstraMetadata {
     return getPartitionConfigs().stream().filter(DatasetPartitionMetadata::isActive).findFirst();
   }
 
+  public ImmutableList<String> getActivePartitionIds() {
+    return getActivePartitionMetadata()
+        .map(DatasetPartitionMetadata::getPartitions)
+        .orElseGet(ImmutableList::of);
+  }
+
   public List<DatasetPartitionMetadata> getInactivePartitionMetadata() {
     return getPartitionConfigs().stream()
         .filter(datasetPartitionMetadata -> !datasetPartitionMetadata.isActive())
@@ -167,11 +172,7 @@ public class DatasetMetadata extends AstraMetadata {
   }
 
   public long getActivePerPartitionThroughput() {
-    int partitionCount =
-        getActivePartitionMetadata()
-            .map(DatasetPartitionMetadata::getPartitions)
-            .map(Collection::size)
-            .orElse(0);
+    int partitionCount = getActivePartitionIds().size();
     if (partitionCount == 0) {
       return 0;
     }
