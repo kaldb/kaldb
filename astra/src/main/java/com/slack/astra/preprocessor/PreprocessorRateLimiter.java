@@ -153,6 +153,7 @@ public class PreprocessorRateLimiter {
                 datasetMetadata -> {
                   return datasetMetadata
                       .getActivePartitionMetadata()
+                      .filter(ignored -> !datasetMetadata.getActivePartitionIds().isEmpty())
                       .map(
                           ignored ->
                               MultiGauge.Row.of(
