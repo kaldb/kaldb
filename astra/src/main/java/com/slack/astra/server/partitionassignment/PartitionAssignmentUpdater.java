@@ -114,7 +114,7 @@ public class PartitionAssignmentUpdater {
             existingDatasetMetadata.getName(),
             requestedPartitionIds);
         validateRequestedPartitionIds(requestedPartitionIds);
-        PartitionAutoAssigner.validateManualAssignment(
+        PartitionAssignmentPolicy.validateManualAssignment(
             existingDatasetMetadata,
             effectiveThroughputBytes,
             useDedicatedPartitions,
