@@ -44,7 +44,7 @@ The motivation for this ADR is to make dataset assignment capacity-aware while p
   Answer: No. Assignment uses equal per-partition throughput. Each selected partition must individually satisfy its share of the dataset throughput.
 
 - Question: Should manual assignment remain supported?
-  Answer: Yes. When `partition_ids` is non-empty, manual assignment remains supported. Validation against the same capacity rules is recommended and still pending final decision.
+  Answer: Yes. When `partition_ids` is non-empty, manual assignment remains supported. Manual assignment must still satisfy the same capacity, minimum partition count, and dedication eligibility rules as auto-assignment.
 
 - Question: What happens if `require_dedicated_partition` is omitted for an existing dataset?
   Answer: The existing mode is preserved. A dedicated dataset stays dedicated unless the request explicitly sets `require_dedicated_partition = false`. New datasets default to shared partitions.
@@ -459,7 +459,9 @@ Result:
 - The current implementation prefers keeping a dataset on its current partitions where possible, which reduces unnecessary churn during throughput changes. If partition-ID-ordered selection is chosen instead, decide whether current partitions still get priority over unrelated partitions.
 - Growth and shrink must still satisfy the same eligibility, minimum partition count, and equal-share capacity checks regardless of the chosen candidate-ordering policy.
 - Manual assignment to nonexistent partition IDs must be rejected.
+- Manual assignment must satisfy the same dedication eligibility, minimum partition count, and per-partition equal-share capacity checks as auto-assignment.
 - Auto-assignment must fail clearly when there are not enough eligible partitions with sufficient capacity to satisfy the configured minimum partition count and per-partition capacity check.
+- Assignment decisions may be computed from cached metadata listings. Immediate global read-after-write freshness between consecutive assignment requests is not required; eventual consistency is acceptable.
 
 ### Rollout or Phases
 
@@ -469,13 +471,11 @@ Result:
 4. Expose the calculated view through `ListPartition`.
 5. Add auto-assignment when `UpdatePartitionAssignmentRequest.partition_ids` is empty.
 6. Finalize the candidate-ordering policy and ensure growth and shrink decisions use that deterministic policy.
-7. Optionally add validation for manual assignment against the same capacity rules.
+7. Validate manual assignment against the same capacity and dedication rules as auto-assignment.
 
 ### Open Questions
 
-- Should manual assignment be strictly validated against the same capacity checks as auto-assignment, or only optionally validated?
 - Should additional operator-facing diagnostics be returned when no feasible assignment exists?
-- How should the manager handle the case where it has just written a new partition assignment, but a follow-up assignment decision is still computed from older cached metadata? In plain terms: if request A updates dataset X, and request B immediately assigns dataset Y, how do we ensure request B sees dataset X's new usage before choosing partitions? Is using fresh reads in selected paths enough, or should the design move toward stronger coordination such as optimistic locking or another mechanism?
 
 ## Compatibility, Deprecation, and Migration Plan
 
@@ -502,7 +502,7 @@ Validate the design with a mix of unit and integration tests:
 - If reuse-first capacity-fit selection is retained, unit tests ensuring growth adds the tightest eligible available-capacity fit after reusable current partitions.
 - If reuse-first capacity-fit selection is retained, unit tests ensuring shrink uses the smallest valid partition count and keeps reusable current partitions by available-capacity fit.
 - Integration tests for `UpdatePartitionAssignment` with empty `partition_ids`.
-- Integration tests for manual assignment behavior, including any chosen validation rules.
+- Integration tests for manual assignment behavior, including the same capacity and dedication validation rules used by auto-assignment.
 - Regression tests showing historical queries continue to resolve partition IDs from `DatasetMetadata` and `SnapshotMetadata` rather than current partition catalog state.
 - Concurrency-focused tests around manager mutation behavior, especially if multiple manager instances can write to the same metadata store.
 
