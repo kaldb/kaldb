@@ -152,10 +152,10 @@ message DeletePartitionResponse {
 message ListPartitionRequest {}
 
 message ListPartitionMetadataResponse {
-  repeated CalculatedPartitionMetadata partition_metadata = 1;
+  repeated LivePartitionState partition_metadata = 1;
 }
 
-message CalculatedPartitionMetadata {
+message LivePartitionState {
   string partition_id = 1;
   int64 max_capacity = 2;
   int64 provisioned_capacity = 3;

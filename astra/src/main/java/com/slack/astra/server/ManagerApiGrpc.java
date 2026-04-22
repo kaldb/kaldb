@@ -512,7 +512,7 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
           ManagerApi.ListPartitionMetadataResponse.newBuilder()
               .addAllPartitionMetadata(
                   livePartitionStateLoader.loadAll().stream()
-                      .map(ManagerApiGrpc::toCalculatedPartitionMetadataProto)
+                      .map(ManagerApiGrpc::toLivePartitionStateProto)
                       .toList())
               .build());
       responseObserver.onCompleted();
@@ -529,10 +529,10 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
     }
   }
 
-  private static ManagerApi.CalculatedPartitionMetadata toCalculatedPartitionMetadataProto(
+  private static ManagerApi.LivePartitionState toLivePartitionStateProto(
       LivePartitionState metadata) {
-    ManagerApi.CalculatedPartitionMetadata.Builder builder =
-        ManagerApi.CalculatedPartitionMetadata.newBuilder()
+    ManagerApi.LivePartitionState.Builder builder =
+        ManagerApi.LivePartitionState.newBuilder()
             .setPartitionId(metadata.getPartitionID())
             .setProvisionedCapacity(metadata.getProvisionedCapacity())
             .setMaxCapacity(metadata.getMaxCapacity());

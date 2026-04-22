@@ -616,8 +616,8 @@ public class ManagerApiGrpcTest {
 
     ManagerApi.ListPartitionMetadataResponse listPartitionResponse =
         managerApiStub.listPartition(ManagerApi.ListPartitionRequest.newBuilder().build());
-    Map<String, ManagerApi.CalculatedPartitionMetadata> partitionsById =
-        partitionMetadataById(listPartitionResponse);
+    Map<String, ManagerApi.LivePartitionState> partitionsById =
+        livePartitionStateById(listPartitionResponse);
     assertThat(partitionsById.keySet()).containsExactlyInAnyOrder("1", "2", "3");
     assertThat(partitionsById.get("1").getProvisionedCapacity()).isEqualTo(50);
     assertThat(partitionsById.get("1").getShared().getDatasetsList()).containsExactly(datasetName);
@@ -736,8 +736,8 @@ public class ManagerApiGrpcTest {
 
     ManagerApi.ListPartitionMetadataResponse listPartitionResponse =
         managerApiStub.listPartition(ManagerApi.ListPartitionRequest.newBuilder().build());
-    Map<String, ManagerApi.CalculatedPartitionMetadata> partitionsById =
-        partitionMetadataById(listPartitionResponse);
+    Map<String, ManagerApi.LivePartitionState> partitionsById =
+        livePartitionStateById(listPartitionResponse);
     assertThat(partitionsById.get("3").getDedicated().getDataset()).isEqualTo(dedicatedDatasetName);
     assertThat(partitionsById.get("4").getDedicated().getDataset()).isEqualTo(dedicatedDatasetName);
   }
@@ -1994,11 +1994,10 @@ public class ManagerApiGrpcTest {
         .isEqualTo(0);
   }
 
-  private static Map<String, ManagerApi.CalculatedPartitionMetadata> partitionMetadataById(
+  private static Map<String, ManagerApi.LivePartitionState> livePartitionStateById(
       ManagerApi.ListPartitionMetadataResponse response) {
     return response.getPartitionMetadataList().stream()
         .collect(
-            Collectors.toMap(
-                ManagerApi.CalculatedPartitionMetadata::getPartitionId, Function.identity()));
+            Collectors.toMap(ManagerApi.LivePartitionState::getPartitionId, Function.identity()));
   }
 }
