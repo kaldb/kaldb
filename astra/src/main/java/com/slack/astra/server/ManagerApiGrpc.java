@@ -537,21 +537,24 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
             .setProvisionedCapacity(metadata.getProvisionedCapacity())
             .setMaxCapacity(metadata.getMaxCapacity());
 
-    PartitionOccupancy occupancy = metadata.getOccupancy();
-    if (occupancy instanceof PartitionOccupancy.Empty) {
-      builder.setEmpty(ManagerApi.EmptyPartitionOccupancy.newBuilder().build());
-    } else if (occupancy instanceof PartitionOccupancy.Shared shared) {
-      builder.setShared(
-          ManagerApi.SharedPartitionOccupancy.newBuilder()
-              .addAllDatasets(shared.datasets())
-              .build());
-    } else if (occupancy instanceof PartitionOccupancy.Dedicated dedicated) {
-      builder.setDedicated(
-          ManagerApi.DedicatedPartitionOccupancy.newBuilder()
-              .setDataset(dedicated.dataset())
-              .build());
-    }
-    return builder.build();
+    return switch (metadata.getOccupancy()) {
+      case PartitionOccupancy.Empty ignored ->
+          builder.setEmpty(ManagerApi.EmptyPartitionOccupancy.newBuilder().build()).build();
+      case PartitionOccupancy.Shared shared ->
+          builder
+              .setShared(
+                  ManagerApi.SharedPartitionOccupancy.newBuilder()
+                      .addAllDatasets(shared.datasets())
+                      .build())
+              .build();
+      case PartitionOccupancy.Dedicated dedicated ->
+          builder
+              .setDedicated(
+                  ManagerApi.DedicatedPartitionOccupancy.newBuilder()
+                      .setDataset(dedicated.dataset())
+                      .build())
+              .build();
+    };
   }
 
   private static DedicatedPartitionModeOverride toDedicatedPartitionModeOverride(

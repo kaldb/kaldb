@@ -50,11 +50,7 @@ public final class PartitionAutoAssigner {
     }
 
     return findSmallestSatisfyingAssignment(
-        sortedCandidates,
-        throughputBytes,
-        minNumberOfPartitions,
-        minNumberOfPartitions,
-        branchLabel);
+        sortedCandidates, throughputBytes, minNumberOfPartitions, branchLabel);
   }
 
   public static void validateManualAssignment(
@@ -161,11 +157,10 @@ public final class PartitionAutoAssigner {
   private static ImmutableList<String> findSmallestSatisfyingAssignment(
       List<LivePartitionState> sortedCandidates,
       long throughputBytes,
-      long startCount,
-      long minAcceptable,
+      long minPartitionCount,
       String branchLabel) {
     ImmutableList<String> bestAttempt = ImmutableList.of();
-    for (long targetPartitionCount = startCount;
+    for (long targetPartitionCount = minPartitionCount;
         targetPartitionCount <= sortedCandidates.size();
         targetPartitionCount++) {
       final long demandPerPartition = perPartitionDemand(throughputBytes, targetPartitionCount);
@@ -182,14 +177,14 @@ public final class PartitionAutoAssigner {
           targetPartitionCount,
           demandPerPartition,
           bestAttempt);
-      if (bestAttempt.size() == targetPartitionCount && targetPartitionCount >= minAcceptable) {
+      if (bestAttempt.size() == targetPartitionCount) {
         return bestAttempt;
       }
     }
     throw Status.FAILED_PRECONDITION
         .withDescription(
             "Needed %d partitions with enough capacity, found %d: %s"
-                .formatted(minAcceptable, bestAttempt.size(), bestAttempt))
+                .formatted(minPartitionCount, bestAttempt.size(), bestAttempt))
         .asRuntimeException();
   }
 
