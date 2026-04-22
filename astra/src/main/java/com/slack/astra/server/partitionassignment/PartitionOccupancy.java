@@ -9,32 +9,38 @@ public sealed interface PartitionOccupancy
 
   List<String> datasets();
 
-  default boolean isEmpty() {
-    return this instanceof Empty;
-  }
+  boolean isEmpty();
 
-  default boolean canUseForSharedAssignment(String datasetName) {
-    return !(this instanceof Dedicated dedicated) || dedicated.dataset().equals(datasetName);
-  }
+  boolean canUseForSharedAssignment(String datasetName);
 
-  default boolean isDedicatedOnlyTo(String datasetName) {
-    return this instanceof Dedicated dedicated && dedicated.dataset().equals(datasetName);
-  }
+  boolean isDedicatedOnlyTo(String datasetName);
 
-  default boolean isExclusivelyUsedBy(String datasetName) {
-    if (this instanceof Dedicated dedicated) {
-      return dedicated.dataset().equals(datasetName);
-    }
-    if (this instanceof Shared shared) {
-      return shared.datasets().size() == 1 && shared.datasets().get(0).equals(datasetName);
-    }
-    return false;
-  }
+  boolean isExclusivelyUsedBy(String datasetName);
 
   record Empty() implements PartitionOccupancy {
     @Override
     public List<String> datasets() {
       return List.of();
+    }
+
+    @Override
+    public boolean isEmpty() {
+      return true;
+    }
+
+    @Override
+    public boolean canUseForSharedAssignment(String datasetName) {
+      return true;
+    }
+
+    @Override
+    public boolean isDedicatedOnlyTo(String datasetName) {
+      return false;
+    }
+
+    @Override
+    public boolean isExclusivelyUsedBy(String datasetName) {
+      return false;
     }
   }
 
@@ -44,6 +50,26 @@ public sealed interface PartitionOccupancy
       if (datasets.isEmpty()) {
         throw new IllegalArgumentException("shared partition occupancy requires datasets");
       }
+    }
+
+    @Override
+    public boolean isEmpty() {
+      return false;
+    }
+
+    @Override
+    public boolean canUseForSharedAssignment(String datasetName) {
+      return true;
+    }
+
+    @Override
+    public boolean isDedicatedOnlyTo(String datasetName) {
+      return false;
+    }
+
+    @Override
+    public boolean isExclusivelyUsedBy(String datasetName) {
+      return datasets.size() == 1 && datasets.get(0).equals(datasetName);
     }
   }
 
@@ -58,6 +84,26 @@ public sealed interface PartitionOccupancy
     @Override
     public List<String> datasets() {
       return List.of(dataset);
+    }
+
+    @Override
+    public boolean isEmpty() {
+      return false;
+    }
+
+    @Override
+    public boolean canUseForSharedAssignment(String datasetName) {
+      return dataset.equals(datasetName);
+    }
+
+    @Override
+    public boolean isDedicatedOnlyTo(String datasetName) {
+      return dataset.equals(datasetName);
+    }
+
+    @Override
+    public boolean isExclusivelyUsedBy(String datasetName) {
+      return dataset.equals(datasetName);
     }
   }
 }
