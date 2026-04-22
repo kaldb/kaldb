@@ -186,16 +186,20 @@ public class PreprocessorRateLimiterTest {
   }
 
   @Test
-  public void shouldUseActivePerPartitionThroughputForMetrics() {
+  public void shouldUseCeilDivActivePerPartitionThroughputForMetrics() {
     MeterRegistry meterRegistry = new SimpleMeterRegistry();
     PreprocessorRateLimiter rateLimiter = new PreprocessorRateLimiter(meterRegistry, 1, 1, false);
+    long totalThroughputBytes = 5;
+    List<String> activePartitionIds = List.of("0", "1");
+    long expectedPerPartitionThroughput =
+        Math.ceilDiv(totalThroughputBytes, activePartitionIds.size());
 
     DatasetMetadata datasetMetadata =
         new DatasetMetadata(
             "rateLimiter",
             "rateLimiter",
-            5,
-            List.of(new DatasetPartitionMetadata(100, Long.MAX_VALUE, List.of("0", "1"))),
+            totalThroughputBytes,
+            List.of(new DatasetPartitionMetadata(100, Long.MAX_VALUE, activePartitionIds)),
             DatasetMetadata.MATCH_ALL_SERVICE);
 
     rateLimiter.createBulkIngestRateLimiter(List.of(datasetMetadata));
@@ -206,7 +210,7 @@ public class PreprocessorRateLimiterTest {
                 .tag("service", datasetMetadata.getName())
                 .gauge()
                 .value())
-        .isEqualTo(3);
+        .isEqualTo(expectedPerPartitionThroughput);
   }
 
   @Test
