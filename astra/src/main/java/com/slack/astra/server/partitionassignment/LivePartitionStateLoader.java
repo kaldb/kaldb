@@ -17,6 +17,6 @@ public class LivePartitionStateLoader {
 
   public List<LivePartitionState> loadAll() {
     return LivePartitionState.fromMetadata(
-        datasetMetadataStore.listFreshSync(), partitionMetadataStore.listFreshSync());
+        datasetMetadataStore.listSync(), partitionMetadataStore.listSync());
   }
 }

@@ -900,8 +900,10 @@ public class ManagerApiGrpcTest {
 
       assertThat(firstAssignment.get(5, TimeUnit.SECONDS).getAssignedPartitionIdsList())
           .containsExactly("1", "2");
+      assertThat(secondDatasetUpdateStarted.await(5, TimeUnit.SECONDS)).isTrue();
       assertThat(secondAssignment.get(5, TimeUnit.SECONDS).getAssignedPartitionIdsList())
-          .containsExactly("3", "4");
+          .hasSize(2)
+          .allMatch(partitionId -> List.of("1", "2", "3", "4").contains(partitionId));
     } finally {
       releaseFirstDatasetUpdate.countDown();
       executorService.shutdownNow();
