@@ -7,6 +7,7 @@ import com.slack.astra.metadata.dataset.DatasetMetadataStore;
 import com.slack.astra.metadata.dataset.DatasetPartitionMetadata;
 import com.slack.astra.metadata.partition.PartitionMetadataStore;
 import java.time.Instant;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -113,6 +114,13 @@ public class PartitionAssignmentUpdater {
             existingDatasetMetadata.getName(),
             requestedPartitionIds);
         validateRequestedPartitionIds(requestedPartitionIds);
+        PartitionAutoAssigner.validateManualAssignment(
+            existingDatasetMetadata,
+            effectiveThroughputBytes,
+            useDedicatedPartitions,
+            requestedPartitionIds,
+            livePartitionStateLoader.loadAll(),
+            minNumberOfPartitions);
         yield requestedPartitionIds;
       }
     };
@@ -169,6 +177,17 @@ public class PartitionAssignmentUpdater {
   }
 
   private void validateRequestedPartitionIds(List<String> requestedPartitionIds) {
+    Set<String> seenPartitionIds = new HashSet<>();
+    List<String> duplicateRequestedPartitionIds =
+        requestedPartitionIds.stream()
+            .filter(id -> !seenPartitionIds.add(id))
+            .distinct()
+            .sorted()
+            .toList();
+    Preconditions.checkArgument(
+        duplicateRequestedPartitionIds.isEmpty(),
+        "Requested partition IDs must be unique: %s".formatted(duplicateRequestedPartitionIds));
+
     Set<String> configuredPartitionIds = partitionMetadataStore.listPartitionIdsSync();
     List<String> nonExistentRequestedPartitionIds =
         requestedPartitionIds.stream()
