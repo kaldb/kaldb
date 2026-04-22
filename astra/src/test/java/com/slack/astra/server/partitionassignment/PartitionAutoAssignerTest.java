@@ -221,6 +221,32 @@ public class PartitionAutoAssignerTest {
   }
 
   @Test
+  public void shouldReplaceCurrentSharedPartitionWhenItNoLongerHasEnoughCapacity() {
+    DatasetMetadata datasetMetadata =
+        new DatasetMetadata(
+            "logs",
+            "owner",
+            160,
+            List.of(new DatasetPartitionMetadata(1, Long.MAX_VALUE, List.of("0", "1"))),
+            "",
+            false);
+
+    assertThat(
+            PartitionAutoAssigner.autoAssign(
+                datasetMetadata,
+                180,
+                false,
+                List.of(
+                    new LivePartitionState(
+                        "0", 190, 200, new PartitionOccupancy.Shared(List.of("logs", "other-a"))),
+                    new LivePartitionState(
+                        "1", 200, 200, new PartitionOccupancy.Shared(List.of("logs", "other-b"))),
+                    new LivePartitionState("2", 0, 100, new PartitionOccupancy.Empty())),
+                2))
+        .containsExactly("0", "2");
+  }
+
+  @Test
   public void shouldShrinkSharedAssignmentsToTheTightestReusableCurrentFit() {
     DatasetMetadata datasetMetadata =
         new DatasetMetadata(
