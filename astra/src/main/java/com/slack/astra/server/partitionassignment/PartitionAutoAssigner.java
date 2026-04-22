@@ -39,20 +39,21 @@ public final class PartitionAutoAssigner {
         withSelfContributionRemoved(datasetMetadata, currentIds, livePartitionStates);
 
     List<LivePartitionState> sortedCandidates;
-    long startCount;
     String branchLabel;
     if (requireDedicatedPartition) {
       sortedCandidates = dedicatedCandidates(datasetMetadata, statesWithoutSelf);
-      startCount = minNumberOfPartitions;
       branchLabel = DEDICATED_BRANCH_LABEL;
     } else {
       sortedCandidates = sharedCandidates(datasetMetadata, currentIds, statesWithoutSelf);
-      startCount = 1L;
       branchLabel = SHARED_BRANCH_LABEL;
     }
 
     return findSmallestSatisfyingAssignment(
-        sortedCandidates, throughputBytes, startCount, minNumberOfPartitions, branchLabel);
+        sortedCandidates,
+        throughputBytes,
+        minNumberOfPartitions,
+        minNumberOfPartitions,
+        branchLabel);
   }
 
   private static Set<String> currentPartitionIds(DatasetMetadata datasetMetadata) {
