@@ -25,6 +25,12 @@ public class PartitionAssignmentUpdater {
     REQUIRE_SHARED
   }
 
+  /** Whether the request is asking the manager to choose partitions or to use an explicit list. */
+  private enum AssignmentMode {
+    AUTO_ASSIGN,
+    MANUAL
+  }
+
   private final DatasetMetadataStore datasetMetadataStore;
   private final PartitionMetadataStore partitionMetadataStore;
   private final LivePartitionStateLoader livePartitionStateLoader;
@@ -97,24 +103,39 @@ public class PartitionAssignmentUpdater {
       long effectiveThroughputBytes,
       boolean useDedicatedPartitions,
       List<String> requestedPartitionIds) {
-    if (requestedPartitionIds.isEmpty()) {
-      List<String> autoAssigned =
-          PartitionAutoAssigner.autoAssign(
-              existingDatasetMetadata,
-              effectiveThroughputBytes,
-              useDedicatedPartitions,
-              livePartitionStateLoader.loadAll(),
-              minNumberOfPartitions);
-      LOG.info(
-          "Auto-assigning partitions for {} to : {}",
-          existingDatasetMetadata.getName(),
-          autoAssigned);
-      return autoAssigned;
-    }
+    return switch (assignmentMode(requestedPartitionIds)) {
+      case AUTO_ASSIGN -> autoAssignPartitions(
+          existingDatasetMetadata, effectiveThroughputBytes, useDedicatedPartitions);
+      case MANUAL -> validateAndUseRequestedPartitionIds(
+          existingDatasetMetadata.getName(), requestedPartitionIds);
+    };
+  }
+
+  private static AssignmentMode assignmentMode(List<String> requestedPartitionIds) {
+    return requestedPartitionIds.isEmpty() ? AssignmentMode.AUTO_ASSIGN : AssignmentMode.MANUAL;
+  }
+
+  private List<String> autoAssignPartitions(
+      DatasetMetadata existingDatasetMetadata,
+      long effectiveThroughputBytes,
+      boolean useDedicatedPartitions) {
+    List<String> autoAssigned =
+        PartitionAutoAssigner.autoAssign(
+            existingDatasetMetadata,
+            effectiveThroughputBytes,
+            useDedicatedPartitions,
+            livePartitionStateLoader.loadAll(),
+            minNumberOfPartitions);
     LOG.info(
-        "Manually assigning partitions for {} to : {}",
+        "Auto-assigning partitions for {} to : {}",
         existingDatasetMetadata.getName(),
-        requestedPartitionIds);
+        autoAssigned);
+    return autoAssigned;
+  }
+
+  private List<String> validateAndUseRequestedPartitionIds(
+      String datasetName, List<String> requestedPartitionIds) {
+    LOG.info("Manually assigning partitions for {} to : {}", datasetName, requestedPartitionIds);
     validateManualPartitionIds(requestedPartitionIds);
     return requestedPartitionIds;
   }
