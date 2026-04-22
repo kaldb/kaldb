@@ -2,7 +2,7 @@
 
 ## Status
 
-Current state: `Draft`
+Current state: `Accepted`
 
 Discussion thread: `n/a`
 
@@ -475,7 +475,7 @@ Result:
 
 ### Open Questions
 
-- Should additional operator-facing diagnostics be returned when no feasible assignment exists?
+None at this time.
 
 ## Compatibility, Deprecation, and Migration Plan
 
@@ -504,7 +504,7 @@ Validate the design with a mix of unit and integration tests:
 - Integration tests for `UpdatePartitionAssignment` with empty `partition_ids`.
 - Integration tests for manual assignment behavior, including the same capacity and dedication validation rules used by auto-assignment.
 - Regression tests showing historical queries continue to resolve partition IDs from `DatasetMetadata` and `SnapshotMetadata` rather than current partition catalog state.
-- Concurrency-focused tests around manager mutation behavior, especially if multiple manager instances can write to the same metadata store.
+- Concurrency-focused tests around serialized manager mutation behavior and its accepted eventual-consistency use of cached metadata listings.
 
 ## Documentation Plan
 
@@ -537,5 +537,5 @@ If a larger implementation design is written later, link this ADR to that design
 - The manager now has enough information to avoid some invalid assignments before they are persisted.
 - `ListPartition` becomes a calculated operational view: it reports max capacity, current provisioned capacity, available capacity, and occupancy based on current dataset metadata.
 - Historical queryability remains anchored in dataset assignment history and snapshot metadata, not in calculated partition occupancy.
-- The manager owns more assignment logic than it should long-term. The current implementation keeps the assignment planner inside `ManagerApiGrpc`, which mixes transport, metadata orchestration, capacity calculation, and allocation policy. Once behavior is pinned down, the planner should be extracted into a testable domain model.
-- This design assumes a single manager writer for assignment changes. The current code synchronizes manager mutation RPCs inside one manager process, but it does not solve cross-process write races if multiple manager instances are deployed against the same metadata store.
+- The manager-side transport boundary remains in `ManagerApiGrpc`, but assignment workflow, live-state loading, and allocation policy now live in dedicated partition-assignment components.
+- Because live partition state is derived from cached metadata listings, assignment decisions are eventually consistent with respect to other datasets' most recent occupancy changes rather than requiring immediate global read-after-write freshness.
