@@ -46,6 +46,33 @@ public class PartitionAutoAssignerTest {
   }
 
   @Test
+  public void shouldPreferCurrentPartitionsForZeroThroughputSharedAssignments() {
+    DatasetMetadata datasetMetadata =
+        new DatasetMetadata(
+            "shared-dataset",
+            "owner",
+            100,
+            List.of(new DatasetPartitionMetadata(1, Long.MAX_VALUE, List.of("3", "4"))),
+            "",
+            false);
+
+    assertThat(
+            PartitionAutoAssigner.autoAssign(
+                datasetMetadata,
+                0,
+                false,
+                List.of(
+                    new LivePartitionState("1", 0, 100, new PartitionOccupancy.Empty()),
+                    new LivePartitionState("2", 0, 100, new PartitionOccupancy.Empty()),
+                    new LivePartitionState(
+                        "3", 50, 100, new PartitionOccupancy.Shared(List.of("shared-dataset"))),
+                    new LivePartitionState(
+                        "4", 50, 100, new PartitionOccupancy.Shared(List.of("shared-dataset")))),
+                2))
+        .containsExactly("3", "4");
+  }
+
+  @Test
   public void shouldUseNumericPartitionOrderingForSharedTieBreaks() {
     DatasetMetadata datasetMetadata =
         new DatasetMetadata("shared-dataset", "owner", 0, List.of(), "", false);
