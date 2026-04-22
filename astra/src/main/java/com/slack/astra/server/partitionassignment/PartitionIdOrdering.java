@@ -19,8 +19,7 @@ public final class PartitionIdOrdering {
     try {
       return Long.parseLong(partitionId);
     } catch (NumberFormatException e) {
-      throw new IllegalArgumentException(
-          "Partition ID must be numeric for ordering: " + partitionId, e);
+      throw new IllegalArgumentException("Partition ID must be numeric: " + partitionId, e);
     }
   }
 }

@@ -207,6 +207,6 @@ public class PartitionAutoAssignerTest {
                         new LivePartitionState("3", 0, 60, new PartitionOccupancy.Empty())),
                     2))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("Partition ID must be numeric for ordering: a");
+        .hasMessageContaining("Partition ID must be numeric: a");
   }
 }

@@ -530,24 +530,22 @@ public class ManagerApiGrpcTest {
 
   @Test
   public void shouldCreateListAndDeletePartitions() {
-    Metadata.PartitionMetadata createdPartition = createPartition("partition-a", 250);
-    assertThat(createdPartition.getPartitionId()).isEqualTo("partition-a");
+    Metadata.PartitionMetadata createdPartition = createPartition("1", 250);
+    assertThat(createdPartition.getPartitionId()).isEqualTo("1");
     assertThat(createdPartition.getMaxCapacity()).isEqualTo(250);
 
     ManagerApi.ListPartitionMetadataResponse listPartitionResponse =
         managerApiStub.listPartition(ManagerApi.ListPartitionRequest.newBuilder().build());
     assertThat(listPartitionResponse.getPartitionMetadataList()).hasSize(1);
-    assertThat(listPartitionResponse.getPartitionMetadata(0).getPartitionId())
-        .isEqualTo("partition-a");
+    assertThat(listPartitionResponse.getPartitionMetadata(0).getPartitionId()).isEqualTo("1");
     assertThat(listPartitionResponse.getPartitionMetadata(0).getMaxCapacity()).isEqualTo(250);
     assertThat(listPartitionResponse.getPartitionMetadata(0).getProvisionedCapacity()).isZero();
     assertThat(listPartitionResponse.getPartitionMetadata(0).hasEmpty()).isTrue();
 
     ManagerApi.DeletePartitionResponse deletePartitionResponse =
         managerApiStub.deletePartition(
-            ManagerApi.DeletePartitionRequest.newBuilder().setPartitionId("partition-a").build());
-    assertThat(deletePartitionResponse.getStatus())
-        .isEqualTo("Deleted partition partition-a successfully");
+            ManagerApi.DeletePartitionRequest.newBuilder().setPartitionId("1").build());
+    assertThat(deletePartitionResponse.getStatus()).isEqualTo("Deleted partition 1 successfully");
 
     await()
         .untilAsserted(
@@ -560,6 +558,23 @@ public class ManagerApiGrpcTest {
   }
 
   @Test
+  public void shouldRejectCreatingPartitionWithNonNumericId() {
+    StatusRuntimeException throwable =
+        (StatusRuntimeException)
+            catchThrowable(
+                () ->
+                    managerApiStub.createPartition(
+                        ManagerApi.CreatePartitionRequest.newBuilder()
+                            .setPartitionId("partition-a")
+                            .setMaxCapacity(250)
+                            .build()));
+
+    assertThat(throwable.getStatus().getCode()).isEqualTo(Status.INVALID_ARGUMENT.getCode());
+    assertThat(throwable.getStatus().getDescription())
+        .contains("Partition ID must be numeric: partition-a");
+  }
+
+  @Test
   public void shouldRejectManualAssignmentWithUnknownPartitionIds() {
     String datasetName = "manualInvalidPartitionDataset";
     managerApiStub.createDatasetMetadata(
@@ -567,7 +582,7 @@ public class ManagerApiGrpcTest {
             .setName(datasetName)
             .setOwner("owner")
             .build());
-    createPartition("known", 100);
+    createPartition("1", 100);
 
     StatusRuntimeException throwable =
         (StatusRuntimeException)
@@ -577,7 +592,7 @@ public class ManagerApiGrpcTest {
                         ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
                             .setName(datasetName)
                             .setThroughputBytes(50)
-                            .addAllPartitionIds(List.of("known", "missing"))
+                            .addAllPartitionIds(List.of("1", "missing"))
                             .build()));
 
     assertThat(throwable.getStatus().getCode()).isEqualTo(Status.INVALID_ARGUMENT.getCode());
@@ -593,7 +608,7 @@ public class ManagerApiGrpcTest {
             .setName(datasetName)
             .setOwner("owner")
             .build());
-    createPartition("known", 100);
+    createPartition("1", 100);
 
     StatusRuntimeException throwable =
         (StatusRuntimeException)
@@ -603,12 +618,12 @@ public class ManagerApiGrpcTest {
                         ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
                             .setName(datasetName)
                             .setThroughputBytes(50)
-                            .addAllPartitionIds(List.of("known", "known"))
+                            .addAllPartitionIds(List.of("1", "1"))
                             .build()));
 
     assertThat(throwable.getStatus().getCode()).isEqualTo(Status.INVALID_ARGUMENT.getCode());
     assertThat(throwable.getStatus().getDescription())
-        .contains("Requested partition IDs must be unique: [known]");
+        .contains("Requested partition IDs must be unique: [1]");
   }
 
   @Test
@@ -1314,7 +1329,8 @@ public class ManagerApiGrpcTest {
   @Test
   public void shouldRejectDeletingReferencedPartition() {
     String datasetName = "referencedPartitionDataset";
-    createPartition("referenced", 100);
+    createPartition("7", 100);
+    createPartition("8", 100);
     managerApiStub.createDatasetMetadata(
         ManagerApi.CreateDatasetMetadataRequest.newBuilder()
             .setName(datasetName)
@@ -1324,7 +1340,7 @@ public class ManagerApiGrpcTest {
         ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
             .setName(datasetName)
             .setThroughputBytes(50)
-            .addPartitionIds("referenced")
+            .addAllPartitionIds(List.of("7", "8"))
             .build());
     await()
         .until(
@@ -1332,9 +1348,7 @@ public class ManagerApiGrpcTest {
                 datasetMetadataStore
                     .getSync(datasetName)
                     .getActivePartitionMetadata()
-                    .map(
-                        partitionMetadata ->
-                            partitionMetadata.getPartitions().contains("referenced"))
+                    .map(partitionMetadata -> partitionMetadata.getPartitions().contains("7"))
                     .orElse(false));
 
     StatusRuntimeException throwable =
@@ -1343,12 +1357,12 @@ public class ManagerApiGrpcTest {
                 () ->
                     managerApiStub.deletePartition(
                         ManagerApi.DeletePartitionRequest.newBuilder()
-                            .setPartitionId("referenced")
+                            .setPartitionId("7")
                             .build()));
 
     assertThat(throwable.getStatus().getCode()).isEqualTo(Status.FAILED_PRECONDITION.getCode());
     assertThat(throwable.getStatus().getDescription())
-        .contains("Partition with id 'referenced' is still referenced");
+        .contains("Partition with id '7' is still referenced");
   }
 
   @Test
@@ -1444,24 +1458,24 @@ public class ManagerApiGrpcTest {
             .setOwner("ownerNoPartitions")
             .build());
 
-    createPartitions(List.of("delete-1", "delete-2", "snapshot-1", "snapshot-2"));
+    createPartitions(List.of("1", "2", "3", "4"));
 
     managerApiStub.updatePartitionAssignment(
         ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
             .setName(datasetNameToDelete)
             .setThroughputBytes(100)
-            .addAllPartitionIds(List.of("delete-1", "delete-2"))
+            .addAllPartitionIds(List.of("1", "2"))
             .build());
     managerApiStub.updatePartitionAssignment(
         ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
             .setName(datasetNameWithSnapshots)
             .setThroughputBytes(200)
-            .addAllPartitionIds(List.of("snapshot-1", "snapshot-2"))
+            .addAllPartitionIds(List.of("3", "4"))
             .build());
 
     long nowMs = Instant.now().toEpochMilli();
     snapshotMetadataStore.createSync(
-        new SnapshotMetadata("snapshot-a", nowMs, nowMs + 1, 0, "snapshot-1", 123));
+        new SnapshotMetadata("snapshot-a", nowMs, nowMs + 1, 0, "3", 123));
     await().until(() -> snapshotMetadataStore.listSync().size() == 1);
 
     Metadata.DatasetMetadata deletedDataset =
@@ -1581,28 +1595,28 @@ public class ManagerApiGrpcTest {
             .setOwner("ownerOther")
             .build());
 
-    createPartitions(List.of("referenced-1", "referenced-2", "other-1", "other-2"));
+    createPartitions(List.of("1", "2", "3", "4"));
 
     managerApiStub.updatePartitionAssignment(
         ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
             .setName(datasetNameToDelete)
             .setThroughputBytes(200)
-            .addAllPartitionIds(List.of("referenced-1", "referenced-2"))
+            .addAllPartitionIds(List.of("1", "2"))
             .build());
     managerApiStub.updatePartitionAssignment(
         ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
             .setName(otherDatasetName)
             .setThroughputBytes(200)
-            .addAllPartitionIds(List.of("other-1", "other-2"))
+            .addAllPartitionIds(List.of("3", "4"))
             .build());
 
     long nowMs = Instant.now().toEpochMilli();
     snapshotMetadataStore.createSync(
-        new SnapshotMetadata("snapshot-1", nowMs, nowMs + 1, 0, "referenced-1", 111));
+        new SnapshotMetadata("snapshot-1", nowMs, nowMs + 1, 0, "1", 111));
     snapshotMetadataStore.createSync(
-        new SnapshotMetadata("snapshot-2", nowMs, nowMs + 1, 0, "referenced-2", 222));
+        new SnapshotMetadata("snapshot-2", nowMs, nowMs + 1, 0, "2", 222));
     snapshotMetadataStore.createSync(
-        new SnapshotMetadata("snapshot-3", nowMs, nowMs + 1, 0, "other-1", 333));
+        new SnapshotMetadata("snapshot-3", nowMs, nowMs + 1, 0, "3", 333));
     await().until(() -> snapshotMetadataStore.listSync().size() == 3);
 
     StatusRuntimeException deleteDatasetError =

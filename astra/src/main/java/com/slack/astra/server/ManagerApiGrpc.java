@@ -27,6 +27,7 @@ import com.slack.astra.server.partitionassignment.LivePartitionState;
 import com.slack.astra.server.partitionassignment.LivePartitionStateLoader;
 import com.slack.astra.server.partitionassignment.PartitionAssignmentUpdater;
 import com.slack.astra.server.partitionassignment.PartitionAssignmentUpdater.DedicatedPartitionModeOverride;
+import com.slack.astra.server.partitionassignment.PartitionIdOrdering;
 import com.slack.astra.server.partitionassignment.PartitionOccupancy;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
@@ -435,6 +436,7 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
     try {
       Preconditions.checkArgument(
           !request.getPartitionId().isBlank(), "Partition ID must not be blank");
+      PartitionIdOrdering.parseNumericPartitionId(request.getPartitionId());
       Preconditions.checkArgument(
           request.getMaxCapacity() > 0, "Max capacity must be set when creating a new partition");
 
