@@ -200,11 +200,18 @@ public class PartitionAssignmentUpdater {
   }
 
   /**
-   * Closes the current active assignment window at now and opens a new one at now + 1 with the
-   * provided partition IDs. Inactive (already-closed) windows are preserved unchanged.
+   * Closes the current active assignment window at a monotonic cutover time and opens a new one at
+   * cutover + 1 with the provided partition IDs. Inactive (already-closed) windows are preserved
+   * unchanged.
    */
   private static ImmutableList<DatasetPartitionMetadata> rolloverActivePartitionAssignment(
       DatasetMetadata datasetMetadata, List<String> newPartitionIdsList) {
+    return rolloverActivePartitionAssignment(
+        datasetMetadata, newPartitionIdsList, Instant.now().toEpochMilli());
+  }
+
+  static ImmutableList<DatasetPartitionMetadata> rolloverActivePartitionAssignment(
+      DatasetMetadata datasetMetadata, List<String> newPartitionIdsList, long currentTimeEpochMs) {
     ImmutableList<DatasetPartitionMetadata> existingPartitions =
         datasetMetadata.getPartitionConfigs();
 
@@ -223,7 +230,8 @@ public class PartitionAssignmentUpdater {
     // scheduled.
     // TODO: If introducing optional padding, it should likely be added as a method parameter to
     // the cutover-time calculation.
-    long partitionCutoverTime = Instant.now().toEpochMilli();
+    long partitionCutoverTime =
+        nextPartitionCutoverTime(previousActiveDatasetPartition, currentTimeEpochMs);
 
     ImmutableList.Builder<DatasetPartitionMetadata> builder =
         ImmutableList.<DatasetPartitionMetadata>builder().addAll(remainingDatasetPartitions);
@@ -240,5 +248,14 @@ public class PartitionAssignmentUpdater {
     DatasetPartitionMetadata newPartitionMetadata =
         DatasetPartitionMetadata.createActive(partitionCutoverTime + 1, newPartitionIdsList);
     return builder.add(newPartitionMetadata).build();
+  }
+
+  static long nextPartitionCutoverTime(
+      Optional<DatasetPartitionMetadata> previousActiveDatasetPartition, long nowEpochMs) {
+    return previousActiveDatasetPartition
+        .map(
+            previousActivePartition ->
+                Math.max(nowEpochMs, previousActivePartition.getStartTimeEpochMs() + 1))
+        .orElse(nowEpochMs);
   }
 }
