@@ -109,6 +109,36 @@ public class PartitionAutoAssignerTest {
   }
 
   @Test
+  public void shouldSkipStillSharedCurrentPartitionsWhenUpgradingToDedicated() {
+    DatasetMetadata datasetMetadata =
+        new DatasetMetadata(
+            "payments",
+            "owner",
+            100,
+            List.of(new DatasetPartitionMetadata(1, Long.MAX_VALUE, List.of("1", "2"))),
+            "",
+            false);
+
+    assertThat(
+            PartitionAutoAssigner.autoAssign(
+                datasetMetadata,
+                100,
+                true,
+                List.of(
+                    new LivePartitionState(
+                        "1", 50, 100, new PartitionOccupancy.Shared(List.of("payments"))),
+                    new LivePartitionState(
+                        "2",
+                        100,
+                        100,
+                        new PartitionOccupancy.Shared(List.of("payments", "other-dataset"))),
+                    new LivePartitionState("3", 0, 60, new PartitionOccupancy.Empty()),
+                    new LivePartitionState("4", 0, 100, new PartitionOccupancy.Empty())),
+                2))
+        .containsExactly("1", "3");
+  }
+
+  @Test
   public void shouldGrowSharedAssignmentsByKeepingCurrentPartitionsAndAddingTightestFit() {
     DatasetMetadata datasetMetadata =
         new DatasetMetadata(
