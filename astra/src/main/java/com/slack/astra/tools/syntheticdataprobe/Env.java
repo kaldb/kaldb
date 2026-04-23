@@ -9,14 +9,37 @@ final class Env {
   }
 
   static int getInt(String key, int defaultValue) {
-    return Integer.parseInt(get(key, String.valueOf(defaultValue)));
+    String value = get(key, String.valueOf(defaultValue));
+    try {
+      return Integer.parseInt(value);
+    } catch (NumberFormatException e) {
+      throw invalidNumericValue(key, value, e);
+    }
   }
 
   static long getLong(String key, long defaultValue) {
-    return Long.parseLong(get(key, String.valueOf(defaultValue)));
+    String value = get(key, String.valueOf(defaultValue));
+    try {
+      return Long.parseLong(value);
+    } catch (NumberFormatException e) {
+      throw invalidNumericValue(key, value, e);
+    }
   }
 
   static double getDouble(String key, double defaultValue) {
-    return Double.parseDouble(get(key, String.valueOf(defaultValue)));
+    String value = get(key, String.valueOf(defaultValue));
+    try {
+      return Double.parseDouble(value);
+    } catch (NumberFormatException e) {
+      throw invalidNumericValue(key, value, e);
+    }
+  }
+
+  private static NumberFormatException invalidNumericValue(
+      String key, String value, NumberFormatException cause) {
+    NumberFormatException exception =
+        new NumberFormatException("Invalid numeric value for " + key + ": '" + value + "'");
+    exception.initCause(cause);
+    return exception;
   }
 }
