@@ -8,6 +8,7 @@ import com.google.common.base.Preconditions;
 import com.google.common.collect.Sets;
 import com.slack.astra.chunk.ChunkInfo;
 import com.slack.astra.clusterManager.ReplicaRestoreService;
+import com.slack.astra.metadata.core.InternalMetadataStoreException;
 import com.slack.astra.metadata.dataset.DatasetMetadata;
 import com.slack.astra.metadata.dataset.DatasetMetadataSerializer;
 import com.slack.astra.metadata.dataset.DatasetMetadataStore;
@@ -40,6 +41,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 import javax.naming.SizeLimitExceededException;
+import org.apache.zookeeper.KeeperException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -442,7 +444,7 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
 
       if (partitionMetadataStore.hasSync(request.getPartitionId())) {
         String msg = "Partition with id '%s' already exists".formatted(request.getPartitionId());
-        LOG.error(msg);
+        LOG.warn(msg);
         responseObserver.onError(Status.ALREADY_EXISTS.withDescription(msg).asException());
         return;
       }
@@ -460,6 +462,14 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
       LOG.error("Error creating new partition", e);
       responseObserver.onError(
           Status.INVALID_ARGUMENT.withDescription(e.getMessage()).asException());
+    } catch (InternalMetadataStoreException e) {
+      LOG.error("Error creating new partition", e);
+      if (containsNodeExistsCause(e)) {
+        String msg = "Partition with id '%s' already exists".formatted(request.getPartitionId());
+        responseObserver.onError(Status.ALREADY_EXISTS.withDescription(msg).asException());
+      } else {
+        responseObserver.onError(Status.INTERNAL.withDescription(e.getMessage()).asException());
+      }
     } catch (Exception e) {
       LOG.error("Error creating new partition", e);
       responseObserver.onError(Status.UNKNOWN.withDescription(e.getMessage()).asException());
@@ -535,11 +545,11 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
       LivePartitionState metadata) {
     ManagerApi.LivePartitionState.Builder builder =
         ManagerApi.LivePartitionState.newBuilder()
-            .setPartitionId(metadata.getPartitionID())
-            .setProvisionedCapacity(metadata.getProvisionedCapacity())
-            .setMaxCapacity(metadata.getMaxCapacity());
+            .setPartitionId(metadata.partitionId())
+            .setProvisionedCapacity(metadata.provisionedCapacity())
+            .setMaxCapacity(metadata.maxCapacity());
 
-    return switch (metadata.getOccupancy()) {
+    return switch (metadata.occupancy()) {
       case PartitionOccupancy.Empty ignored ->
           builder.setEmpty(ManagerApi.EmptyPartitionOccupancy.newBuilder().build()).build();
       case PartitionOccupancy.Shared shared ->
@@ -557,6 +567,17 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
                       .build())
               .build();
     };
+  }
+
+  private static boolean containsNodeExistsCause(Throwable throwable) {
+    Throwable current = throwable;
+    while (current != null) {
+      if (current instanceof KeeperException.NodeExistsException) {
+        return true;
+      }
+      current = current.getCause();
+    }
+    return false;
   }
 
   private static DedicatedPartitionModeOverride toDedicatedPartitionModeOverride(

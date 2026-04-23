@@ -575,6 +575,50 @@ public class ManagerApiGrpcTest {
   }
 
   @Test
+  public void shouldRejectCreatingDuplicatePartitionWhenStoreCreateRaces() {
+    doThrow(
+            new InternalMetadataStoreException(
+                "duplicate partition",
+                new org.apache.zookeeper.KeeperException.NodeExistsException()))
+        .when(partitionMetadataStore)
+        .createSync(eq(new PartitionMetadata("1", 250)));
+
+    StatusRuntimeException throwable =
+        (StatusRuntimeException)
+            catchThrowable(
+                () ->
+                    managerApiStub.createPartition(
+                        ManagerApi.CreatePartitionRequest.newBuilder()
+                            .setPartitionId("1")
+                            .setMaxCapacity(250)
+                            .build()));
+
+    assertThat(throwable.getStatus().getCode()).isEqualTo(Status.ALREADY_EXISTS.getCode());
+    assertThat(throwable.getStatus().getDescription())
+        .contains("Partition with id '1' already exists");
+  }
+
+  @Test
+  public void shouldReturnInternalWhenPartitionCreateStoreFailsUnexpectedly() {
+    doThrow(new InternalMetadataStoreException("store failure", new RuntimeException("boom")))
+        .when(partitionMetadataStore)
+        .createSync(eq(new PartitionMetadata("1", 250)));
+
+    StatusRuntimeException throwable =
+        (StatusRuntimeException)
+            catchThrowable(
+                () ->
+                    managerApiStub.createPartition(
+                        ManagerApi.CreatePartitionRequest.newBuilder()
+                            .setPartitionId("1")
+                            .setMaxCapacity(250)
+                            .build()));
+
+    assertThat(throwable.getStatus().getCode()).isEqualTo(Status.INTERNAL.getCode());
+    assertThat(throwable.getStatus().getDescription()).contains("store failure");
+  }
+
+  @Test
   public void shouldRejectManualAssignmentWithUnknownPartitionIds() {
     String datasetName = "manualInvalidPartitionDataset";
     managerApiStub.createDatasetMetadata(
