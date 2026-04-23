@@ -102,6 +102,11 @@ public class LivePartitionState {
               partitionDedicatedOwner.putIfAbsent(partitionId, datasetMetadata.getName());
           if (existingDedicatedOwner != null
               && !existingDedicatedOwner.equals(datasetMetadata.getName())) {
+            // TODO(shard-autoassignment): with independently refreshed cached metadata lists, a
+            // rapid sequence of updates can transiently make this derived view look impossible even
+            // when the underlying writes are converging. Decide whether ListPartition /
+            // UpdatePartitionAssignment should keep failing closed here or degrade this into an
+            // operator-visible inconsistent-state marker.
             throw new InvalidPartitionAssignmentStateException(
                 "partition %s cannot be dedicated to multiple datasets".formatted(partitionId));
           }

@@ -16,6 +16,10 @@ public class LivePartitionStateLoader {
   }
 
   public List<LivePartitionState> loadAll() {
+    // TODO(shard-autoassignment): listSync() is cache-backed in the ZooKeeper path. Rapid
+    // back-to-back manager updates can therefore compute placement or render ListPartition from a
+    // stale global view even though manager RPC entrypoints are synchronized. Revisit whether this
+    // path needs a direct read or stronger coordination for correctness-sensitive callers.
     return LivePartitionState.fromMetadata(
         datasetMetadataStore.listSync(), partitionMetadataStore.listSync());
   }
