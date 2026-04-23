@@ -37,6 +37,7 @@ public final class PartitionAutoAssigner {
     List<LivePartitionState> statesWithoutSelf =
         PartitionAssignmentPolicy.liveStatesWithoutSelfContribution(
             datasetMetadata, currentIds, livePartitionStates);
+    validateNumericCandidateIds(datasetMetadata.getName(), statesWithoutSelf);
 
     List<LivePartitionState> sortedCandidates;
     String branchLabel;
@@ -101,6 +102,20 @@ public final class PartitionAutoAssigner {
     return Comparator.comparing(
             (LivePartitionState partition) -> currentIds.contains(partition.getPartitionID()))
         .reversed();
+  }
+
+  private static void validateNumericCandidateIds(
+      String datasetName, List<LivePartitionState> livePartitionStates) {
+    for (LivePartitionState livePartitionState : livePartitionStates) {
+      try {
+        PartitionIdOrdering.parseNumericPartitionId(livePartitionState.getPartitionID());
+      } catch (IllegalArgumentException e) {
+        throw new IllegalArgumentException(
+            "Dataset %s cannot use non-numeric partition ID: %s"
+                .formatted(datasetName, livePartitionState.getPartitionID()),
+            e);
+      }
+    }
   }
 
   private static ImmutableList<String> findSmallestSatisfyingAssignment(
