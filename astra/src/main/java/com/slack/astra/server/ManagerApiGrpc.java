@@ -481,6 +481,9 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
       ManagerApi.DeletePartitionRequest request,
       StreamObserver<ManagerApi.DeletePartitionResponse> responseObserver) {
     try {
+      Preconditions.checkArgument(
+          !request.getPartitionId().isBlank(), "Partition ID must not be blank");
+      PartitionIdOrdering.parseNumericPartitionId(request.getPartitionId());
       if (!partitionMetadataStore.hasSync(request.getPartitionId())) {
         String msg = "Partition with id '%s' does not exist".formatted(request.getPartitionId());
         responseObserver.onError(Status.NOT_FOUND.withDescription(msg).asException());
@@ -510,6 +513,10 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
       LOG.error("Error deleting partition", e);
       responseObserver.onError(e);
     } catch (Exception e) {
+    } catch (IllegalArgumentException e) {
+      LOG.error("Error deleting partition", e);
+      responseObserver.onError(
+          Status.INVALID_ARGUMENT.withDescription(e.getMessage()).asException());
       LOG.error("Error deleting partition", e);
       responseObserver.onError(Status.UNKNOWN.withDescription(e.getMessage()).asException());
     }

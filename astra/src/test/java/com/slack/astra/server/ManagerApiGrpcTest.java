@@ -1421,6 +1421,22 @@ public class ManagerApiGrpcTest {
   }
 
   @Test
+  public void shouldRejectDeletingPartitionWithNonNumericId() {
+    StatusRuntimeException throwable =
+        (StatusRuntimeException)
+            catchThrowable(
+                () ->
+                    managerApiStub.deletePartition(
+                        ManagerApi.DeletePartitionRequest.newBuilder()
+                            .setPartitionId("partition-a")
+                            .build()));
+
+    assertThat(throwable.getStatus().getCode()).isEqualTo(Status.INVALID_ARGUMENT.getCode());
+    assertThat(throwable.getStatus().getDescription())
+        .contains("Partition ID must be numeric: partition-a");
+  }
+
+  @Test
   public void shouldErrorUpdatingPartitionAssignmentNonexistentDataset() {
     String datasetName = "testDataset";
     List<String> partitionList = List.of("1", "2");
