@@ -223,9 +223,6 @@ public class Astra {
       DatasetMetadataStore datasetMetadataStore =
           new DatasetMetadataStore(
               curatorFramework, astraConfig.getMetadataStoreConfig(), meterRegistry, true);
-      PartitionMetadataStore partitionMetadataStore =
-          new PartitionMetadataStore(
-              curatorFramework, astraConfig.getMetadataStoreConfig(), meterRegistry, true);
 
       services.add(
           new CloseableLifecycleManager(
