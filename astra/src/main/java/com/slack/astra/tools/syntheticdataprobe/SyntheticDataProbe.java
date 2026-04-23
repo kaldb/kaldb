@@ -152,6 +152,7 @@ final class SyntheticDataProbe {
     ingestExecutor.shutdownNow();
     queryExecutor.shutdownNow();
     metricsServer.close();
+    httpClient.close();
     done.countDown();
   }
 
