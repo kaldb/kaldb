@@ -31,13 +31,6 @@ public final class PartitionAutoAssignmentPlanner {
       boolean requireDedicatedPartition,
       List<LivePartitionState> livePartitionStates,
       long minNumberOfPartitions) {
-    if (livePartitionStates.isEmpty()) {
-      throw Status.FAILED_PRECONDITION
-          .withDescription(
-              "Needed %d partitions with enough capacity, found 0".formatted(minNumberOfPartitions))
-          .asRuntimeException();
-    }
-
     Set<String> currentIds = ImmutableSet.copyOf(datasetMetadata.getActivePartitionIds());
     List<LivePartitionState> statesWithoutSelf =
         PartitionAssignmentConstraints.liveStatesWithoutSelfContribution(
