@@ -3,6 +3,7 @@ package com.slack.astra.tools.syntheticdataprobe;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.slack.astra.testlib.TestClocks.MutableClock;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
@@ -11,11 +12,8 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
-import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
-import java.time.ZoneId;
-import java.time.ZoneOffset;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import org.junit.jupiter.api.Test;
@@ -350,39 +348,6 @@ class SyntheticDataProbeTest {
     assertTrue(
         text.contains(expected),
         () -> "Expected text to contain:\n" + expected + "\nActual text:\n" + text);
-  }
-
-  private static final class MutableClock extends Clock {
-    private long epochMs;
-    private final ZoneId zone;
-
-    private MutableClock(Instant instant) {
-      this(instant, ZoneOffset.UTC);
-    }
-
-    private MutableClock(Instant instant, ZoneId zone) {
-      this.epochMs = instant.toEpochMilli();
-      this.zone = zone;
-    }
-
-    private void advance(Duration duration) {
-      epochMs += duration.toMillis();
-    }
-
-    @Override
-    public ZoneId getZone() {
-      return zone;
-    }
-
-    @Override
-    public Clock withZone(ZoneId zone) {
-      return new MutableClock(Instant.ofEpochMilli(epochMs), zone);
-    }
-
-    @Override
-    public Instant instant() {
-      return Instant.ofEpochMilli(epochMs);
-    }
   }
 
   private static final class FakeKaldbServer implements AutoCloseable {
