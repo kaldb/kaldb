@@ -40,6 +40,7 @@ class SyntheticDataProbeTest {
         assertContains(queryRequest, "test_run_id:\\\"run-1\\\"");
         assertContains(queryRequest, "hostname:\\\"target.example\\\"");
         assertContains(queryRequest, "\"_timesinceepoch\"");
+        assertContains(queryRequest, "\"fixed_interval\":\"1m\"");
         assertContains(queryRequest, "\"gte\":");
         assertContains(queryRequest, "\"lt\":");
 

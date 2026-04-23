@@ -381,7 +381,7 @@ final class SyntheticDataProbe {
             Map.of(
                 "date_histogram",
                 Map.of(
-                    "interval",
+                    "fixed_interval",
                     "1m",
                     "field",
                     "_timesinceepoch",
