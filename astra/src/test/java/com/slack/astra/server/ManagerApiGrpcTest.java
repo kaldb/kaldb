@@ -1942,7 +1942,7 @@ public class ManagerApiGrpcTest {
     long queryStartTime = 1000;
     long queryEndTime = 2000;
     String datasetName = "historicalDataset";
-    String historicalPartitionId = "historical-partition";
+    String historicalPartitionId = "42";
     SnapshotMetadata historicalSnapshot =
         new SnapshotMetadata("historical-snapshot", 1200, 1300, 0, historicalPartitionId, 111);
 
