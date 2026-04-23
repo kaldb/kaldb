@@ -133,7 +133,8 @@ public class LivePartitionState {
     } else {
       if (datasets.size() != 1 || !datasets.get(0).equals(dedicatedOwner)) {
         throw new InvalidPartitionAssignmentStateException(
-            "partition occupancy must be empty, shared, or dedicated to exactly one dataset");
+            "partition %s has inconsistent occupancy: dedicated owner %s but datasets %s"
+                .formatted(partitionMetadata.getPartitionId(), dedicatedOwner, datasets));
       }
       occupancy = new PartitionOccupancy.Dedicated(dedicatedOwner);
     }

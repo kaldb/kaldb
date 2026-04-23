@@ -145,6 +145,6 @@ public class LivePartitionStateTest {
                     List.of(new PartitionMetadata("1", 200))))
         .isInstanceOf(InvalidPartitionAssignmentStateException.class)
         .hasMessage(
-            "partition occupancy must be empty, shared, or dedicated to exactly one dataset");
+            "partition 1 has inconsistent occupancy: dedicated owner dedicated-dataset but datasets [dedicated-dataset, shared-dataset]");
   }
 }
