@@ -169,7 +169,8 @@ Armeria. Default-valued proto3 fields may be omitted from responses. In practice
                   "name": "example",
                   "throughputBytes": "4000000",
                   "partitionIds": [
-                    "0"
+                    "0",
+                    "1"
                   ]
                 }
             </sample>
