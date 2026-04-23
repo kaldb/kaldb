@@ -334,6 +334,9 @@ components:
         serviceNamePattern:
           type: string
           description: either same as name or a special value _all or * which matches all services
+        usingDedicatedPartitions:
+          type: boolean
+          description: True if this dataset requires dedicated partitions when auto assigning. This field may be omitted from JSON responses when false.
       description: Describes ownership, throughput, and partition mapping for a given dataset
     DatasetPartitionMetadata:
       type: object
@@ -426,6 +429,7 @@ components:
           type: string
         provisionedCapacity:
           type: string
+          description: Currently provisioned capacity on this partition. This field may be omitted from JSON responses when the value is 0.
         empty:
           $ref: '#/components/schemas/EmptyPartitionOccupancy'
         shared:

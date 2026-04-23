@@ -2,6 +2,11 @@
 
 API definitions for manager nodes, accessed via manager Docs service and admin tools.
 
+For unframed JSON requests and responses, this service follows the protobuf JSON encoding used by
+Armeria. Default-valued proto3 fields may be omitted from responses. In practice, that means:
+- `usingDedicatedPartitions` may be absent when it is `false`
+- `provisionedCapacity` may be absent when it is `0`
+
 <api-doc openapi-path="../api/manager_api.yaml">
     <api-endpoint endpoint="/slack.proto.astra.ManagerApiService/CreateDatasetMetadata" method="POST">
         <request>
@@ -239,7 +244,6 @@ API definitions for manager nodes, accessed via manager Docs service and admin t
                     {
                       "partitionId": "3",
                       "maxCapacity": "250",
-                      "provisionedCapacity": "0",
                       "empty": {}
                     }
                   ]
