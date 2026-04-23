@@ -10,13 +10,13 @@ design motivation and production monitoring model.
 
 Run it from a built KalDB image or local jar with:
 
-```
+```bash
 java --enable-preview -cp /astra.jar com.slack.astra.tools.syntheticdataprobe.SyntheticDataProbeMain
 ```
 
 Useful environment variables:
 
-```
+```bash
 KALDB_BULK_URL=http://ingest:8086/_bulk
 KALDB_QUERY_URL=http://query:8081/_msearch
 INDEX=logs
