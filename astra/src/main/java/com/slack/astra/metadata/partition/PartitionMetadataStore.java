@@ -33,7 +33,7 @@ public class PartitionMetadataStore extends AstraMetadataStore<PartitionMetadata
 
   public Set<String> listPartitionIdsSync() {
     return listSync().stream()
-        .map(PartitionMetadata::getPartitionID)
+        .map(PartitionMetadata::getPartitionId)
         .collect(ImmutableSet.toImmutableSet());
   }
 }

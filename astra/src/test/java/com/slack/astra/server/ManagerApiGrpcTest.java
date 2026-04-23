@@ -158,7 +158,7 @@ public class ManagerApiGrpcTest {
         .untilAsserted(
             () ->
                 assertThat(partitionMetadataStore.listSync())
-                    .extracting(PartitionMetadata::getPartitionID)
+                    .extracting(PartitionMetadata::getPartitionId)
                     .contains(partitionId));
     return createdPartition;
   }

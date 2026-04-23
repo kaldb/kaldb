@@ -15,7 +15,7 @@ public class PartitionMetadataSerializer implements MetadataSerializer<Partition
 
   public static Metadata.PartitionMetadata toPartitionMetadataProto(PartitionMetadata metadata) {
     return Metadata.PartitionMetadata.newBuilder()
-        .setPartitionId(metadata.getPartitionID())
+        .setPartitionId(metadata.getPartitionId())
         .setMaxCapacity(metadata.getMaxCapacity())
         .build();
   }

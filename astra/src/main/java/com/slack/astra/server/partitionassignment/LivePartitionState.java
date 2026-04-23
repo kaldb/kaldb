@@ -74,8 +74,8 @@ public class LivePartitionState {
     final Map<String, Long> partitionProvisioning = new HashMap<>();
     final Map<String, String> partitionDedicatedOwner = new HashMap<>();
     for (PartitionMetadata partitionMetadata : partitionMetadataList) {
-      partitionProvisioning.put(partitionMetadata.getPartitionID(), 0L);
-      partitionDatasets.put(partitionMetadata.getPartitionID(), new ArrayList<>());
+      partitionProvisioning.put(partitionMetadata.getPartitionId(), 0L);
+      partitionDatasets.put(partitionMetadata.getPartitionId(), new ArrayList<>());
     }
 
     for (DatasetMetadata datasetMetadata : datasetMetadataList) {
@@ -114,9 +114,9 @@ public class LivePartitionState {
             partitionMetadata ->
                 fromCurrentAssignments(
                     partitionMetadata,
-                    partitionProvisioning.get(partitionMetadata.getPartitionID()),
-                    partitionDatasets.get(partitionMetadata.getPartitionID()),
-                    partitionDedicatedOwner.get(partitionMetadata.getPartitionID())))
+                    partitionProvisioning.get(partitionMetadata.getPartitionId()),
+                    partitionDatasets.get(partitionMetadata.getPartitionId()),
+                    partitionDedicatedOwner.get(partitionMetadata.getPartitionId())))
         .toList();
   }
 
@@ -139,7 +139,7 @@ public class LivePartitionState {
     }
 
     return new LivePartitionState(
-        partitionMetadata.getPartitionID(),
+        partitionMetadata.getPartitionId(),
         provisionedCapacity,
         partitionMetadata.getMaxCapacity(),
         occupancy);

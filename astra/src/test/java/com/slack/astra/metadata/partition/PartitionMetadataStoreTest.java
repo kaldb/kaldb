@@ -53,19 +53,19 @@ public class PartitionMetadataStoreTest {
 
   @Test
   public void testPartitionMetadataStore() {
-    PartitionMetadata partitionMetadata = new PartitionMetadata("partition-a", 100);
+    PartitionMetadata partitionMetadata = new PartitionMetadata("1", 100);
 
-    assertThat(partitionMetadata.name).isEqualTo("partition-a");
-    assertThat(partitionMetadata.getPartitionID()).isEqualTo("partition-a");
+    assertThat(partitionMetadata.name).isEqualTo("1");
+    assertThat(partitionMetadata.getPartitionId()).isEqualTo("1");
     assertThat(partitionMetadata.getMaxCapacity()).isEqualTo(100);
 
     store.createSync(partitionMetadata);
 
     await().until(() -> store.listSync().size() == 1);
     assertThat(AstraMetadataTestUtils.listSyncUncached(store)).containsExactly(partitionMetadata);
-    assertThat(store.getSync("partition-a")).isEqualTo(partitionMetadata);
+    assertThat(store.getSync("1")).isEqualTo(partitionMetadata);
 
-    store.deleteSync("partition-a");
+    store.deleteSync("1");
 
     await().until(() -> store.listSync().isEmpty());
     assertThat(AstraMetadataTestUtils.listSyncUncached(store)).isEmpty();
