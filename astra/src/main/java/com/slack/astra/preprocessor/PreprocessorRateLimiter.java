@@ -151,15 +151,13 @@ public class PreprocessorRateLimiter {
         throughputSortedDatasets.stream()
             .map(
                 datasetMetadata -> {
-                  return datasetMetadata
-                      .getActivePartitionMetadata()
-                      .filter(ignored -> !datasetMetadata.getActivePartitionIds().isEmpty())
-                      .map(
-                          ignored ->
-                              MultiGauge.Row.of(
-                                  Tags.of(Tag.of("service", datasetMetadata.getName())),
-                                  datasetMetadata.getActivePerPartitionThroughput()))
-                      .orElse(null);
+                  if (datasetMetadata.getActivePartitionMetadata().isEmpty()
+                      || datasetMetadata.getActivePartitionIds().isEmpty()) {
+                    return null;
+                  }
+                  return MultiGauge.Row.of(
+                      Tags.of(Tag.of("service", datasetMetadata.getName())),
+                      datasetMetadata.getActivePerPartitionThroughput());
                 })
             .filter(Objects::nonNull)
             .collect(Collectors.toUnmodifiableList()),
