@@ -2,6 +2,7 @@ package com.slack.astra.server.partitionassignment;
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
 import com.slack.astra.metadata.dataset.DatasetMetadata;
 import com.slack.astra.metadata.dataset.DatasetMetadataStore;
 import com.slack.astra.metadata.dataset.DatasetPartitionMetadata;
@@ -231,7 +232,8 @@ public class PartitionAssignmentUpdater {
         datasetMetadata.getInactivePartitionMetadata();
 
     if (previousActiveDatasetPartition.isPresent()
-        && previousActiveDatasetPartition.get().getPartitions().equals(newPartitionIdsList)) {
+        && ImmutableSet.copyOf(previousActiveDatasetPartition.get().getPartitions())
+            .equals(ImmutableSet.copyOf(newPartitionIdsList))) {
       return ImmutableList.copyOf(existingPartitions);
     }
 

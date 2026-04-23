@@ -33,4 +33,36 @@ public class PartitionAssignmentUpdaterTest {
             new DatasetPartitionMetadata(1001, 1002, List.of("2")),
             DatasetPartitionMetadata.createActive(1003, List.of("3")));
   }
+
+  @Test
+  public void shouldPreservePartitionHistoryWhenAssignmentDoesNotChange() {
+    DatasetMetadata existingDatasetMetadata =
+        new DatasetMetadata(
+            "dataset",
+            "owner",
+            10,
+            List.of(DatasetPartitionMetadata.createActive(1001, List.of("2", "3"))),
+            DatasetMetadata.MATCH_ALL_SERVICE);
+
+    assertThat(
+            PartitionAssignmentUpdater.rolloverActivePartitionAssignment(
+                existingDatasetMetadata, List.of("2", "3"), 2000))
+        .isEqualTo(existingDatasetMetadata.getPartitionConfigs());
+  }
+
+  @Test
+  public void shouldPreservePartitionHistoryWhenAssignmentMembershipOnlyReorders() {
+    DatasetMetadata existingDatasetMetadata =
+        new DatasetMetadata(
+            "dataset",
+            "owner",
+            10,
+            List.of(DatasetPartitionMetadata.createActive(1001, List.of("2", "3"))),
+            DatasetMetadata.MATCH_ALL_SERVICE);
+
+    assertThat(
+            PartitionAssignmentUpdater.rolloverActivePartitionAssignment(
+                existingDatasetMetadata, List.of("3", "2"), 2000))
+        .isEqualTo(existingDatasetMetadata.getPartitionConfigs());
+  }
 }
