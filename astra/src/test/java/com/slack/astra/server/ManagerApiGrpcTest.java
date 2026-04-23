@@ -6,10 +6,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 import brave.Tracing;
 import com.slack.astra.clusterManager.ReplicaRestoreService;
@@ -1152,7 +1155,15 @@ public class ManagerApiGrpcTest {
                           .setRequireDedicatedPartition(true)
                           .build()));
 
-      assertThat(secondDatasetUpdateStarted.await(250, TimeUnit.MILLISECONDS)).isFalse();
+      await()
+          .untilAsserted(
+              () -> {
+                verify(datasetMetadataStore, times(1)).updateSync(any(DatasetMetadata.class));
+                verify(datasetMetadataStore)
+                    .updateSync(argThat(dataset -> dataset.getName().equals(firstDatasetName)));
+                verify(datasetMetadataStore, times(0))
+                    .updateSync(argThat(dataset -> dataset.getName().equals(secondDatasetName)));
+              });
       releaseFirstDatasetUpdate.countDown();
 
       assertThat(firstAssignment.get(5, TimeUnit.SECONDS).getAssignedPartitionIdsList())
