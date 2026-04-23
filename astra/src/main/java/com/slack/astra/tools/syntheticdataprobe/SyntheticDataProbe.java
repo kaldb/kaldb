@@ -2,16 +2,15 @@ package com.slack.astra.tools.syntheticdataprobe;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpServer;
+import com.linecorp.armeria.common.HttpStatus;
+import com.linecorp.armeria.common.MediaType;
+import com.linecorp.armeria.server.Server;
 import java.io.IOException;
-import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -38,6 +37,8 @@ final class SyntheticDataProbe {
   private static final long NO_COVERED_BUCKET = Long.MIN_VALUE;
   private static final String AGGREGATION_NAME = "per_minute";
   private static final String METRIC_PREFIX = "kaldb_synthetic_data_probe_";
+  private static final MediaType PROMETHEUS_TEXT_MEDIA_TYPE =
+      MediaType.parse("text/plain; version=0.0.4; charset=utf-8");
 
   private final Config config;
   private final Clock clock;
@@ -60,7 +61,7 @@ final class SyntheticDataProbe {
   private final AtomicLong lastCoveredBucketStartMs;
   private final ScheduledExecutorService ingestExecutor;
   private final ScheduledExecutorService queryExecutor;
-  private final HttpServer metricsServer;
+  private final Server metricsServer;
   private final CountDownLatch done;
   private final String filler;
   private volatile boolean stopped;
@@ -100,9 +101,11 @@ final class SyntheticDataProbe {
         Executors.newSingleThreadScheduledExecutor(
             r -> new Thread(r, "kaldb-synthetic-data-probe-query"));
     this.metricsServer =
-        HttpServer.create(new InetSocketAddress(config.metricsHost(), config.metricsPort()), 0);
-    this.metricsServer.createContext("/metrics", this::handleMetricsRequest);
-    this.metricsServer.createContext("/readyz", this::handleReadyRequest);
+        Server.builder()
+            .http(new InetSocketAddress(config.metricsHost(), config.metricsPort()))
+            .service("/metrics", (ctx, req) -> metricsResponse())
+            .service("/readyz", (ctx, req) -> readyResponse())
+            .build();
     this.done = new CountDownLatch(1);
     this.filler = "x".repeat(config.messageBytes());
   }
@@ -130,7 +133,7 @@ final class SyntheticDataProbe {
         config.oldestCheckedBucketAgeMinutes(),
         config.maxCatchupBucketsPerCycle());
 
-    metricsServer.start();
+    metricsServer.start().join();
     var unusedIngestTask =
         ingestExecutor.scheduleWithFixedDelay(
             this::safeIngestCycle, 0L, config.ingestInterval().toMillis(), TimeUnit.MILLISECONDS);
@@ -146,9 +149,9 @@ final class SyntheticDataProbe {
       return;
     }
     stopped = true;
-    metricsServer.stop(0);
     ingestExecutor.shutdownNow();
     queryExecutor.shutdownNow();
+    metricsServer.close();
     done.countDown();
   }
 
@@ -405,22 +408,17 @@ final class SyntheticDataProbe {
     return httpClient.send(request, HttpResponse.BodyHandlers.ofString());
   }
 
-  private void handleReadyRequest(HttpExchange exchange) throws IOException {
-    byte[] body = (windowReady() ? "ready\n" : "warming\n").getBytes(StandardCharsets.UTF_8);
-    exchange.getResponseHeaders().set("Content-Type", "text/plain; charset=utf-8");
-    exchange.sendResponseHeaders(windowReady() ? 200 : 503, body.length);
-    try (OutputStream outputStream = exchange.getResponseBody()) {
-      outputStream.write(body);
-    }
+  private com.linecorp.armeria.common.HttpResponse readyResponse() {
+    boolean ready = windowReady();
+    return com.linecorp.armeria.common.HttpResponse.of(
+        ready ? HttpStatus.OK : HttpStatus.SERVICE_UNAVAILABLE,
+        MediaType.PLAIN_TEXT_UTF_8,
+        ready ? "ready\n" : "warming\n");
   }
 
-  private void handleMetricsRequest(HttpExchange exchange) throws IOException {
-    byte[] body = buildMetricsPayload().getBytes(StandardCharsets.UTF_8);
-    exchange.getResponseHeaders().set("Content-Type", "text/plain; version=0.0.4; charset=utf-8");
-    exchange.sendResponseHeaders(200, body.length);
-    try (OutputStream outputStream = exchange.getResponseBody()) {
-      outputStream.write(body);
-    }
+  private com.linecorp.armeria.common.HttpResponse metricsResponse() {
+    return com.linecorp.armeria.common.HttpResponse.of(
+        HttpStatus.OK, PROMETHEUS_TEXT_MEDIA_TYPE, buildMetricsPayload());
   }
 
   String buildMetricsPayload() {
