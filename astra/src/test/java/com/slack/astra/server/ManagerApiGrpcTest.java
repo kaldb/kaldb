@@ -1484,33 +1484,31 @@ public class ManagerApiGrpcTest {
             ManagerApi.ListDatasetMetadataRequest.newBuilder().build());
 
     assertThat(
-
-  @Test
-  public void shouldRejectManualAssignmentWithNonNumericPartitionIds() {
-    String datasetName = "manualNonNumericPartitionDataset";
-    managerApiStub.createDatasetMetadata(
-        ManagerApi.CreateDatasetMetadataRequest.newBuilder()
-            .setName(datasetName)
-            .setOwner("owner")
-            .build());
-    createPartition("1", 100);
-
-    StatusRuntimeException throwable =
-        (StatusRuntimeException)
-            catchThrowable(
-                () ->
-                    managerApiStub.updatePartitionAssignment(
-                        ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
-                            .setName(datasetName)
-                            .setThroughputBytes(50)
-                            .addAllPartitionIds(List.of("1", "partition-a"))
-                            .build()));
-
-    assertThat(throwable.getStatus().getCode()).isEqualTo(Status.INVALID_ARGUMENT.getCode());
-    assertThat(throwable.getStatus().getDescription())
-        .contains("Requested partition IDs must be numeric: [partition-a]");
-  }
         listDatasetMetadataResponse
+            .getDatasetMetadataList()
+            .containsAll(
+                List.of(
+                    Metadata.DatasetMetadata.newBuilder()
+                        .setName(datasetName1)
+                        .setOwner(datasetOwner1)
+                        .setThroughputBytes(0)
+                        .build(),
+                    Metadata.DatasetMetadata.newBuilder()
+                        .setName(datasetName2)
+                        .setOwner(datasetOwner2)
+                        .setThroughputBytes(0)
+                        .build())));
+
+    assertThat(AstraMetadataTestUtils.listSyncUncached(datasetMetadataStore).size()).isEqualTo(2);
+    assertThat(
+        AstraMetadataTestUtils.listSyncUncached(datasetMetadataStore)
+            .containsAll(
+                List.of(
+                    new DatasetMetadata(
+                        datasetName1, datasetOwner1, 0, Collections.emptyList(), datasetName1),
+                    new DatasetMetadata(
+                        datasetName2, datasetOwner2, 0, Collections.emptyList(), datasetName2))));
+  }
 
   @Test
   public void shouldRejectNegativeThroughputValuesOtherThanPreserveSentinel() {
@@ -1537,29 +1535,31 @@ public class ManagerApiGrpcTest {
     assertThat(throwable.getStatus().getDescription())
         .contains("throughputBytes must be non-negative or the preserve sentinel (-1), got -2");
   }
-            .getDatasetMetadataList()
-            .containsAll(
-                List.of(
-                    Metadata.DatasetMetadata.newBuilder()
-                        .setName(datasetName1)
-                        .setOwner(datasetOwner1)
-                        .setThroughputBytes(0)
-                        .build(),
-                    Metadata.DatasetMetadata.newBuilder()
-                        .setName(datasetName2)
-                        .setOwner(datasetOwner2)
-                        .setThroughputBytes(0)
-                        .build())));
 
-    assertThat(AstraMetadataTestUtils.listSyncUncached(datasetMetadataStore).size()).isEqualTo(2);
-    assertThat(
-        AstraMetadataTestUtils.listSyncUncached(datasetMetadataStore)
-            .containsAll(
-                List.of(
-                    new DatasetMetadata(
-                        datasetName1, datasetOwner1, 0, Collections.emptyList(), datasetName1),
-                    new DatasetMetadata(
-                        datasetName2, datasetOwner2, 0, Collections.emptyList(), datasetName2))));
+  @Test
+  public void shouldRejectManualAssignmentWithNonNumericPartitionIds() {
+    String datasetName = "manualNonNumericPartitionDataset";
+    managerApiStub.createDatasetMetadata(
+        ManagerApi.CreateDatasetMetadataRequest.newBuilder()
+            .setName(datasetName)
+            .setOwner("owner")
+            .build());
+    createPartition("1", 100);
+
+    StatusRuntimeException throwable =
+        (StatusRuntimeException)
+            catchThrowable(
+                () ->
+                    managerApiStub.updatePartitionAssignment(
+                        ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
+                            .setName(datasetName)
+                            .setThroughputBytes(50)
+                            .addAllPartitionIds(List.of("1", "partition-a"))
+                            .build()));
+
+    assertThat(throwable.getStatus().getCode()).isEqualTo(Status.INVALID_ARGUMENT.getCode());
+    assertThat(throwable.getStatus().getDescription())
+        .contains("Requested partition IDs must be numeric: [partition-a]");
   }
 
   @Test
