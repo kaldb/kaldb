@@ -516,7 +516,7 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
   }
 
   @Override
-  public synchronized void listPartition(
+  public void listPartition(
       ManagerApi.ListPartitionRequest request,
       StreamObserver<ManagerApi.ListPartitionMetadataResponse> responseObserver) {
     try {
