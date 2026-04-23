@@ -25,7 +25,6 @@ import com.slack.astra.proto.manager_api.ManagerApiServiceGrpc;
 import com.slack.astra.proto.metadata.Metadata;
 import com.slack.astra.server.partitionassignment.InvalidPartitionAssignmentStateException;
 import com.slack.astra.server.partitionassignment.LivePartitionState;
-import com.slack.astra.server.partitionassignment.LivePartitionStateLoader;
 import com.slack.astra.server.partitionassignment.PartitionAssignmentUpdater;
 import com.slack.astra.server.partitionassignment.PartitionAssignmentUpdater.DedicatedPartitionModeOverride;
 import com.slack.astra.server.partitionassignment.PartitionIdOrdering;
@@ -62,7 +61,6 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
   private final ReplicaRestoreService replicaRestoreService;
   private final FieldRedactionMetadataStore fieldRedactionMetadataStore;
   private final PartitionMetadataStore partitionMetadataStore;
-  private final LivePartitionStateLoader livePartitionStateLoader;
   private final PartitionAssignmentUpdater partitionAssignmentUpdater;
 
   public ManagerApiGrpc(
@@ -78,14 +76,9 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
     this.fieldRedactionMetadataStore = fieldRedactionMetadataStore;
     this.partitionMetadataStore =
         Objects.requireNonNull(partitionMetadataStore, "partitionMetadataStore");
-    this.livePartitionStateLoader =
-        new LivePartitionStateLoader(datasetMetadataStore, this.partitionMetadataStore);
     this.partitionAssignmentUpdater =
         new PartitionAssignmentUpdater(
-            datasetMetadataStore,
-            this.partitionMetadataStore,
-            livePartitionStateLoader,
-            minNumberOfPartitions);
+            datasetMetadataStore, this.partitionMetadataStore, minNumberOfPartitions);
   }
 
   /** Initializes a new dataset in the metadata store with no initial allocated capacity */
@@ -534,7 +527,7 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
       responseObserver.onNext(
           ManagerApi.ListPartitionMetadataResponse.newBuilder()
               .addAllPartitionMetadata(
-                  livePartitionStateLoader.loadAll().stream()
+                  partitionAssignmentUpdater.loadLivePartitionStates().stream()
                       .map(ManagerApiGrpc::toLivePartitionStateProto)
                       .toList())
               .build());

@@ -2,8 +2,10 @@ package com.slack.astra.server.partitionassignment;
 
 import com.google.common.collect.ImmutableList;
 import com.slack.astra.metadata.dataset.DatasetMetadata;
+import com.slack.astra.metadata.dataset.DatasetMetadataStore;
 import com.slack.astra.metadata.dataset.DatasetPartitionMetadata;
 import com.slack.astra.metadata.partition.PartitionMetadata;
+import com.slack.astra.metadata.partition.PartitionMetadataStore;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -66,6 +68,15 @@ public class LivePartitionState {
 
   public long getAvailableCapacity() {
     return maxCapacity - provisionedCapacity;
+  }
+
+  static List<LivePartitionState> loadAll(
+      DatasetMetadataStore datasetMetadataStore, PartitionMetadataStore partitionMetadataStore) {
+    // TODO(shard-autoassignment): listSync() is cache-backed in the ZooKeeper path. Rapid
+    // back-to-back manager updates can therefore compute placement or render ListPartition from a
+    // stale global view even though manager RPC entrypoints are synchronized. Revisit whether this
+    // path needs a direct read or stronger coordination for correctness-sensitive callers.
+    return fromMetadata(datasetMetadataStore.listSync(), partitionMetadataStore.listSync());
   }
 
   public static List<LivePartitionState> fromMetadata(

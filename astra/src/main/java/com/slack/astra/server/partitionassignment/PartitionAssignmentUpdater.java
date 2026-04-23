@@ -38,19 +38,16 @@ public class PartitionAssignmentUpdater {
 
   private final DatasetMetadataStore datasetMetadataStore;
   private final PartitionMetadataStore partitionMetadataStore;
-  private final LivePartitionStateLoader livePartitionStateLoader;
   private final int minNumberOfPartitions;
 
   public PartitionAssignmentUpdater(
       DatasetMetadataStore datasetMetadataStore,
       PartitionMetadataStore partitionMetadataStore,
-      LivePartitionStateLoader livePartitionStateLoader,
       int minNumberOfPartitions) {
     Preconditions.checkArgument(
         minNumberOfPartitions > 0, "minNumberOfPartitions must be greater than 0");
     this.datasetMetadataStore = datasetMetadataStore;
     this.partitionMetadataStore = partitionMetadataStore;
-    this.livePartitionStateLoader = livePartitionStateLoader;
     this.minNumberOfPartitions = minNumberOfPartitions;
   }
 
@@ -130,7 +127,7 @@ public class PartitionAssignmentUpdater {
             effectiveThroughputBytes,
             useDedicatedPartitions,
             requestedPartitionIds,
-            livePartitionStateLoader.loadAll(),
+            loadLivePartitionStates(),
             minNumberOfPartitions);
         yield requestedPartitionIds;
       }
@@ -150,13 +147,17 @@ public class PartitionAssignmentUpdater {
             existingDatasetMetadata,
             effectiveThroughputBytes,
             useDedicatedPartitions,
-            livePartitionStateLoader.loadAll(),
+            loadLivePartitionStates(),
             minNumberOfPartitions);
     LOG.info(
         "Auto-assigning partitions for {} to : {}",
         existingDatasetMetadata.getName(),
         autoAssigned);
     return autoAssigned;
+  }
+
+  public List<LivePartitionState> loadLivePartitionStates() {
+    return LivePartitionState.loadAll(datasetMetadataStore, partitionMetadataStore);
   }
 
   private void persistAssignment(
