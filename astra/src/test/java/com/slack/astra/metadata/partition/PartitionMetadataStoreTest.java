@@ -46,9 +46,9 @@ public class PartitionMetadataStoreTest {
   @AfterEach
   public void tearDown() throws IOException {
     if (store != null) store.close();
-    curatorFramework.unwrap().close();
-    testingServer.close();
-    meterRegistry.close();
+    if (curatorFramework != null) curatorFramework.unwrap().close();
+    if (testingServer != null) testingServer.close();
+    if (meterRegistry != null) meterRegistry.close();
   }
 
   @Test
