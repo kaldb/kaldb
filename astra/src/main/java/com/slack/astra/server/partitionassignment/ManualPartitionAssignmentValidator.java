@@ -1,21 +1,19 @@
 package com.slack.astra.server.partitionassignment;
 
 import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.ImmutableSet;
 import com.slack.astra.metadata.dataset.DatasetMetadata;
 import io.grpc.Status;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 /**
- * Shared assignment rules used by both manual validation and auto-assignment planning.
+ * Validates explicit partition selections supplied by manual assignment requests.
  *
- * <p>This class answers "can this dataset use these partition IDs right now?" and exposes the
- * helper calculations both paths need. It does not choose partitions or persist updates.
+ * <p>This class is manual-assignment only. It answers "can the user-requested partition list be
+ * applied right now?" but does not choose partitions or persist metadata.
  */
-public final class PartitionAssignmentRules {
-  private PartitionAssignmentRules() {}
+public final class ManualPartitionAssignmentValidator {
+  private ManualPartitionAssignmentValidator() {}
 
   public static void validateManualSelection(
       DatasetMetadata datasetMetadata,
@@ -33,19 +31,22 @@ public final class PartitionAssignmentRules {
           .asRuntimeException();
     }
 
-    Set<String> currentIds = ImmutableSet.copyOf(datasetMetadata.getActivePartitionIds());
     Map<String, LivePartitionState> statesById =
-        liveStatesWithoutSelfContribution(datasetMetadata, currentIds, livePartitionStates).stream()
+        PartitionAssignmentConstraints.liveStatesWithoutSelfContribution(
+                datasetMetadata, livePartitionStates)
+            .stream()
             .collect(
                 ImmutableMap.toImmutableMap(
-                    LivePartitionState::getPartitionID, partitionState -> partitionState));
-    long demandPerPartition = perPartitionDemand(throughputBytes, requestedPartitionIds.size());
+                    LivePartitionState::partitionId, partitionState -> partitionState));
+    long demandPerPartition =
+        PartitionAssignmentConstraints.perPartitionDemand(
+            throughputBytes, requestedPartitionIds.size());
 
     List<String> invalidPartitionIds =
         requestedPartitionIds.stream()
             .filter(
                 partitionId ->
-                    !supportsRequestedAssignment(
+                    !supportsManualSelection(
                         statesById.get(partitionId),
                         datasetMetadata.getName(),
                         requireDedicatedPartition,
@@ -63,35 +64,7 @@ public final class PartitionAssignmentRules {
     }
   }
 
-  static long perPartitionDemand(long totalThroughput, long partitionCount) {
-    return Math.ceilDiv(totalThroughput, partitionCount);
-  }
-
-  static List<LivePartitionState> liveStatesWithoutSelfContribution(
-      DatasetMetadata datasetMetadata,
-      Set<String> currentIds,
-      List<LivePartitionState> livePartitionStates) {
-    long currentPerPartitionThroughput = datasetMetadata.getActivePerPartitionThroughput();
-    return livePartitionStates.stream()
-        .map(
-            partition -> {
-              if (currentIds.contains(partition.getPartitionID())) {
-                return new LivePartitionState(
-                    partition.getPartitionID(),
-                    Math.max(0, partition.getProvisionedCapacity() - currentPerPartitionThroughput),
-                    partition.getMaxCapacity(),
-                    partition.getOccupancy());
-              }
-              return partition;
-            })
-        .toList();
-  }
-
-  static boolean canUseForDedicatedAssignment(LivePartitionState partition, String datasetName) {
-    return partition.isExclusivelyUsedBy(datasetName) || partition.isEmpty();
-  }
-
-  private static boolean supportsRequestedAssignment(
+  private static boolean supportsManualSelection(
       LivePartitionState partition,
       String datasetName,
       boolean requireDedicatedPartition,
@@ -99,7 +72,7 @@ public final class PartitionAssignmentRules {
     return partition != null
         && partition.getAvailableCapacity() >= demandPerPartition
         && (requireDedicatedPartition
-            ? canUseForDedicatedAssignment(partition, datasetName)
+            ? PartitionAssignmentConstraints.canUseForDedicatedAssignment(partition, datasetName)
             : partition.canUseForSharedAssignment(datasetName));
   }
 }

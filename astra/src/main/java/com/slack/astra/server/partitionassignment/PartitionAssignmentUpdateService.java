@@ -122,18 +122,18 @@ public class PartitionAssignmentUpdateService {
           autoAssignPartitions(
               existingDatasetMetadata, effectiveThroughputBytes, useDedicatedPartitions);
       case MANUAL -> {
-        LOG.info(
-            "Manually assigning partitions for {} to : {}",
-            existingDatasetMetadata.getName(),
-            requestedPartitionIds);
         validateRequestedPartitionIds(requestedPartitionIds);
-        PartitionAssignmentRules.validateManualSelection(
+        ManualPartitionAssignmentValidator.validateManualSelection(
             existingDatasetMetadata,
             effectiveThroughputBytes,
             useDedicatedPartitions,
             requestedPartitionIds,
             listLivePartitionStates(),
             minNumberOfPartitions);
+        LOG.info(
+            "Manually assigning partitions for {} to : {}",
+            existingDatasetMetadata.getName(),
+            requestedPartitionIds);
         yield requestedPartitionIds;
       }
     };
@@ -148,7 +148,7 @@ public class PartitionAssignmentUpdateService {
       long effectiveThroughputBytes,
       boolean useDedicatedPartitions) {
     List<String> autoAssigned =
-        AutoPartitionAssignmentPlanner.planAutoAssignment(
+        PartitionAutoAssignmentPlanner.planAutoAssignment(
             existingDatasetMetadata,
             effectiveThroughputBytes,
             useDedicatedPartitions,

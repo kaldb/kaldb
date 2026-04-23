@@ -24,22 +24,6 @@ public record LivePartitionState(
     Objects.requireNonNull(occupancy, "occupancy");
   }
 
-  public String getPartitionID() {
-    return partitionId;
-  }
-
-  public long getProvisionedCapacity() {
-    return provisionedCapacity;
-  }
-
-  public long getMaxCapacity() {
-    return maxCapacity;
-  }
-
-  public PartitionOccupancy getOccupancy() {
-    return occupancy;
-  }
-
   public boolean isEmpty() {
     return occupancy.isEmpty();
   }

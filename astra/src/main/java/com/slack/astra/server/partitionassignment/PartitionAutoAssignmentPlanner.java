@@ -17,13 +17,13 @@ import org.slf4j.LoggerFactory;
  * <p>This class is auto-assignment only. It does not validate explicit user-selected partitions or
  * persist metadata updates.
  */
-public final class AutoPartitionAssignmentPlanner {
-  private static final Logger LOG = LoggerFactory.getLogger(AutoPartitionAssignmentPlanner.class);
+public final class PartitionAutoAssignmentPlanner {
+  private static final Logger LOG = LoggerFactory.getLogger(PartitionAutoAssignmentPlanner.class);
 
   private static final String DEDICATED_BRANCH_LABEL = "dedicated proposal";
   private static final String SHARED_BRANCH_LABEL = "proposal";
 
-  private AutoPartitionAssignmentPlanner() {}
+  private PartitionAutoAssignmentPlanner() {}
 
   public static ImmutableList<String> planAutoAssignment(
       DatasetMetadata datasetMetadata,
@@ -40,8 +40,8 @@ public final class AutoPartitionAssignmentPlanner {
 
     Set<String> currentIds = ImmutableSet.copyOf(datasetMetadata.getActivePartitionIds());
     List<LivePartitionState> statesWithoutSelf =
-        PartitionAssignmentRules.liveStatesWithoutSelfContribution(
-            datasetMetadata, currentIds, livePartitionStates);
+        PartitionAssignmentConstraints.liveStatesWithoutSelfContribution(
+            datasetMetadata, livePartitionStates);
     validateNumericCandidateIds(datasetMetadata.getName(), statesWithoutSelf);
 
     List<LivePartitionState> sortedCandidates;
@@ -63,7 +63,7 @@ public final class AutoPartitionAssignmentPlanner {
     Comparator<LivePartitionState> byAvailableCapacityThenId =
         Comparator.comparing(LivePartitionState::getAvailableCapacity)
             .thenComparing(
-                LivePartitionState::getPartitionID, PartitionIdOrdering.numericComparator());
+                LivePartitionState::partitionId, PartitionIdOrdering.numericComparator());
     List<LivePartitionState> reusable =
         statesWithoutSelf.stream()
             .filter(partition -> partition.isExclusivelyUsedBy(datasetMetadata.getName()))
@@ -78,8 +78,8 @@ public final class AutoPartitionAssignmentPlanner {
         Stream.concat(reusable.stream(), empty.stream()).toList();
     LOG.debug(
         "current empty partitions: {}, list to pull from {}",
-        empty.stream().map(LivePartitionState::getPartitionID).toList(),
-        sortedCandidates.stream().map(LivePartitionState::getPartitionID).toList());
+        empty.stream().map(LivePartitionState::partitionId).toList(),
+        sortedCandidates.stream().map(LivePartitionState::partitionId).toList());
     return sortedCandidates;
   }
 
@@ -94,18 +94,17 @@ public final class AutoPartitionAssignmentPlanner {
                 preferCurrentAssignment(currentIds)
                     .thenComparing(LivePartitionState::getAvailableCapacity)
                     .thenComparing(
-                        LivePartitionState::getPartitionID,
-                        PartitionIdOrdering.numericComparator()))
+                        LivePartitionState::partitionId, PartitionIdOrdering.numericComparator()))
             .toList();
     LOG.debug(
         "partitions sorted: {}",
-        sortedCandidates.stream().map(LivePartitionState::getPartitionID).toList());
+        sortedCandidates.stream().map(LivePartitionState::partitionId).toList());
     return sortedCandidates;
   }
 
   private static Comparator<LivePartitionState> preferCurrentAssignment(Set<String> currentIds) {
     return Comparator.comparing(
-            (LivePartitionState partition) -> currentIds.contains(partition.getPartitionID()))
+            (LivePartitionState partition) -> currentIds.contains(partition.partitionId()))
         .reversed();
   }
 
@@ -113,11 +112,11 @@ public final class AutoPartitionAssignmentPlanner {
       String datasetName, List<LivePartitionState> livePartitionStates) {
     for (LivePartitionState livePartitionState : livePartitionStates) {
       try {
-        PartitionIdOrdering.parseNumericPartitionId(livePartitionState.getPartitionID());
+        PartitionIdOrdering.parseNumericPartitionId(livePartitionState.partitionId());
       } catch (IllegalArgumentException e) {
         throw new IllegalArgumentException(
-            "Dataset %s cannot use non-numeric partition ID: %s"
-                .formatted(datasetName, livePartitionState.getPartitionID()),
+            "Dataset %s cannot use invalid partition ID: %s"
+                .formatted(datasetName, livePartitionState.partitionId()),
             e);
       }
     }
@@ -130,7 +129,7 @@ public final class AutoPartitionAssignmentPlanner {
       String branchLabel) {
     if (sortedCandidates.size() < minPartitionCount) {
       List<String> candidateIds =
-          sortedCandidates.stream().map(LivePartitionState::getPartitionID).toList();
+          sortedCandidates.stream().map(LivePartitionState::partitionId).toList();
       throw Status.FAILED_PRECONDITION
           .withDescription(
               "%s not enough candidate partitions: needed %d, available %d: %s"
@@ -143,13 +142,13 @@ public final class AutoPartitionAssignmentPlanner {
         targetPartitionCount <= sortedCandidates.size();
         targetPartitionCount++) {
       final long demandPerPartition =
-          PartitionAssignmentRules.perPartitionDemand(throughputBytes, targetPartitionCount);
+          PartitionAssignmentConstraints.perPartitionDemand(throughputBytes, targetPartitionCount);
       final long targetCount = targetPartitionCount;
       bestAttempt =
           sortedCandidates.stream()
               .filter(p -> p.getAvailableCapacity() >= demandPerPartition)
               .limit(targetCount)
-              .map(LivePartitionState::getPartitionID)
+              .map(LivePartitionState::partitionId)
               .collect(ImmutableList.toImmutableList());
       LOG.debug(
           "{} for partition count: {}, per partition throughput: {}, proposal: {}",
