@@ -33,8 +33,8 @@ service ManagerApiService {
   // Delete Partition in partition map
   rpc DeletePartition(DeletePartitionRequest) returns (DeletePartitionResponse) {}
 
-  // List partitions used by Astra along with usage metadata
-  rpc ListPartition(ListPartitionRequest) returns (ListPartitionMetadataResponse) {}
+  // ListPartitionMetadata returns partitions used by Astra along with usage metadata
+  rpc ListPartitionMetadata(ListPartitionRequest) returns (ListPartitionMetadataResponse) {}
 
   // CreateFieldRedaction initializes a new field redaction with a name and time range window
   rpc CreateFieldRedaction(CreateFieldRedactionRequest) returns (RedactedFieldMetadata) {}

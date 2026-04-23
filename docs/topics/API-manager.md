@@ -219,7 +219,7 @@ Armeria. Default-valued proto3 fields may be omitted from responses. In practice
             </sample>
         </response>
     </api-endpoint>
-    <api-endpoint endpoint="/slack.proto.astra.ManagerApiService/ListPartition" method="POST">
+    <api-endpoint endpoint="/slack.proto.astra.ManagerApiService/ListPartitionMetadata" method="POST">
         <response type="200">
             <sample lang="JSON">
                 {

@@ -538,7 +538,8 @@ public class ManagerApiGrpcTest {
     assertThat(createdPartition.getMaxCapacity()).isEqualTo(250);
 
     ManagerApi.ListPartitionMetadataResponse listPartitionResponse =
-        managerApiStub.listPartition(ManagerApi.ListPartitionRequest.newBuilder().build());
+        managerApiStub.listPartitionMetadata(
+            ManagerApi.ListPartitionRequest.newBuilder().build());
     assertThat(listPartitionResponse.getPartitionMetadataList()).hasSize(1);
     assertThat(listPartitionResponse.getPartitionMetadata(0).getPartitionId()).isEqualTo("1");
     assertThat(listPartitionResponse.getPartitionMetadata(0).getMaxCapacity()).isEqualTo(250);
@@ -554,7 +555,7 @@ public class ManagerApiGrpcTest {
         .untilAsserted(
             () -> {
               ManagerApi.ListPartitionMetadataResponse listAfterDeleteResponse =
-                  managerApiStub.listPartition(
+                  managerApiStub.listPartitionMetadata(
                       ManagerApi.ListPartitionRequest.newBuilder().build());
               assertThat(listAfterDeleteResponse.getPartitionMetadataList()).isEmpty();
             });
@@ -875,7 +876,8 @@ public class ManagerApiGrpcTest {
     assertThat(datasetMetadata.get().getActivePerPartitionThroughput()).isEqualTo(50);
 
     ManagerApi.ListPartitionMetadataResponse listPartitionResponse =
-        managerApiStub.listPartition(ManagerApi.ListPartitionRequest.newBuilder().build());
+        managerApiStub.listPartitionMetadata(
+            ManagerApi.ListPartitionRequest.newBuilder().build());
     Map<String, ManagerApi.LivePartitionState> partitionsById =
         livePartitionStateById(listPartitionResponse);
     assertThat(partitionsById.keySet()).containsExactlyInAnyOrder("1", "2", "3");
@@ -995,7 +997,8 @@ public class ManagerApiGrpcTest {
     assertThat(dedicatedDatasetMetadata.get().getActivePerPartitionThroughput()).isEqualTo(75);
 
     ManagerApi.ListPartitionMetadataResponse listPartitionResponse =
-        managerApiStub.listPartition(ManagerApi.ListPartitionRequest.newBuilder().build());
+        managerApiStub.listPartitionMetadata(
+            ManagerApi.ListPartitionRequest.newBuilder().build());
     Map<String, ManagerApi.LivePartitionState> partitionsById =
         livePartitionStateById(listPartitionResponse);
     assertThat(partitionsById.get("3").getDedicated().getDataset()).isEqualTo(dedicatedDatasetName);
@@ -1086,7 +1089,7 @@ public class ManagerApiGrpcTest {
         (StatusRuntimeException)
             catchThrowable(
                 () ->
-                    managerApiStub.listPartition(
+                    managerApiStub.listPartitionMetadata(
                         ManagerApi.ListPartitionRequest.newBuilder().build()));
 
     assertThat(throwable.getStatus().getCode()).isEqualTo(Status.FAILED_PRECONDITION.getCode());

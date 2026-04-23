@@ -489,6 +489,10 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
         responseObserver.onError(Status.NOT_FOUND.withDescription(msg).asException());
         return;
       }
+      // TODO(shard-autoassignment): this destructive check currently trusts the cache-backed
+      // dataset list. After a rapid assignment update, a stale listSync() here can falsely allow
+      // deletion of a partition that is still referenced. Switch this check to a direct read or
+      // another source of truth before relying on it for strict safety.
       boolean partitionIsReferenced =
           datasetMetadataStore.listSync().stream()
               .flatMap(dataset -> dataset.getPartitionConfigs().stream())
@@ -509,21 +513,21 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
                   String.format("Deleted partition %s successfully", request.getPartitionId()))
               .build());
       responseObserver.onCompleted();
-    } catch (StatusRuntimeException e) {
-      LOG.error("Error deleting partition", e);
-      responseObserver.onError(e);
-    } catch (Exception e) {
     } catch (IllegalArgumentException e) {
       LOG.error("Error deleting partition", e);
       responseObserver.onError(
           Status.INVALID_ARGUMENT.withDescription(e.getMessage()).asException());
+    } catch (StatusRuntimeException e) {
+      LOG.error("Error deleting partition", e);
+      responseObserver.onError(e);
+    } catch (Exception e) {
       LOG.error("Error deleting partition", e);
       responseObserver.onError(Status.UNKNOWN.withDescription(e.getMessage()).asException());
     }
   }
 
   @Override
-  public void listPartition(
+  public void listPartitionMetadata(
       ManagerApi.ListPartitionRequest request,
       StreamObserver<ManagerApi.ListPartitionMetadataResponse> responseObserver) {
     try {

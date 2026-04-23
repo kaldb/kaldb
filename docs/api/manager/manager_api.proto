@@ -99,10 +99,10 @@ service ManagerApiService {
     };
   }
 
-  // ListPartition returns the current calculated capacity and occupancy for each partition.
-  rpc ListPartition(ListPartitionRequest) returns (ListPartitionMetadataResponse) {
+  // ListPartitionMetadata returns the current calculated capacity and occupancy for each partition.
+  rpc ListPartitionMetadata(ListPartitionRequest) returns (ListPartitionMetadataResponse) {
     option (google.api.http) = {
-      post: "/slack.proto.astra.ManagerApiService/ListPartition"
+      post: "/slack.proto.astra.ManagerApiService/ListPartitionMetadata"
     };
   }
 }
