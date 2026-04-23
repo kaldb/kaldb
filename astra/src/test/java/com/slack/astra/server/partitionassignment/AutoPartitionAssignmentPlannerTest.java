@@ -8,14 +8,14 @@ import com.slack.astra.metadata.dataset.DatasetPartitionMetadata;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
-public class PartitionAutoAssignerTest {
+public class AutoPartitionAssignmentPlannerTest {
   @Test
   public void shouldChooseMinimumSharedPartitionsWithEnoughCapacity() {
     DatasetMetadata datasetMetadata =
         new DatasetMetadata("shared-dataset", "owner", 0, List.of(), "", false);
 
     assertThat(
-            PartitionAutoAssigner.autoAssign(
+            AutoPartitionAssignmentPlanner.planAutoAssignment(
                 datasetMetadata,
                 100,
                 false,
@@ -33,7 +33,7 @@ public class PartitionAutoAssignerTest {
         new DatasetMetadata("shared-dataset", "owner", 0, List.of(), "", false);
 
     assertThat(
-            PartitionAutoAssigner.autoAssign(
+            AutoPartitionAssignmentPlanner.planAutoAssignment(
                 datasetMetadata,
                 20,
                 false,
@@ -57,7 +57,7 @@ public class PartitionAutoAssignerTest {
             false);
 
     assertThat(
-            PartitionAutoAssigner.autoAssign(
+            AutoPartitionAssignmentPlanner.planAutoAssignment(
                 datasetMetadata,
                 0,
                 false,
@@ -78,7 +78,7 @@ public class PartitionAutoAssignerTest {
         new DatasetMetadata("shared-dataset", "owner", 0, List.of(), "", false);
 
     assertThat(
-            PartitionAutoAssigner.autoAssign(
+            AutoPartitionAssignmentPlanner.planAutoAssignment(
                 datasetMetadata,
                 100,
                 false,
@@ -96,7 +96,7 @@ public class PartitionAutoAssignerTest {
         new DatasetMetadata("shared-dataset", "owner", 0, List.of(), "", false);
 
     assertThat(
-            PartitionAutoAssigner.autoAssign(
+            AutoPartitionAssignmentPlanner.planAutoAssignment(
                 datasetMetadata,
                 100,
                 false,
@@ -115,7 +115,7 @@ public class PartitionAutoAssignerTest {
         new DatasetMetadata("dedicated-dataset", "owner", 0, List.of(), "", true);
 
     assertThat(
-            PartitionAutoAssigner.autoAssign(
+            AutoPartitionAssignmentPlanner.planAutoAssignment(
                 datasetMetadata,
                 100,
                 true,
@@ -139,7 +139,7 @@ public class PartitionAutoAssignerTest {
             false);
 
     assertThat(
-            PartitionAutoAssigner.autoAssign(
+            AutoPartitionAssignmentPlanner.planAutoAssignment(
                 datasetMetadata,
                 100,
                 true,
@@ -166,7 +166,7 @@ public class PartitionAutoAssignerTest {
             false);
 
     assertThat(
-            PartitionAutoAssigner.autoAssign(
+            AutoPartitionAssignmentPlanner.planAutoAssignment(
                 datasetMetadata,
                 100,
                 true,
@@ -196,7 +196,7 @@ public class PartitionAutoAssignerTest {
             false);
 
     assertThat(
-            PartitionAutoAssigner.autoAssign(
+            AutoPartitionAssignmentPlanner.planAutoAssignment(
                 datasetMetadata,
                 180,
                 true,
@@ -231,7 +231,7 @@ public class PartitionAutoAssignerTest {
             true);
 
     assertThat(
-            PartitionAutoAssigner.autoAssign(
+            AutoPartitionAssignmentPlanner.planAutoAssignment(
                 datasetMetadata,
                 100,
                 false,
@@ -257,7 +257,7 @@ public class PartitionAutoAssignerTest {
             false);
 
     assertThat(
-            PartitionAutoAssigner.autoAssign(
+            AutoPartitionAssignmentPlanner.planAutoAssignment(
                 datasetMetadata,
                 240,
                 false,
@@ -285,7 +285,7 @@ public class PartitionAutoAssignerTest {
             false);
 
     assertThat(
-            PartitionAutoAssigner.autoAssign(
+            AutoPartitionAssignmentPlanner.planAutoAssignment(
                 datasetMetadata,
                 180,
                 false,
@@ -311,7 +311,7 @@ public class PartitionAutoAssignerTest {
             false);
 
     assertThat(
-            PartitionAutoAssigner.autoAssign(
+            AutoPartitionAssignmentPlanner.planAutoAssignment(
                 datasetMetadata,
                 80,
                 false,
@@ -340,7 +340,7 @@ public class PartitionAutoAssignerTest {
             true);
 
     assertThat(
-            PartitionAutoAssigner.autoAssign(
+            AutoPartitionAssignmentPlanner.planAutoAssignment(
                 datasetMetadata,
                 100,
                 true,
@@ -361,7 +361,7 @@ public class PartitionAutoAssignerTest {
 
     assertThatThrownBy(
             () ->
-                PartitionAutoAssigner.autoAssign(
+                AutoPartitionAssignmentPlanner.planAutoAssignment(
                     datasetMetadata,
                     100,
                     false,
@@ -381,7 +381,7 @@ public class PartitionAutoAssignerTest {
 
     assertThatThrownBy(
             () ->
-                PartitionAutoAssigner.autoAssign(
+                AutoPartitionAssignmentPlanner.planAutoAssignment(
                     datasetMetadata,
                     100,
                     true,

@@ -8,10 +8,10 @@ import com.slack.astra.metadata.dataset.DatasetPartitionMetadata;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
-public class PartitionAssignmentUpdaterTest {
+public class PartitionAssignmentUpdateServiceTest {
   @Test
   public void shouldRejectNonPositiveMinimumPartitionCount() {
-    assertThatThrownBy(() -> new PartitionAssignmentUpdater(null, null, 0))
+    assertThatThrownBy(() -> new PartitionAssignmentUpdateService(null, null, 0))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("minNumberOfPartitions must be greater than 0");
   }
@@ -27,7 +27,7 @@ public class PartitionAssignmentUpdaterTest {
             DatasetMetadata.MATCH_ALL_SERVICE);
 
     assertThat(
-            PartitionAssignmentUpdater.rolloverActivePartitionAssignment(
+            PartitionAssignmentUpdateService.rolloverActivePartitionAssignment(
                 existingDatasetMetadata, List.of("3"), 1000))
         .containsExactly(
             new DatasetPartitionMetadata(1001, 1002, List.of("2")),
@@ -45,7 +45,7 @@ public class PartitionAssignmentUpdaterTest {
             DatasetMetadata.MATCH_ALL_SERVICE);
 
     assertThat(
-            PartitionAssignmentUpdater.rolloverActivePartitionAssignment(
+            PartitionAssignmentUpdateService.rolloverActivePartitionAssignment(
                 existingDatasetMetadata, List.of("2", "3"), 2000))
         .isEqualTo(existingDatasetMetadata.getPartitionConfigs());
   }
@@ -61,7 +61,7 @@ public class PartitionAssignmentUpdaterTest {
             DatasetMetadata.MATCH_ALL_SERVICE);
 
     assertThat(
-            PartitionAssignmentUpdater.rolloverActivePartitionAssignment(
+            PartitionAssignmentUpdateService.rolloverActivePartitionAssignment(
                 existingDatasetMetadata, List.of("3", "2"), 2000))
         .isEqualTo(existingDatasetMetadata.getPartitionConfigs());
   }

@@ -11,16 +11,21 @@ import java.util.stream.Stream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/** Chooses partitions from the current live partition state for auto-assignment. */
-public final class PartitionAutoAssigner {
-  private static final Logger LOG = LoggerFactory.getLogger(PartitionAutoAssigner.class);
+/**
+ * Chooses partitions for auto-assignment from the current live partition state.
+ *
+ * <p>This class is auto-assignment only. It does not validate explicit user-selected partitions or
+ * persist metadata updates.
+ */
+public final class AutoPartitionAssignmentPlanner {
+  private static final Logger LOG = LoggerFactory.getLogger(AutoPartitionAssignmentPlanner.class);
 
   private static final String DEDICATED_BRANCH_LABEL = "dedicated proposal";
   private static final String SHARED_BRANCH_LABEL = "proposal";
 
-  private PartitionAutoAssigner() {}
+  private AutoPartitionAssignmentPlanner() {}
 
-  public static ImmutableList<String> autoAssign(
+  public static ImmutableList<String> planAutoAssignment(
       DatasetMetadata datasetMetadata,
       long throughputBytes,
       boolean requireDedicatedPartition,
@@ -35,7 +40,7 @@ public final class PartitionAutoAssigner {
 
     Set<String> currentIds = ImmutableSet.copyOf(datasetMetadata.getActivePartitionIds());
     List<LivePartitionState> statesWithoutSelf =
-        PartitionAssignmentPolicy.liveStatesWithoutSelfContribution(
+        PartitionAssignmentRules.liveStatesWithoutSelfContribution(
             datasetMetadata, currentIds, livePartitionStates);
     validateNumericCandidateIds(datasetMetadata.getName(), statesWithoutSelf);
 
@@ -138,7 +143,7 @@ public final class PartitionAutoAssigner {
         targetPartitionCount <= sortedCandidates.size();
         targetPartitionCount++) {
       final long demandPerPartition =
-          PartitionAssignmentPolicy.perPartitionDemand(throughputBytes, targetPartitionCount);
+          PartitionAssignmentRules.perPartitionDemand(throughputBytes, targetPartitionCount);
       final long targetCount = targetPartitionCount;
       bestAttempt =
           sortedCandidates.stream()

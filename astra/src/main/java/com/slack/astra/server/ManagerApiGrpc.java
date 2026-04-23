@@ -25,8 +25,8 @@ import com.slack.astra.proto.manager_api.ManagerApiServiceGrpc;
 import com.slack.astra.proto.metadata.Metadata;
 import com.slack.astra.server.partitionassignment.InvalidPartitionAssignmentStateException;
 import com.slack.astra.server.partitionassignment.LivePartitionState;
-import com.slack.astra.server.partitionassignment.PartitionAssignmentUpdater;
-import com.slack.astra.server.partitionassignment.PartitionAssignmentUpdater.DedicatedPartitionModeOverride;
+import com.slack.astra.server.partitionassignment.PartitionAssignmentUpdateService;
+import com.slack.astra.server.partitionassignment.PartitionAssignmentUpdateService.DedicatedPartitionModeOverride;
 import com.slack.astra.server.partitionassignment.PartitionIdOrdering;
 import com.slack.astra.server.partitionassignment.PartitionOccupancy;
 import io.grpc.Status;
@@ -61,7 +61,7 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
   private final ReplicaRestoreService replicaRestoreService;
   private final FieldRedactionMetadataStore fieldRedactionMetadataStore;
   private final PartitionMetadataStore partitionMetadataStore;
-  private final PartitionAssignmentUpdater partitionAssignmentUpdater;
+  private final PartitionAssignmentUpdateService partitionAssignmentUpdateService;
 
   public ManagerApiGrpc(
       DatasetMetadataStore datasetMetadataStore,
@@ -76,8 +76,8 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
     this.fieldRedactionMetadataStore = fieldRedactionMetadataStore;
     this.partitionMetadataStore =
         Objects.requireNonNull(partitionMetadataStore, "partitionMetadataStore");
-    this.partitionAssignmentUpdater =
-        new PartitionAssignmentUpdater(
+    this.partitionAssignmentUpdateService =
+        new PartitionAssignmentUpdateService(
             datasetMetadataStore, this.partitionMetadataStore, minNumberOfPartitions);
   }
 
@@ -225,7 +225,7 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
 
     try {
       List<String> assignedPartitionIds =
-          partitionAssignmentUpdater.updateAssignment(
+          partitionAssignmentUpdateService.applyAssignmentUpdate(
               request.getName(),
               request.getThroughputBytes(),
               request.getPartitionIdsList(),
@@ -527,7 +527,7 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
       responseObserver.onNext(
           ManagerApi.ListPartitionMetadataResponse.newBuilder()
               .addAllPartitionMetadata(
-                  partitionAssignmentUpdater.loadLivePartitionStates().stream()
+                  partitionAssignmentUpdateService.listLivePartitionStates().stream()
                       .map(ManagerApiGrpc::toLivePartitionStateProto)
                       .toList())
               .build());

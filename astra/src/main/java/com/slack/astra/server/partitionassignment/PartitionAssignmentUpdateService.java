@@ -16,9 +16,14 @@ import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/** Application workflow for updating dataset partition assignments. */
-public class PartitionAssignmentUpdater {
-  private static final Logger LOG = LoggerFactory.getLogger(PartitionAssignmentUpdater.class);
+/**
+ * Workflow service for applying partition assignment updates and persisting the resulting dataset
+ * metadata history.
+ *
+ * <p>This class owns the end-to-end update flow for both manual and auto-assignment requests.
+ */
+public class PartitionAssignmentUpdateService {
+  private static final Logger LOG = LoggerFactory.getLogger(PartitionAssignmentUpdateService.class);
 
   /** A requested throughput of -1 preserves the existing dataset throughput. */
   static final long PRESERVE_THROUGHPUT_SENTINEL = -1L;
@@ -40,7 +45,7 @@ public class PartitionAssignmentUpdater {
   private final PartitionMetadataStore partitionMetadataStore;
   private final int minNumberOfPartitions;
 
-  public PartitionAssignmentUpdater(
+  public PartitionAssignmentUpdateService(
       DatasetMetadataStore datasetMetadataStore,
       PartitionMetadataStore partitionMetadataStore,
       int minNumberOfPartitions) {
@@ -51,7 +56,7 @@ public class PartitionAssignmentUpdater {
     this.minNumberOfPartitions = minNumberOfPartitions;
   }
 
-  public ImmutableList<String> updateAssignment(
+  public ImmutableList<String> applyAssignmentUpdate(
       String datasetName,
       long requestedThroughputBytes,
       List<String> requestedPartitionIds,
@@ -122,12 +127,12 @@ public class PartitionAssignmentUpdater {
             existingDatasetMetadata.getName(),
             requestedPartitionIds);
         validateRequestedPartitionIds(requestedPartitionIds);
-        PartitionAssignmentPolicy.validateManualAssignment(
+        PartitionAssignmentRules.validateManualSelection(
             existingDatasetMetadata,
             effectiveThroughputBytes,
             useDedicatedPartitions,
             requestedPartitionIds,
-            loadLivePartitionStates(),
+            listLivePartitionStates(),
             minNumberOfPartitions);
         yield requestedPartitionIds;
       }
@@ -143,11 +148,11 @@ public class PartitionAssignmentUpdater {
       long effectiveThroughputBytes,
       boolean useDedicatedPartitions) {
     List<String> autoAssigned =
-        PartitionAutoAssigner.autoAssign(
+        AutoPartitionAssignmentPlanner.planAutoAssignment(
             existingDatasetMetadata,
             effectiveThroughputBytes,
             useDedicatedPartitions,
-            loadLivePartitionStates(),
+            listLivePartitionStates(),
             minNumberOfPartitions);
     LOG.info(
         "Auto-assigning partitions for {} to : {}",
@@ -156,7 +161,7 @@ public class PartitionAssignmentUpdater {
     return autoAssigned;
   }
 
-  public List<LivePartitionState> loadLivePartitionStates() {
+  public List<LivePartitionState> listLivePartitionStates() {
     return LivePartitionState.loadAll(datasetMetadataStore, partitionMetadataStore);
   }
 

@@ -11,7 +11,7 @@ import io.grpc.StatusRuntimeException;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
-public class PartitionAssignmentPolicyTest {
+public class PartitionAssignmentRulesTest {
   @Test
   public void shouldRejectManualAssignmentWhenBelowMinimumPartitionCount() {
     DatasetMetadata datasetMetadata =
@@ -19,7 +19,7 @@ public class PartitionAssignmentPolicyTest {
 
     assertThatThrownBy(
             () ->
-                PartitionAssignmentPolicy.validateManualAssignment(
+                PartitionAssignmentRules.validateManualSelection(
                     datasetMetadata,
                     20,
                     false,
@@ -45,7 +45,7 @@ public class PartitionAssignmentPolicyTest {
 
     assertThatThrownBy(
             () ->
-                PartitionAssignmentPolicy.validateManualAssignment(
+                PartitionAssignmentRules.validateManualSelection(
                     datasetMetadata,
                     100,
                     false,
@@ -73,7 +73,7 @@ public class PartitionAssignmentPolicyTest {
 
     assertThatThrownBy(
             () ->
-                PartitionAssignmentPolicy.validateManualAssignment(
+                PartitionAssignmentRules.validateManualSelection(
                     datasetMetadata,
                     20,
                     true,
@@ -109,7 +109,7 @@ public class PartitionAssignmentPolicyTest {
 
     assertThatCode(
             () ->
-                PartitionAssignmentPolicy.validateManualAssignment(
+                PartitionAssignmentRules.validateManualSelection(
                     datasetMetadata,
                     100,
                     true,
@@ -135,7 +135,7 @@ public class PartitionAssignmentPolicyTest {
 
     assertThatCode(
             () ->
-                PartitionAssignmentPolicy.validateManualAssignment(
+                PartitionAssignmentRules.validateManualSelection(
                     datasetMetadata,
                     100,
                     false,

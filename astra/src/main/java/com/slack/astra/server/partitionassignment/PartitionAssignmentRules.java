@@ -8,11 +8,16 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/** Shared feasibility rules for validating partition assignments against the current live state. */
-public final class PartitionAssignmentPolicy {
-  private PartitionAssignmentPolicy() {}
+/**
+ * Shared assignment rules used by both manual validation and auto-assignment planning.
+ *
+ * <p>This class answers "can this dataset use these partition IDs right now?" and exposes the
+ * helper calculations both paths need. It does not choose partitions or persist updates.
+ */
+public final class PartitionAssignmentRules {
+  private PartitionAssignmentRules() {}
 
-  public static void validateManualAssignment(
+  public static void validateManualSelection(
       DatasetMetadata datasetMetadata,
       long throughputBytes,
       boolean requireDedicatedPartition,
@@ -40,7 +45,7 @@ public final class PartitionAssignmentPolicy {
         requestedPartitionIds.stream()
             .filter(
                 partitionId ->
-                    !supportsManualAssignment(
+                    !supportsRequestedAssignment(
                         statesById.get(partitionId),
                         datasetMetadata.getName(),
                         requireDedicatedPartition,
@@ -86,7 +91,7 @@ public final class PartitionAssignmentPolicy {
     return partition.isExclusivelyUsedBy(datasetName) || partition.isEmpty();
   }
 
-  private static boolean supportsManualAssignment(
+  private static boolean supportsRequestedAssignment(
       LivePartitionState partition,
       String datasetName,
       boolean requireDedicatedPartition,
