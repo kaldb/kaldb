@@ -199,6 +199,23 @@ public class PartitionAssignmentUpdater {
         duplicateRequestedPartitionIds.isEmpty(),
         "Requested partition IDs must be unique: %s".formatted(duplicateRequestedPartitionIds));
 
+    List<String> nonNumericRequestedPartitionIds =
+        requestedPartitionIds.stream()
+            .filter(
+                id -> {
+                  try {
+                    PartitionIdOrdering.parseNumericPartitionId(id);
+                    return false;
+                  } catch (IllegalArgumentException e) {
+                    return true;
+                  }
+                })
+            .sorted()
+            .toList();
+    Preconditions.checkArgument(
+        nonNumericRequestedPartitionIds.isEmpty(),
+        "Requested partition IDs must be numeric: %s".formatted(nonNumericRequestedPartitionIds));
+
     Set<String> configuredPartitionIds = partitionMetadataStore.listPartitionIdsSync();
     List<String> nonExistentRequestedPartitionIds =
         requestedPartitionIds.stream()

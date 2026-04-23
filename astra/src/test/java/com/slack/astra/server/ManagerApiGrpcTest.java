@@ -639,12 +639,12 @@ public class ManagerApiGrpcTest {
                         ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
                             .setName(datasetName)
                             .setThroughputBytes(50)
-                            .addAllPartitionIds(List.of("1", "missing"))
+                            .addAllPartitionIds(List.of("1", "999"))
                             .build()));
 
     assertThat(throwable.getStatus().getCode()).isEqualTo(Status.INVALID_ARGUMENT.getCode());
     assertThat(throwable.getStatus().getDescription())
-        .contains("Requested partition IDs do not exist: [missing]");
+        .contains("Requested partition IDs do not exist: [999]");
   }
 
   @Test
@@ -1481,6 +1481,32 @@ public class ManagerApiGrpcTest {
             ManagerApi.ListDatasetMetadataRequest.newBuilder().build());
 
     assertThat(
+
+  @Test
+  public void shouldRejectManualAssignmentWithNonNumericPartitionIds() {
+    String datasetName = "manualNonNumericPartitionDataset";
+    managerApiStub.createDatasetMetadata(
+        ManagerApi.CreateDatasetMetadataRequest.newBuilder()
+            .setName(datasetName)
+            .setOwner("owner")
+            .build());
+    createPartition("1", 100);
+
+    StatusRuntimeException throwable =
+        (StatusRuntimeException)
+            catchThrowable(
+                () ->
+                    managerApiStub.updatePartitionAssignment(
+                        ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
+                            .setName(datasetName)
+                            .setThroughputBytes(50)
+                            .addAllPartitionIds(List.of("1", "partition-a"))
+                            .build()));
+
+    assertThat(throwable.getStatus().getCode()).isEqualTo(Status.INVALID_ARGUMENT.getCode());
+    assertThat(throwable.getStatus().getDescription())
+        .contains("Requested partition IDs must be numeric: [partition-a]");
+  }
         listDatasetMetadataResponse
 
   @Test
