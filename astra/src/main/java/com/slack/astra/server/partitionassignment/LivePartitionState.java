@@ -16,22 +16,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /** Partition capacity plus currently calculated usage from dataset assignments. */
-public class LivePartitionState {
+public record LivePartitionState(
+    String partitionId, long provisionedCapacity, long maxCapacity, PartitionOccupancy occupancy) {
   private static final Logger LOG = LoggerFactory.getLogger(LivePartitionState.class);
-  public final String partitionId;
-  public final long provisionedCapacity;
-  public final long maxCapacity;
-  public final PartitionOccupancy occupancy;
 
-  public LivePartitionState(
-      String partitionId,
-      long provisionedCapacity,
-      long maxCapacity,
-      PartitionOccupancy occupancy) {
-    this.partitionId = partitionId;
-    this.provisionedCapacity = provisionedCapacity;
-    this.maxCapacity = maxCapacity;
-    this.occupancy = Objects.requireNonNull(occupancy, "occupancy");
+  public LivePartitionState {
+    Objects.requireNonNull(occupancy, "occupancy");
   }
 
   public String getPartitionID() {
@@ -160,35 +150,5 @@ public class LivePartitionState {
         provisionedCapacity,
         partitionMetadata.getMaxCapacity(),
         occupancy);
-  }
-
-  @Override
-  public boolean equals(Object o) {
-    if (this == o) return true;
-    if (!(o instanceof LivePartitionState that)) return false;
-    return provisionedCapacity == that.provisionedCapacity
-        && maxCapacity == that.maxCapacity
-        && Objects.equals(partitionId, that.partitionId)
-        && Objects.equals(occupancy, that.occupancy);
-  }
-
-  @Override
-  public int hashCode() {
-    return Objects.hash(partitionId, provisionedCapacity, maxCapacity, occupancy);
-  }
-
-  @Override
-  public String toString() {
-    return "LivePartitionState{"
-        + "partitionId='"
-        + partitionId
-        + "'"
-        + ", provisionedCapacity="
-        + provisionedCapacity
-        + ", maxCapacity="
-        + maxCapacity
-        + ", occupancy="
-        + occupancy
-        + '}';
   }
 }
