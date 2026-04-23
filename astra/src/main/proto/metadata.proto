@@ -271,6 +271,7 @@ message RedactedFieldMetadata {
 }
 
 message PartitionMetadata {
+  // Numeric-only partition identifier; allocator ordering compares this as an integer.
   string partition_id = 1;
   int64 max_capacity = 2;
 }

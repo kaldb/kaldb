@@ -35,6 +35,7 @@ message DatasetMetadata {
 }
 
 message PartitionMetadata {
+  // Numeric-only partition identifier; allocator ordering compares this as an integer.
   string partition_id = 1;
   int64 max_capacity = 2;
 }
@@ -147,7 +148,7 @@ message UpdatePartitionAssignmentRequest {
   string name = 1;
   // Optional maximum throughput of the dataset - if set to -1 the existing value will not be updated
   int64 throughput_bytes = 2;
-  // Optional desired partition IDs - if empty will be automatically assigned
+  // Optional desired numeric partition IDs - if empty will be automatically assigned
   repeated string partition_ids = 3;
   // Optional required partitions to be exclusive for the tenant. If omitted, the existing dataset
   // mode is preserved. New datasets default to shared partitions.
@@ -179,32 +180,46 @@ message RestoreReplicaIdsResponse {
 }
 
 message CreatePartitionRequest {
+  // Numeric-only partition identifier; non-numeric values are rejected.
   string partition_id = 1;
+  // Maximum provisionable throughput for this partition, in bytes per second. Required and must
+  // be greater than 0.
   int64 max_capacity = 2;
 }
 
 message DeletePartitionRequest {
+  // Numeric-only partition identifier; non-numeric values are rejected.
   string partition_id = 1;
 }
 
 message DeletePartitionResponse {
+  // Human-readable success message returned after the partition is removed.
   string status = 1;
 }
 
 message ListPartitionRequest {}
 
 message ListPartitionMetadataResponse {
+  // Calculated live capacity and occupancy state for each partition in the catalog.
   repeated LivePartitionState partition_metadata = 1;
 }
 
 message LivePartitionState {
+  // Numeric-only partition identifier.
   string partition_id = 1;
+  // Maximum provisionable throughput for this partition, in bytes per second.
   int64 max_capacity = 2;
+  // Sum of the active datasets' per-partition throughput currently assigned to this partition, in
+  // bytes per second.
   int64 provisioned_capacity = 3;
 
+  // Exactly one calculated occupancy state for this partition.
   oneof occupancy {
+    // No dataset currently uses this partition.
     EmptyPartitionOccupancy empty = 4;
+    // Multiple shared datasets currently use this partition.
     SharedPartitionOccupancy shared = 5;
+    // Exactly one dataset exclusively uses this partition.
     DedicatedPartitionOccupancy dedicated = 6;
   }
 }
@@ -212,9 +227,11 @@ message LivePartitionState {
 message EmptyPartitionOccupancy {}
 
 message SharedPartitionOccupancy {
+  // Dataset names currently sharing this partition.
   repeated string datasets = 1;
 }
 
 message DedicatedPartitionOccupancy {
+  // Dataset name that exclusively uses this partition.
   string dataset = 1;
 }

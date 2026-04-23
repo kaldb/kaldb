@@ -207,12 +207,12 @@ paths:
             type: string
         - name: throughputBytes
           in: query
-          description: Optional maximum throughput of the dataset - if set to -1 the existing value will not be updated
+          description: Dataset throughput in bytes. Clients should always set it. Zero is valid, negative values are rejected, and omitted proto3 fields are observed as 0 by the server.
           schema:
             type: string
         - name: partitionIds
           in: query
-          description: Optional desired partition IDs - if empty will be automatically assigned
+          description: Optional desired numeric partition IDs - if empty will be automatically assigned
           schema:
             type: array
             items:
@@ -245,12 +245,12 @@ paths:
       parameters:
         - name: partitionId
           in: query
-          description: Unique partition identifier
+          description: Numeric-only partition identifier
           schema:
             type: string
         - name: maxCapacity
           in: query
-          description: Maximum provisionable capacity for this partition
+          description: Maximum provisionable throughput for this partition, in bytes per second. Required and must be greater than 0. Used as a hard capacity limit during assignment planning and validation.
           schema:
             type: string
       responses:
@@ -276,7 +276,7 @@ paths:
       parameters:
         - name: partitionId
           in: query
-          description: Unique partition identifier
+          description: Numeric-only partition identifier
           schema:
             type: string
       responses:
@@ -292,13 +292,13 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /slack.proto.astra.ManagerApiService/ListPartition:
+  /slack.proto.astra.ManagerApiService/ListPartitionMetadata:
     post:
-      summary: ListPartition
+      summary: ListPartitionMetadata
       tags:
         - ManagerApiService
-      description: ListPartition returns the current calculated partition view, including max capacity, provisioned capacity, and occupancy.
-      operationId: ManagerApiService_ListPartition
+      description: ListPartitionMetadata returns the current calculated partition view, including max capacity, provisioned capacity, and occupancy.
+      operationId: ManagerApiService_ListPartitionMetadata
       responses:
         "200":
           description: OK
@@ -403,14 +403,17 @@ components:
       properties:
         partitionId:
           type: string
+          description: Numeric-only partition identifier; allocator ordering compares this as an integer
         maxCapacity:
           type: string
-      description: PartitionMetadata describes an assignable partition and its maximum provisionable capacity
+          description: Maximum provisionable throughput for this partition, in bytes per second. Used as a hard capacity limit during assignment planning and validation.
+      description: PartitionMetadata describes an assignable partition and its maximum provisionable throughput
     DeletePartitionResponse:
       type: object
       properties:
         status:
           type: string
+          description: Human-readable success message returned after the partition is removed.
       description: DeletePartitionResponse represents the response after removing a partition from the catalog
     ListPartitionMetadataResponse:
       type: object
@@ -419,23 +422,29 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/LivePartitionState'
+          description: Calculated live capacity and occupancy state for each partition in the catalog.
       description: ListPartitionMetadataResponse represents the calculated live partition view
     LivePartitionState:
       type: object
       properties:
         partitionId:
           type: string
+          description: Numeric-only partition identifier.
         maxCapacity:
           type: string
+          description: Maximum provisionable throughput for this partition, in bytes per second. Used as a hard capacity limit during assignment planning and validation.
         provisionedCapacity:
           type: string
-          description: Currently provisioned capacity on this partition. This field may be omitted from JSON responses when the value is 0.
+          description: Sum of the active datasets' per-partition throughput currently assigned to this partition, in bytes per second. This field may be omitted from JSON responses when the value is 0.
         empty:
           $ref: '#/components/schemas/EmptyPartitionOccupancy'
+          description: Indicates that no dataset currently uses this partition.
         shared:
           $ref: '#/components/schemas/SharedPartitionOccupancy'
+          description: Indicates that multiple shared datasets currently use this partition.
         dedicated:
           $ref: '#/components/schemas/DedicatedPartitionOccupancy'
+          description: Indicates that exactly one dataset exclusively uses this partition.
       description: LivePartitionState describes the current calculated capacity and occupancy for one partition
     EmptyPartitionOccupancy:
       type: object
@@ -447,12 +456,14 @@ components:
           type: array
           items:
             type: string
+          description: Dataset names currently sharing this partition.
       description: SharedPartitionOccupancy lists the datasets currently sharing the partition
     DedicatedPartitionOccupancy:
       type: object
       properties:
         dataset:
           type: string
+          description: Dataset name that exclusively uses this partition.
       description: DedicatedPartitionOccupancy names the dataset that exclusively uses the partition
 tags:
   - name: ManagerApiService
