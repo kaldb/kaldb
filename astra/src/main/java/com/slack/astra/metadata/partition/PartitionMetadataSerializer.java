@@ -1,7 +1,6 @@
 package com.slack.astra.metadata.partition;
 
 import com.google.protobuf.InvalidProtocolBufferException;
-import com.google.protobuf.util.JsonFormat;
 import com.slack.astra.metadata.core.MetadataSerializer;
 import com.slack.astra.proto.metadata.Metadata;
 
@@ -30,7 +29,7 @@ public class PartitionMetadataSerializer implements MetadataSerializer<Partition
   public PartitionMetadata fromJsonStr(String data) throws InvalidProtocolBufferException {
     Metadata.PartitionMetadata.Builder partitionMetadataBuilder =
         Metadata.PartitionMetadata.newBuilder();
-    JsonFormat.parser().ignoringUnknownFields().merge(data, partitionMetadataBuilder);
+    parser.merge(data, partitionMetadataBuilder);
     return fromPartitionMetadataProto(partitionMetadataBuilder.build());
   }
 }
