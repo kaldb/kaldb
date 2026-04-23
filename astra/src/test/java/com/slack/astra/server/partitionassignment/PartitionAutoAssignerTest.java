@@ -373,4 +373,24 @@ public class PartitionAutoAssignerTest {
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Dataset shared-dataset cannot use non-numeric partition ID: a");
   }
+
+  @Test
+  public void shouldFailWhenFewerCandidatesExistThanMinimumPartitionCount() {
+    DatasetMetadata datasetMetadata =
+        new DatasetMetadata("dedicated-dataset", "owner", 0, List.of(), "", true);
+
+    assertThatThrownBy(
+            () ->
+                PartitionAutoAssigner.autoAssign(
+                    datasetMetadata,
+                    100,
+                    true,
+                    List.of(new LivePartitionState("1", 0, 100, new PartitionOccupancy.Empty())),
+                    2))
+        .isInstanceOf(io.grpc.StatusRuntimeException.class)
+        .hasMessageContaining("not enough candidate partitions")
+        .hasMessageContaining("needed 2")
+        .hasMessageContaining("available 1")
+        .hasMessageContaining("[1]");
+  }
 }

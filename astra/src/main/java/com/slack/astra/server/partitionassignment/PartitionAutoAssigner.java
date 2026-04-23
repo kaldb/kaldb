@@ -123,6 +123,16 @@ public final class PartitionAutoAssigner {
       long throughputBytes,
       long minPartitionCount,
       String branchLabel) {
+    if (sortedCandidates.size() < minPartitionCount) {
+      List<String> candidateIds =
+          sortedCandidates.stream().map(LivePartitionState::getPartitionID).toList();
+      throw Status.FAILED_PRECONDITION
+          .withDescription(
+              "%s not enough candidate partitions: needed %d, available %d: %s"
+                  .formatted(branchLabel, minPartitionCount, sortedCandidates.size(), candidateIds))
+          .asRuntimeException();
+    }
+
     ImmutableList<String> bestAttempt = ImmutableList.of();
     for (long targetPartitionCount = minPartitionCount;
         targetPartitionCount <= sortedCandidates.size();

@@ -1378,7 +1378,7 @@ public class ManagerApiGrpcTest {
 
     assertThat(throwable.getStatus().getCode()).isEqualTo(Status.FAILED_PRECONDITION.getCode());
     assertThat(throwable.getStatus().getDescription())
-        .contains("Needed 2 partitions with enough capacity");
+        .contains("proposal not enough candidate partitions: needed 2, available 1: [1]");
   }
 
   @Test
