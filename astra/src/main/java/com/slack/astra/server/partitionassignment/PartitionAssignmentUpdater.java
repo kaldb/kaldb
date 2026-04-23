@@ -19,6 +19,9 @@ import org.slf4j.LoggerFactory;
 public class PartitionAssignmentUpdater {
   private static final Logger LOG = LoggerFactory.getLogger(PartitionAssignmentUpdater.class);
 
+  /** A requested throughput of -1 preserves the existing dataset throughput. */
+  static final long PRESERVE_THROUGHPUT_SENTINEL = -1L;
+
   /** Tri-state override for preserving or explicitly changing dedicated partition mode. */
   public enum DedicatedPartitionModeOverride {
     PRESERVE_EXISTING,
@@ -87,7 +90,14 @@ public class PartitionAssignmentUpdater {
   }
 
   private static long resolveThroughput(DatasetMetadata existing, long requestedThroughputBytes) {
-    return requestedThroughputBytes < 0 ? existing.getThroughputBytes() : requestedThroughputBytes;
+    if (requestedThroughputBytes == PRESERVE_THROUGHPUT_SENTINEL) {
+      return existing.getThroughputBytes();
+    }
+    Preconditions.checkArgument(
+        requestedThroughputBytes >= 0,
+        "throughputBytes must be non-negative or the preserve sentinel (-1), got %s",
+        requestedThroughputBytes);
+    return requestedThroughputBytes;
   }
 
   private static boolean resolveUsingDedicatedPartitions(

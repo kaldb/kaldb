@@ -1455,6 +1455,32 @@ public class ManagerApiGrpcTest {
 
     assertThat(
         listDatasetMetadataResponse
+
+  @Test
+  public void shouldRejectNegativeThroughputValuesOtherThanPreserveSentinel() {
+    String datasetName = "negativeThroughputDataset";
+    managerApiStub.createDatasetMetadata(
+        ManagerApi.CreateDatasetMetadataRequest.newBuilder()
+            .setName(datasetName)
+            .setOwner("owner")
+            .build());
+    createPartitions(List.of("1", "2"));
+
+    StatusRuntimeException throwable =
+        (StatusRuntimeException)
+            catchThrowable(
+                () ->
+                    managerApiStub.updatePartitionAssignment(
+                        ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
+                            .setName(datasetName)
+                            .setThroughputBytes(-2)
+                            .addAllPartitionIds(List.of("1", "2"))
+                            .build()));
+
+    assertThat(throwable.getStatus().getCode()).isEqualTo(Status.INVALID_ARGUMENT.getCode());
+    assertThat(throwable.getStatus().getDescription())
+        .contains("throughputBytes must be non-negative or the preserve sentinel (-1), got -2");
+  }
             .getDatasetMetadataList()
             .containsAll(
                 List.of(
