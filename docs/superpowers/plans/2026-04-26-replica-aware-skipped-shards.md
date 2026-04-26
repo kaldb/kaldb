@@ -1,97 +1,108 @@
-# Replica-Aware Skipped Shards Implementation Plan
+# ADR 0000: Replica-Aware Skipped Shards
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+## Status
 
-**Goal:** Surface incomplete Astra query results as failed shards, and surface replica-covered shard misses as skipped shards.
+Current state: `Draft`
 
-**Architecture:** Preserve Astra's existing two-level aggregation model: local query services search chunks, and `AstraDistributedQueryService` aggregates node responses. Add explicit snapshot-level shard accounting to the internal `SearchResult`, populate successful snapshot IDs locally, classify distributed missing chunks after all replica attempts, and map those counts into OpenSearch-compatible `_shards` fields.
+Discussion thread: `n/a`
 
-**Tech Stack:** Java, Maven, protobuf, gRPC, Micrometer counters, OpenSearch-compatible JSON response classes.
+Issue: `n/a`
 
----
+PR: `n/a`
 
-## Behavioral Contract
+Supersedes: `n/a`
 
-Use these definitions throughout the implementation:
+Superseded by: `n/a`
 
-- `failed` means no replica returned data for a logical snapshot/chunk required by the query. This affects result completeness and should produce an OpenSearch Dashboards shard-failure banner.
-- `skipped` means a concrete replica attempt did not return, but another replica returned data for the same logical snapshot/chunk. This does not affect result completeness and should keep the UI clean.
-- `successful` means a logical snapshot/chunk returned data from at least one replica.
-- `total_snapshots` remains the number of logical snapshots/chunks required by the query.
-- OpenSearch `_shards.total` should be `successful + skipped + failed`, where `skipped` represents covered replica misses. This keeps `_shards.successful + _shards.skipped + _shards.failed == _shards.total`.
+## Motivation
 
-## File Structure
+Astra currently reports a failed shard only when querying a selected shard/node fails. It also reports total snapshots and snapshots with replicas, but it does not expose whether an incomplete distributed response missed logical chunk data. This can make OpenSearch Dashboards show a clean UI even when query results are partial.
 
-- Modify `astra/src/main/proto/astra_search.proto`
-  - Add snapshot-level shard accounting fields to `SearchResult`.
-- Modify `astra/src/main/java/com/slack/astra/logstore/search/SearchResult.java`
-  - Carry `failedSnapshots`, `skippedSnapshots`, and `successfulSnapshotIds`.
-- Modify `astra/src/main/java/com/slack/astra/logstore/search/SearchResultUtils.java`
-  - Convert new fields to and from protobuf.
-- Modify `astra/src/main/java/com/slack/astra/logstore/search/SearchResultAggregatorImpl.java`
-  - Sum new counts and merge successful snapshot IDs.
-- Modify `astra/src/main/java/com/slack/astra/chunkManager/ChunkManagerBase.java`
-  - Attach chunk IDs to successful local chunk query results and mark local chunk failures as failed snapshots.
-- Modify `astra/src/main/java/com/slack/astra/logstore/search/AstraDistributedQueryService.java`
-  - Track replica candidates, retry unresolved snapshots, classify final skipped and failed shard counts, and emit metrics.
-- Modify `astra/src/main/java/com/slack/astra/elasticsearchApi/searchResponse/EsSearchResponse.java`
-  - Include `successful` and `skipped` in `_shards`.
-- Modify `astra/src/main/java/com/slack/astra/elasticsearchApi/ElasticsearchApiService.java`
-  - Map snapshot-level counts into OpenSearch-compatible `_shards`.
-- Test `astra/src/test/java/com/slack/astra/server/SearchResultTest.java`
-- Test `astra/src/test/java/com/slack/astra/logstore/search/SearchResultAggregatorImplTest.java`
-- Test `astra/src/test/java/com/slack/astra/logstore/search/AstraDistributedQueryServiceTest.java`
-- Test `astra/src/test/java/com/slack/astra/elasticsearchApi/ElasticsearchApiServiceTest.java`
+The customer preference is:
 
-## Task 1: Add Snapshot-Level Fields To SearchResult
+- If another replica satisfies the same logical chunk, report the missed replica as `skipped`.
+- If no replica returns for a logical chunk, report it as `failed`.
+- Emit Prometheus counters for both skipped and failed shard outcomes.
 
-**Files:**
-- Modify: `astra/src/main/proto/astra_search.proto`
-- Modify: `astra/src/main/java/com/slack/astra/logstore/search/SearchResult.java`
-- Modify: `astra/src/main/java/com/slack/astra/logstore/search/SearchResultUtils.java`
-- Test: `astra/src/test/java/com/slack/astra/server/SearchResultTest.java`
+This distinction matters operationally. In a `rep=1` deployment, a cache-side timeout means data is missing. Reporting that as `skipped` would silence the OpenSearch Dashboards shard-failure banner even though the result is incomplete. Reporting it as `failed` keeps the degradation visible.
 
-- [ ] **Step 1: Write the failing proto conversion test**
+OpenSearch and Elasticsearch search responses include `_shards.total`, `_shards.successful`, `_shards.skipped`, and `_shards.failed`. OpenSearch Dashboards surfaces failed shards as user-visible shard-failure banners, while skipped shards are treated as non-error accounting.
 
-In `SearchResultTest.testSearchResultObjectConversions`, update the `SearchResult` construction to include failed/skipped counts and successful snapshot IDs:
+## Questions
 
-```java
-SearchResult<LogMessage> searchResult =
-    new SearchResult<>(
-        logMessages,
-        1,
-        1,
-        5,
-        7,
-        6,
-        1,
-        2,
-        List.of("snapshot-a", "snapshot-b"),
-        internalAggregation);
+- Question: Should an incomplete logical chunk be reported as `failed` or `skipped`?
+  Answer: `failed`. If no replica returns for a logical snapshot/chunk required by the query, result completeness is affected.
+
+- Question: When should Astra report `skipped`?
+  Answer: Only when a concrete replica attempt does not return, but another replica returns data for the same logical snapshot/chunk.
+
+- Question: What should happen before replica-aware retry is implemented?
+  Answer: Prefer `failed` over `skipped`. Noisy dashboards are better than silently incomplete results.
+
+- Question: Should OpenSearch `_shards.total` count logical chunks or concrete shard attempts?
+  Answer: Use concrete OpenSearch-visible shard accounting for `_shards`: `total == successful + skipped + failed`. Keep Astra's internal `total_snapshots` as logical chunk count.
+
+## Public Interfaces
+
+This proposal changes externally visible, operational, and compatibility-sensitive behavior.
+
+- OpenSearch-compatible search responses will include `_shards.successful` and `_shards.skipped` in addition to existing `total` and `failed`.
+- OpenSearch-compatible `_shards.failed` will become non-zero when a required logical snapshot/chunk has no successful replica.
+- OpenSearch-compatible `_shards.skipped` will become non-zero when a failed/unused replica attempt is covered by another successful replica.
+- Internal gRPC `AstraSearch.SearchResult` will carry explicit snapshot-level shard accounting.
+- Metrics will be added:
+  - `astra_query_skipped_shards_total`
+  - `astra_query_failed_shards_total`
+- Query-visible behavior changes: incomplete results become visible as failed shards in OpenSearch Dashboards.
+
+No config flag is proposed. The new behavior should be the default because it fixes silent partial results.
+
+## Proposed Changes
+
+### Summary
+
+Add snapshot-level query outcome accounting to Astra's search result path, then use that accounting to populate OpenSearch-compatible shard metadata.
+
+The desired semantics are:
+
+```text
+failed = no replica returned data for a required logical snapshot/chunk
+skipped = a replica attempt did not return, but another replica returned the same logical snapshot/chunk
+successful = at least one replica returned the logical snapshot/chunk
 ```
 
-Add these assertions after the existing snapshot assertions:
+Example with `rep=1` and one timed-out cache shard:
 
-```java
-assertThat(protoSearchResult.getFailedSnapshots()).isEqualTo(1);
-assertThat(protoSearchResult.getSkippedSnapshots()).isEqualTo(2);
-assertThat(protoSearchResult.getSuccessfulSnapshotIdsList())
-    .containsExactly("snapshot-a", "snapshot-b");
+```json
+"_shards": {
+  "total": 1,
+  "successful": 0,
+  "skipped": 0,
+  "failed": 1
+}
 ```
 
-- [ ] **Step 2: Run the failing test**
+Example with two replicas where the first times out and the second succeeds:
 
-Run:
-
-```bash
-mvn -pl astra -Dtest=SearchResultTest#testSearchResultObjectConversions test
+```json
+"_shards": {
+  "total": 2,
+  "successful": 1,
+  "skipped": 1,
+  "failed": 0
+}
 ```
 
-Expected: compilation fails because `failed_snapshots`, `skipped_snapshots`, and `successful_snapshot_ids` do not exist yet.
+Astra's internal logical counters remain:
 
-- [ ] **Step 3: Add proto fields**
+```text
+total_snapshots = 1
+snapshots_with_replicas = 1
+```
 
-In `astra_search.proto`, update `message SearchResult`:
+### Detailed Design
+
+Add fields to `astra/src/main/proto/astra_search.proto`:
 
 ```proto
 message SearchResult {
@@ -109,9 +120,13 @@ message SearchResult {
 }
 ```
 
-- [ ] **Step 4: Update `SearchResult` fields and constructor**
+Update these classes to carry and aggregate the new fields:
 
-In `SearchResult.java`, add:
+- `astra/src/main/java/com/slack/astra/logstore/search/SearchResult.java`
+- `astra/src/main/java/com/slack/astra/logstore/search/SearchResultUtils.java`
+- `astra/src/main/java/com/slack/astra/logstore/search/SearchResultAggregatorImpl.java`
+
+`SearchResult` should carry:
 
 ```java
 public final int failedSnapshots;
@@ -119,457 +134,220 @@ public final int skippedSnapshots;
 public final List<String> successfulSnapshotIds;
 ```
 
-Update the main constructor signature:
+`SearchResultAggregatorImpl` should sum `failedSnapshots`, sum `skippedSnapshots`, and merge `successfulSnapshotIds`.
+
+### Local Query Accounting
+
+Update `astra/src/main/java/com/slack/astra/chunkManager/ChunkManagerBase.java` so local chunk query results retain the chunk ID that succeeded.
+
+Current behavior queries each local chunk and aggregates results, but the returned `SearchResult` does not identify which chunk IDs succeeded. The distributed coordinator needs those IDs to decide whether a requested logical snapshot was fulfilled.
+
+Implementation approach:
+
+- Keep each local chunk subtask paired with `chunk.id()`.
+- If the chunk query succeeds and returns `snapshotsWithReplicas > 0`, add that chunk ID to `successfulSnapshotIds`.
+- If the chunk subtask fails or times out, return a search result with `failedSnapshots = 1`.
+- Leave `LogIndexSearcherImpl` unaware of chunk identity. The chunk manager owns the chunk ID and should attach it.
+
+### Distributed Query Accounting
+
+Update `astra/src/main/java/com/slack/astra/logstore/search/AstraDistributedQueryService.java`.
+
+The coordinator currently selects one `SearchMetadata` entry per snapshot, batches snapshot IDs by node URL, queries those nodes, and aggregates node responses. That is enough for one-shot fanout, but not enough to classify covered replica misses.
+
+Add a retryable search plan:
 
 ```java
-public SearchResult(
-    List<T> hits,
-    long tookMicros,
-    int failedNodes,
-    int totalNodes,
-    int totalSnapshots,
-    int snapshotsWithReplicas,
-    int failedSnapshots,
-    int skippedSnapshots,
-    List<String> successfulSnapshotIds,
-    InternalAggregation internalAggregation) {
-  this.hits = hits;
-  this.tookMicros = tookMicros;
-  this.failedNodes = failedNodes;
-  this.totalNodes = totalNodes;
-  this.totalSnapshots = totalSnapshots;
-  this.snapshotsWithReplicas = snapshotsWithReplicas;
-  this.failedSnapshots = failedSnapshots;
-  this.skippedSnapshots = skippedSnapshots;
-  this.successfulSnapshotIds = successfulSnapshotIds;
-  this.internalAggregation = internalAggregation;
+private record SnapshotSearchPlan(String snapshotName, List<SearchMetadata> candidates) {}
+```
+
+For each logical snapshot:
+
+- Preserve the existing preferred candidate selection as the first candidate.
+- Keep the remaining candidates as fallback replicas.
+- Query unresolved snapshots in batches grouped by node URL.
+- Track `fulfilledSnapshotIds`.
+- Track failed replica attempt counts by snapshot ID.
+- Retry unresolved snapshots against remaining candidates until fulfilled, no candidates remain, or the query deadline is reached.
+
+Final classification:
+
+```text
+failedSnapshots = snapshots requested - fulfilledSnapshotIds
+skippedSnapshots = count of failed replica attempts whose snapshot ID is in fulfilledSnapshotIds
+```
+
+Only final classification should drive response fields and metrics. Raw failed attempts are not customer-visible failures when another replica covers the same logical chunk.
+
+### OpenSearch Response Mapping
+
+Update:
+
+- `astra/src/main/java/com/slack/astra/elasticsearchApi/searchResponse/EsSearchResponse.java`
+- `astra/src/main/java/com/slack/astra/elasticsearchApi/ElasticsearchApiService.java`
+
+Change `_shards` construction from:
+
+```json
+{
+  "total": 1,
+  "failed": 0
 }
 ```
 
-Update the no-arg constructor and static constants so the new counts are zero and successful IDs are `List.of()`.
+to:
 
-Add a factory for known failed snapshot counts:
-
-```java
-public static SearchResult<LogMessage> error(int failedSnapshots) {
-  return new SearchResult<>(
-      Collections.emptyList(), 0, 1, 1, failedSnapshots, 0, failedSnapshots, 0, List.of(), null);
+```json
+{
+  "total": 1,
+  "successful": 1,
+  "skipped": 0,
+  "failed": 0
 }
 ```
 
-Keep `error()` for existing callers, but route new shard-aware call sites to `error(int failedSnapshots)`.
+Map fields as:
 
-- [ ] **Step 5: Update equality, hash, and string rendering**
+```text
+successful = snapshots_with_replicas
+skipped = skipped_snapshots
+failed = failed_snapshots
+total = successful + skipped + failed
+```
 
-In `SearchResult.toString`, include:
+This intentionally uses concrete shard-attempt accounting for OpenSearch `_shards.total`, while Astra's existing `total_snapshots` remains logical chunk accounting.
+
+### Metrics
+
+Add counters in `AstraDistributedQueryService`:
 
 ```java
-+ ", failedSnapshots="
-+ failedSnapshots
-+ ", skippedSnapshots="
-+ skippedSnapshots
-+ ", successfulSnapshotIds="
-+ successfulSnapshotIds
+public static final String ASTRA_QUERY_SKIPPED_SHARDS_TOTAL =
+    "astra_query_skipped_shards_total";
+public static final String ASTRA_QUERY_FAILED_SHARDS_TOTAL =
+    "astra_query_failed_shards_total";
 ```
 
-In `equals`, compare:
+Increment from final aggregated classification:
 
-```java
-if (failedSnapshots != that.failedSnapshots) return false;
-if (skippedSnapshots != that.skippedSnapshots) return false;
-if (!successfulSnapshotIds.equals(that.successfulSnapshotIds)) return false;
+```text
+astra_query_failed_shards_total += failed_snapshots
+astra_query_skipped_shards_total += skipped_snapshots
 ```
 
-In `hashCode`, include:
+Do not tag these counters with snapshot IDs, chunk IDs, or node URLs. Those labels are too high-cardinality for Prometheus.
 
-```java
-result = 31 * result + failedSnapshots;
-result = 31 * result + skippedSnapshots;
-result = 31 * result + successfulSnapshotIds.hashCode();
+### Rollout
+
+Implement in phases:
+
+1. Add snapshot-level fields to `SearchResult` and protobuf conversion.
+2. Aggregate the new fields through `SearchResultAggregatorImpl`.
+3. Attach successful local chunk IDs in `ChunkManagerBase`.
+4. Update OpenSearch `_shards` response shape to include `successful`, `skipped`, and `failed`.
+5. Mark unresolved distributed snapshots as `failed`.
+6. Add replica fallback and classify replica-covered misses as `skipped`.
+7. Emit Prometheus counters.
+
+The minimum safe behavior is phase 5. If phase 6 is deferred, unresolved snapshots should still be reported as `failed`, not `skipped`.
+
+### Files To Modify
+
+- `astra/src/main/proto/astra_search.proto`
+- `astra/src/main/java/com/slack/astra/logstore/search/SearchResult.java`
+- `astra/src/main/java/com/slack/astra/logstore/search/SearchResultUtils.java`
+- `astra/src/main/java/com/slack/astra/logstore/search/SearchResultAggregatorImpl.java`
+- `astra/src/main/java/com/slack/astra/chunkManager/ChunkManagerBase.java`
+- `astra/src/main/java/com/slack/astra/logstore/search/LogIndexSearcherImpl.java`
+- `astra/src/main/java/com/slack/astra/logstore/search/AstraDistributedQueryService.java`
+- `astra/src/main/java/com/slack/astra/elasticsearchApi/searchResponse/EsSearchResponse.java`
+- `astra/src/main/java/com/slack/astra/elasticsearchApi/ElasticsearchApiService.java`
+
+## Implementation Details
+
+### Task 1: Add Snapshot Accounting Fields
+
+Modify `astra/src/main/proto/astra_search.proto` by adding fields `10`, `11`, and `12` to `SearchResult`:
+
+```proto
+int32 failed_snapshots = 10;
+int32 skipped_snapshots = 11;
+repeated string successful_snapshot_ids = 12;
 ```
 
-- [ ] **Step 6: Update protobuf conversion**
+Modify `astra/src/main/java/com/slack/astra/logstore/search/SearchResult.java`:
 
-In `SearchResultUtils.fromSearchResultProto`, pass the new proto fields into the constructor:
+- Add `failedSnapshots`, `skippedSnapshots`, and `successfulSnapshotIds`.
+- Update the main constructor to accept those fields between `snapshotsWithReplicas` and `internalAggregation`.
+- Update `empty()`, `error()`, and `soft_error()` to set new fields to zero and `List.of()`.
+- Add `error(int failedSnapshots)` for call sites that know how many logical snapshots failed.
+- Update `toString`, `equals`, and `hashCode`.
 
-```java
-protoSearchResult.getFailedSnapshots(),
-protoSearchResult.getSkippedSnapshots(),
-protoSearchResult.getSuccessfulSnapshotIdsList(),
-```
+Modify `astra/src/main/java/com/slack/astra/logstore/search/SearchResultUtils.java`:
 
-In `SearchResultUtils.toSearchResultProto`, add span tags:
+- `fromSearchResultProto` should read `getFailedSnapshots()`, `getSkippedSnapshots()`, and `getSuccessfulSnapshotIdsList()`.
+- `toSearchResultProto` should set `failedSnapshots`, `skippedSnapshots`, and `successfulSnapshotIds`.
+- Add trace tags for failed/skipped snapshot counts and successful snapshot ID count.
 
-```java
-span.tag("failedSnapshots", String.valueOf(searchResult.failedSnapshots));
-span.tag("skippedSnapshots", String.valueOf(searchResult.skippedSnapshots));
-span.tag("successfulSnapshotIds", String.valueOf(searchResult.successfulSnapshotIds.size()));
-```
+Test with `astra/src/test/java/com/slack/astra/server/SearchResultTest.java` by extending `testSearchResultObjectConversions` to assert the new fields survive object-to-proto-to-object conversion.
 
-Set proto fields:
+### Task 2: Aggregate New Fields
 
-```java
-searchResultBuilder.setFailedSnapshots(searchResult.failedSnapshots);
-searchResultBuilder.setSkippedSnapshots(searchResult.skippedSnapshots);
-searchResultBuilder.addAllSuccessfulSnapshotIds(searchResult.successfulSnapshotIds);
-```
-
-- [ ] **Step 7: Run the conversion test**
-
-Run:
-
-```bash
-mvn -pl astra -Dtest=SearchResultTest#testSearchResultObjectConversions test
-```
-
-Expected: `SearchResultTest#testSearchResultObjectConversions` passes.
-
-- [ ] **Step 8: Commit**
-
-```bash
-git add astra/src/main/proto/astra_search.proto astra/src/main/java/com/slack/astra/logstore/search/SearchResult.java astra/src/main/java/com/slack/astra/logstore/search/SearchResultUtils.java astra/src/test/java/com/slack/astra/server/SearchResultTest.java
-git commit -m "Add snapshot shard accounting to search results"
-```
-
-## Task 2: Aggregate Snapshot Shard Accounting
-
-**Files:**
-- Modify: `astra/src/main/java/com/slack/astra/logstore/search/SearchResultAggregatorImpl.java`
-- Test: `astra/src/test/java/com/slack/astra/logstore/search/SearchResultAggregatorImplTest.java`
-
-- [ ] **Step 1: Write the failing aggregation test**
-
-Add a test to `SearchResultAggregatorImplTest`:
-
-```java
-@Test
-public void testAggregatesSnapshotShardAccounting() throws IOException {
-  long tookMs = 10;
-  Instant startTime = Instant.now();
-  long searchStartMs = startTime.toEpochMilli();
-  long searchEndMs = startTime.plus(1, ChronoUnit.HOURS).toEpochMilli();
-
-  SearchResult<LogMessage> searchResult1 =
-      new SearchResult<>(
-          Collections.emptyList(),
-          tookMs,
-          0,
-          1,
-          2,
-          1,
-          1,
-          0,
-          List.of("snapshot-a"),
-          null);
-  SearchResult<LogMessage> searchResult2 =
-      new SearchResult<>(
-          Collections.emptyList(),
-          tookMs + 1,
-          0,
-          1,
-          2,
-          1,
-          0,
-          1,
-          List.of("snapshot-b"),
-          null);
-
-  SearchQuery searchQuery =
-      new SearchQuery(
-          MessageUtil.TEST_DATASET_NAME,
-          searchStartMs,
-          searchEndMs,
-          0,
-          Collections.emptyList(),
-          QueryBuilderUtil.generateQueryBuilder("Message1", searchStartMs, searchEndMs),
-          null,
-          createDateHistogramAggregatorFactoriesBuilder(
-              "1", LogMessage.SystemField.TIME_SINCE_EPOCH.fieldName, "10m", 1));
-
-  SearchResult<LogMessage> aggregated =
-      new SearchResultAggregatorImpl<LogMessage>(searchQuery)
-          .aggregate(List.of(searchResult1, searchResult2), true);
-
-  assertThat(aggregated.totalSnapshots).isEqualTo(4);
-  assertThat(aggregated.snapshotsWithReplicas).isEqualTo(2);
-  assertThat(aggregated.failedSnapshots).isEqualTo(1);
-  assertThat(aggregated.skippedSnapshots).isEqualTo(1);
-  assertThat(aggregated.successfulSnapshotIds).containsExactly("snapshot-a", "snapshot-b");
-}
-```
-
-- [ ] **Step 2: Run the failing test**
-
-Run:
-
-```bash
-mvn -pl astra -Dtest=SearchResultAggregatorImplTest#testAggregatesSnapshotShardAccounting test
-```
-
-Expected: compilation fails or assertions fail because the aggregator does not merge the new fields.
-
-- [ ] **Step 3: Update aggregator implementation**
-
-In `SearchResultAggregatorImpl.aggregate`, add local accumulators:
+Modify `astra/src/main/java/com/slack/astra/logstore/search/SearchResultAggregatorImpl.java`:
 
 ```java
 int failedSnapshots = 0;
 int skippedSnapshots = 0;
 List<String> successfulSnapshotIds = new ArrayList<>();
+
+for (SearchResult<T> searchResult : searchResults) {
+  failedSnapshots += searchResult.failedSnapshots;
+  skippedSnapshots += searchResult.skippedSnapshots;
+  successfulSnapshotIds.addAll(searchResult.successfulSnapshotIds);
+}
 ```
 
-Inside the loop:
+Pass the aggregated values into the returned `SearchResult`.
 
-```java
-failedSnapshots += searchResult.failedSnapshots;
-skippedSnapshots += searchResult.skippedSnapshots;
-successfulSnapshotIds.addAll(searchResult.successfulSnapshotIds);
+Update all existing `SearchResult` constructor call sites in `astra/src/test/java/com/slack/astra/logstore/search/SearchResultAggregatorImplTest.java` to include the new constructor args. Add a focused test that combines two results and verifies:
+
+```text
+failedSnapshots is summed
+skippedSnapshots is summed
+successfulSnapshotIds are concatenated
 ```
 
-Pass the fields into the returned `SearchResult`:
+### Task 3: Attach Successful Local Chunk IDs
 
-```java
-return new SearchResult<>(
-    resultHits,
-    tookMicros,
-    failedNodes,
-    totalNodes,
-    totalSnapshots,
-    snapshpotReplicas,
-    failedSnapshots,
-    skippedSnapshots,
-    successfulSnapshotIds,
-    internalAggregation);
-```
+Modify `astra/src/main/java/com/slack/astra/chunkManager/ChunkManagerBase.java`.
 
-- [ ] **Step 4: Update existing constructor call sites in tests**
-
-Update each existing `SearchResult` constructor call in `SearchResultAggregatorImplTest` by inserting:
-
-```java
-0,
-0,
-List.of(),
-```
-
-between `snapshotsWithReplicas` and `internalAggregation`, unless the test is explicitly checking failed/skipped snapshot accounting.
-
-- [ ] **Step 5: Run aggregator tests**
-
-Run:
-
-```bash
-mvn -pl astra -Dtest=SearchResultAggregatorImplTest test
-```
-
-Expected: all `SearchResultAggregatorImplTest` tests pass.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add astra/src/main/java/com/slack/astra/logstore/search/SearchResultAggregatorImpl.java astra/src/test/java/com/slack/astra/logstore/search/SearchResultAggregatorImplTest.java
-git commit -m "Aggregate snapshot shard accounting"
-```
-
-## Task 3: Attach Local Chunk Success IDs
-
-**Files:**
-- Modify: `astra/src/main/java/com/slack/astra/chunkManager/ChunkManagerBase.java`
-- Modify: `astra/src/main/java/com/slack/astra/logstore/search/LogIndexSearcherImpl.java`
-- Test: `astra/src/test/java/com/slack/astra/logstore/search/AstraLocalQueryServiceTest.java`
-
-- [ ] **Step 1: Write the failing local query test**
-
-In `AstraLocalQueryServiceTest`, add a test that queries a known chunk ID and asserts the response carries that ID in `successful_snapshot_ids`. Use the existing local query setup in the file and assert:
-
-```java
-AstraSearch.SearchResult result = localQueryService.doSearch(searchRequest);
-
-assertThat(result.getTotalSnapshots()).isEqualTo(1);
-assertThat(result.getSnapshotsWithReplicas()).isEqualTo(1);
-assertThat(result.getFailedSnapshots()).isEqualTo(0);
-assertThat(result.getSkippedSnapshots()).isEqualTo(0);
-assertThat(result.getSuccessfulSnapshotIdsList()).containsExactly(chunkId);
-```
-
-- [ ] **Step 2: Run the failing local query test**
-
-Run:
-
-```bash
-mvn -pl astra -Dtest=AstraLocalQueryServiceTest test
-```
-
-Expected: the new assertion fails because successful snapshot IDs are empty.
-
-- [ ] **Step 3: Add a result wrapper in `ChunkManagerBase`**
-
-In `ChunkManagerBase`, add a private record near the class fields:
+Introduce a private record to retain chunk identity through structured task completion:
 
 ```java
 private record ChunkSearchTask<T>(
     String chunkId, StructuredTaskScope.Subtask<SearchResult<T>> subtask) {}
 ```
 
-Change `chunkSubtasks` to keep chunk IDs:
+When creating local chunk query subtasks, wrap each subtask with the chunk ID. When collecting a successful result:
+
+- If `result.snapshotsWithReplicas > 0`, return a copy of the result with `successfulSnapshotIds = List.of(chunkId)`.
+- If the task fails or times out, return `SearchResult.error(1)`.
+
+Modify `astra/src/main/java/com/slack/astra/logstore/search/LogIndexSearcherImpl.java` only to satisfy the new `SearchResult` constructor. Do not give `LogIndexSearcherImpl` chunk identity responsibility.
+
+Add or update `astra/src/test/java/com/slack/astra/logstore/search/AstraLocalQueryServiceTest.java` to assert a local query response includes the queried chunk ID in `successful_snapshot_ids`.
+
+### Task 4: Fix OpenSearch `_shards` Shape
+
+Modify `astra/src/main/java/com/slack/astra/elasticsearchApi/searchResponse/EsSearchResponse.java`.
+
+Replace the current two-field shard builder:
 
 ```java
-List<ChunkSearchTask<T>> chunkSubtasks =
-    chunksMatchingQuery.stream()
-        .map(
-            (chunk) ->
-                new ChunkSearchTask<>(
-                    chunk.id(),
-                    scope.fork(
-                        currentTraceContext.wrap(
-                            () -> {
-                              ScopedSpan span =
-                                  Tracing.currentTracer()
-                                      .startScopedSpan("ChunkManagerBase.chunkQuery");
-                              span.tag("chunkId", chunk.id());
-                              concurrentQueries.acquire();
-                              try {
-                                return chunk.query(query);
-                              } finally {
-                                concurrentQueries.release();
-                                span.finish();
-                              }
-                            }))))
-        .toList();
+public Builder shardsMetadata(int total, int failed)
 ```
 
-Update the result mapping to use `chunkSearchTask.subtask()` and `chunkSearchTask.chunkId()`.
-
-- [ ] **Step 4: Mark successful chunk IDs and failed chunks**
-
-When a chunk subtask succeeds:
-
-```java
-SearchResult<T> result = searchResultSubtask.get();
-if (result.snapshotsWithReplicas > 0) {
-  return new SearchResult<>(
-      result.hits,
-      result.tookMicros,
-      result.failedNodes,
-      result.totalNodes,
-      result.totalSnapshots,
-      result.snapshotsWithReplicas,
-      result.failedSnapshots,
-      result.skippedSnapshots,
-      List.of(chunkSearchTask.chunkId()),
-      result.internalAggregation);
-}
-return result;
-```
-
-When a chunk subtask fails or times out:
-
-```java
-return (SearchResult<T>) SearchResult.error(1);
-```
-
-- [ ] **Step 5: Update `LogIndexSearcherImpl` constructor call**
-
-In `LogIndexSearcherImpl`, update the successful `SearchResult` return:
-
-```java
-return new SearchResult<>(
-    results,
-    elapsedTime.elapsed(TimeUnit.MICROSECONDS),
-    0,
-    0,
-    1,
-    1,
-    0,
-    0,
-    List.of(),
-    internalAggregation);
-```
-
-The chunk manager owns the chunk ID because `LogIndexSearcherImpl` should not need chunk identity.
-
-- [ ] **Step 6: Run local query tests**
-
-Run:
-
-```bash
-mvn -pl astra -Dtest=AstraLocalQueryServiceTest test
-```
-
-Expected: `AstraLocalQueryServiceTest` passes.
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add astra/src/main/java/com/slack/astra/chunkManager/ChunkManagerBase.java astra/src/main/java/com/slack/astra/logstore/search/LogIndexSearcherImpl.java astra/src/test/java/com/slack/astra/logstore/search/AstraLocalQueryServiceTest.java
-git commit -m "Track successful local chunk query ids"
-```
-
-## Task 4: Return OpenSearch-Compatible Shard Counts
-
-**Files:**
-- Modify: `astra/src/main/java/com/slack/astra/elasticsearchApi/searchResponse/EsSearchResponse.java`
-- Modify: `astra/src/main/java/com/slack/astra/elasticsearchApi/ElasticsearchApiService.java`
-- Test: `astra/src/test/java/com/slack/astra/elasticsearchApi/ElasticsearchApiServiceTest.java`
-
-- [ ] **Step 1: Write the failing API response test**
-
-Add a test that uses an `AstraQueryServiceBase` fake returning a fixed proto result:
-
-```java
-@Test
-public void testSearchResponseIncludesSuccessfulSkippedAndFailedShards() throws Exception {
-  AstraQueryServiceBase fakeSearcher =
-      new AstraQueryServiceBase() {
-        @Override
-        public AstraSearch.SearchResult doSearch(AstraSearch.SearchRequest request) {
-          return AstraSearch.SearchResult.newBuilder()
-              .setTookMicros(1000)
-              .setTotalSnapshots(4)
-              .setSnapshotsWithReplicas(2)
-              .setFailedSnapshots(1)
-              .setSkippedSnapshots(1)
-              .build();
-        }
-
-        @Override
-        public AstraSearch.SchemaResult getSchema(AstraSearch.SchemaRequest request) {
-          return AstraSearch.SchemaResult.newBuilder().build();
-        }
-      };
-
-  ElasticsearchApiService service =
-      new ElasticsearchApiService(
-          fakeSearcher,
-          DEFAULT_CLUSTER_NAME,
-          DEFAULT_HOST,
-          DEFAULT_PORT,
-          mock(DatasetMetadataStore.class));
-
-  HttpResponse response =
-      service.search(TEST_DATASET_NAME, "{\"size\":0,\"query\":{\"match_all\":{}}}");
-  JsonNode body = OBJECT_MAPPER.readTree(response.aggregate().join().contentUtf8());
-
-  assertThat(body.get("_shards").get("total").asInt()).isEqualTo(4);
-  assertThat(body.get("_shards").get("successful").asInt()).isEqualTo(2);
-  assertThat(body.get("_shards").get("skipped").asInt()).isEqualTo(1);
-  assertThat(body.get("_shards").get("failed").asInt()).isEqualTo(1);
-}
-```
-
-- [ ] **Step 2: Run the failing API response test**
-
-Run:
-
-```bash
-mvn -pl astra -Dtest=ElasticsearchApiServiceTest#testSearchResponseIncludesSuccessfulSkippedAndFailedShards test
-```
-
-Expected: the test fails because `_shards.successful` and `_shards.skipped` are missing.
-
-- [ ] **Step 3: Update `EsSearchResponse.Builder`**
-
-Replace `shardsMetadata(int total, int failed)` with:
+with:
 
 ```java
 public Builder shardsMetadata(int successful, int skipped, int failed) {
@@ -583,563 +361,131 @@ public Builder shardsMetadata(int successful, int skipped, int failed) {
 }
 ```
 
-- [ ] **Step 4: Update `ElasticsearchApiService` mapping**
-
-In `doSearch`, compute counts from snapshot fields:
+Modify `astra/src/main/java/com/slack/astra/elasticsearchApi/ElasticsearchApiService.java` so both success and error response paths call:
 
 ```java
-int successfulShards = searchResult.getSnapshotsWithReplicas();
-int skippedShards = searchResult.getSkippedSnapshots();
-int failedShards = searchResult.getFailedSnapshots();
+.shardsMetadata(
+    searchResult.getSnapshotsWithReplicas(),
+    searchResult.getSkippedSnapshots(),
+    searchResult.getFailedSnapshots())
 ```
 
-Replace both `.shardsMetadata(searchResult.getTotalNodes(), searchResult.getFailedNodes())` calls with:
+While editing this block, fix the existing tracing typo so `resultTotalSnapshots` uses `searchResult.getTotalSnapshots()`, not `searchResult.getTotalNodes()`.
 
-```java
-.shardsMetadata(successfulShards, skippedShards, failedShards)
+Update `astra/src/test/java/com/slack/astra/elasticsearchApi/ElasticsearchApiServiceTest.java` to assert `_shards.total`, `_shards.successful`, `_shards.skipped`, and `_shards.failed`.
+
+### Task 5: Classify Uncovered Distributed Snapshots As Failed
+
+Modify `astra/src/main/java/com/slack/astra/logstore/search/AstraDistributedQueryService.java`.
+
+Before adding replica fallback, make the one-shot path safe:
+
+- Keep each distributed node request paired with its requested snapshot names.
+- If a node request fails, add `SearchResult.error(requestedSnapshotNames.size())`.
+- If a node request succeeds but returns fewer `successfulSnapshotIds` than requested, classify the missing requested snapshots as failed.
+
+This phase ensures `rep=1` timeout or cache request failure returns:
+
+```text
+totalSnapshots = requested logical snapshot count
+snapshotsWithReplicas = successful logical snapshot count
+failedSnapshots = missing logical snapshot count
+skippedSnapshots = 0
 ```
 
-Fix the existing trace typo while editing this block:
+Add a test in `astra/src/test/java/com/slack/astra/logstore/search/AstraDistributedQueryServiceTest.java` where one requested snapshot has one candidate and the stub fails. Assert:
 
-```java
-span.tag("resultTotalSnapshots", String.valueOf(searchResult.getTotalSnapshots()));
+```text
+totalSnapshots = 1
+snapshotsWithReplicas = 0
+failedSnapshots = 1
+skippedSnapshots = 0
 ```
 
-- [ ] **Step 5: Update existing `_shards` assertions**
+### Task 6: Add Replica Fallback
 
-Update existing tests such as `testSingleSearchReturnsAttributeAggregation` to assert:
+Modify `AstraDistributedQueryService` to preserve all candidates per logical snapshot.
 
-```java
-assertThat(jsonNode.get("_shards").get("total").asInt()).isEqualTo(1);
-assertThat(jsonNode.get("_shards").get("successful").asInt()).isEqualTo(1);
-assertThat(jsonNode.get("_shards").get("skipped").asInt()).isEqualTo(0);
-assertThat(jsonNode.get("_shards").get("failed").asInt()).isEqualTo(0);
-```
-
-- [ ] **Step 6: Run API tests**
-
-Run:
-
-```bash
-mvn -pl astra -Dtest=ElasticsearchApiServiceTest test
-```
-
-Expected: `ElasticsearchApiServiceTest` passes.
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add astra/src/main/java/com/slack/astra/elasticsearchApi/searchResponse/EsSearchResponse.java astra/src/main/java/com/slack/astra/elasticsearchApi/ElasticsearchApiService.java astra/src/test/java/com/slack/astra/elasticsearchApi/ElasticsearchApiServiceTest.java
-git commit -m "Expose OpenSearch shard skipped and successful counts"
-```
-
-## Task 5: Classify Missing Distributed Shards As Failed
-
-**Files:**
-- Modify: `astra/src/main/java/com/slack/astra/logstore/search/AstraDistributedQueryService.java`
-- Test: `astra/src/test/java/com/slack/astra/logstore/search/AstraDistributedQueryServiceTest.java`
-
-- [ ] **Step 1: Write the failing distributed failure test**
-
-In `AstraDistributedQueryServiceTest`, add a test with one snapshot, one search metadata entry, and a future stub that throws:
-
-```java
-@Test
-public void testDistributedSearchMarksUncoveredSnapshotAsFailedShard() {
-  Instant endTime = Instant.now();
-  Instant startTime = endTime.minus(1, ChronoUnit.HOURS);
-  String dataset = "foo";
-  String snapshot = "snapshot1";
-
-  SearchMetadataStore searchMetadataStoreMock = mock(SearchMetadataStore.class);
-  when(searchMetadataStoreMock.listSync())
-      .thenReturn(List.of(new SearchMetadata("foo", snapshot, "http://127.0.0.1")));
-  SnapshotMetadataStore snapshotMetadataStoreMock = mock(SnapshotMetadataStore.class);
-  when(snapshotMetadataStoreMock.listSync())
-      .thenReturn(
-          List.of(
-              new SnapshotMetadata(
-                  snapshot,
-                  startTime.toEpochMilli(),
-                  endTime.toEpochMilli(),
-                  10,
-                  "1",
-                  0)));
-  DatasetMetadataStore datasetMetadataStoreMock = mock(DatasetMetadataStore.class);
-  when(datasetMetadataStoreMock.listSync())
-      .thenReturn(
-          List.of(
-              new DatasetMetadata(
-                  dataset,
-                  dataset,
-                  10,
-                  List.of(
-                      new DatasetPartitionMetadata(
-                          startTime.minus(1, ChronoUnit.DAYS).toEpochMilli(),
-                          Long.MAX_VALUE,
-                          List.of("1"))),
-                  dataset)));
-
-  AstraDistributedQueryService service =
-      new AstraDistributedQueryService(
-          searchMetadataStoreMock,
-          snapshotMetadataStoreMock,
-          datasetMetadataStoreMock,
-          metricsRegistry,
-          Duration.ofSeconds(2),
-          Duration.ofSeconds(2));
-
-  AstraServiceGrpc.AstraServiceFutureStub futureStub = mock(AstraServiceGrpc.AstraServiceFutureStub.class);
-  service.stubs.put("http://127.0.0.1", futureStub);
-  when(futureStub.withDeadlineAfter(anyLong(), any(TimeUnit.class))).thenReturn(futureStub);
-  when(futureStub.withInterceptors(any())).thenReturn(futureStub);
-  when(futureStub.search(any(AstraSearch.SearchRequest.class)))
-      .thenReturn(Futures.immediateFailedFuture(new RuntimeException("cache timeout")));
-
-  AstraSearch.SearchResult result =
-      service.doSearch(
-          AstraSearch.SearchRequest.newBuilder()
-              .setDataset(dataset)
-              .setStartTimeEpochMs(startTime.toEpochMilli())
-              .setEndTimeEpochMs(endTime.toEpochMilli())
-              .setHowMany(1)
-              .setQuery("{\"match_all\":{}}")
-              .build());
-
-  assertThat(result.getTotalSnapshots()).isEqualTo(1);
-  assertThat(result.getSnapshotsWithReplicas()).isEqualTo(0);
-  assertThat(result.getFailedSnapshots()).isEqualTo(1);
-  assertThat(result.getSkippedSnapshots()).isEqualTo(0);
-
-  service.close();
-}
-```
-
-- [ ] **Step 2: Run the failing distributed failure test**
-
-Run:
-
-```bash
-mvn -pl astra -Dtest=AstraDistributedQueryServiceTest#testDistributedSearchMarksUncoveredSnapshotAsFailedShard test
-```
-
-Expected: the test fails because failed snapshot count remains zero.
-
-- [ ] **Step 3: Track requested snapshots per node request**
-
-In `AstraDistributedQueryService`, add a private record:
-
-```java
-private record SearchBatch(
-    String nodeUrl,
-    List<String> snapshotNames,
-    StructuredTaskScope.Subtask<SearchResult<LogMessage>> subtask) {}
-```
-
-Build `SearchBatch` values instead of bare subtasks in `distributedSearch`.
-
-- [ ] **Step 4: Convert failed node requests into failed snapshot counts**
-
-When processing completed subtasks, replace generic `SearchResult.error()` for failed node requests with:
-
-```java
-response.add(SearchResult.error(searchBatch.snapshotNames().size()));
-```
-
-For successful node requests, normalize missing IDs:
-
-```java
-SearchResult<LogMessage> result = searchBatch.subtask().get();
-int missingSnapshotCount =
-    searchBatch.snapshotNames().size() - result.successfulSnapshotIds.size();
-if (missingSnapshotCount > 0) {
-  response.add(
-      new SearchResult<>(
-          result.hits,
-          result.tookMicros,
-          result.failedNodes,
-          result.totalNodes,
-          result.totalSnapshots + missingSnapshotCount,
-          result.snapshotsWithReplicas,
-          result.failedSnapshots + missingSnapshotCount,
-          result.skippedSnapshots,
-          result.successfulSnapshotIds,
-          result.internalAggregation));
-} else {
-  response.add(result);
-}
-```
-
-- [ ] **Step 5: Run the distributed failure test**
-
-Run:
-
-```bash
-mvn -pl astra -Dtest=AstraDistributedQueryServiceTest#testDistributedSearchMarksUncoveredSnapshotAsFailedShard test
-```
-
-Expected: the test passes and reports one failed snapshot.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add astra/src/main/java/com/slack/astra/logstore/search/AstraDistributedQueryService.java astra/src/test/java/com/slack/astra/logstore/search/AstraDistributedQueryServiceTest.java
-git commit -m "Mark uncovered distributed snapshots as failed shards"
-```
-
-## Task 6: Add Replica Fallback And Skipped Classification
-
-**Files:**
-- Modify: `astra/src/main/java/com/slack/astra/logstore/search/AstraDistributedQueryService.java`
-- Test: `astra/src/test/java/com/slack/astra/logstore/search/AstraDistributedQueryServiceTest.java`
-
-- [ ] **Step 1: Write the failing replica-covered skipped test**
-
-Add a test with one logical snapshot hosted by two search metadata entries. Configure the first stub to fail and the second stub to return a successful search result with the same snapshot ID:
-
-```java
-@Test
-public void testDistributedSearchMarksReplicaCoveredFailureAsSkippedShard() {
-  Instant endTime = Instant.now();
-  Instant startTime = endTime.minus(1, ChronoUnit.HOURS);
-  String dataset = "foo";
-  String snapshot = "snapshot1";
-
-  SearchMetadataStore searchMetadataStoreMock = mock(SearchMetadataStore.class);
-  when(searchMetadataStoreMock.listSync())
-      .thenReturn(
-          List.of(
-              new SearchMetadata("search-1", snapshot, "http://127.0.0.1"),
-              new SearchMetadata("search-2", snapshot, "http://127.0.0.2")));
-  SnapshotMetadataStore snapshotMetadataStoreMock = mock(SnapshotMetadataStore.class);
-  when(snapshotMetadataStoreMock.listSync())
-      .thenReturn(
-          List.of(
-              new SnapshotMetadata(
-                  snapshot,
-                  startTime.toEpochMilli(),
-                  endTime.toEpochMilli(),
-                  10,
-                  "1",
-                  0)));
-  DatasetMetadataStore datasetMetadataStoreMock = mock(DatasetMetadataStore.class);
-  when(datasetMetadataStoreMock.listSync())
-      .thenReturn(
-          List.of(
-              new DatasetMetadata(
-                  dataset,
-                  dataset,
-                  10,
-                  List.of(
-                      new DatasetPartitionMetadata(
-                          startTime.minus(1, ChronoUnit.DAYS).toEpochMilli(),
-                          Long.MAX_VALUE,
-                          List.of("1"))),
-                  dataset)));
-
-  AstraDistributedQueryService service =
-      new AstraDistributedQueryService(
-          searchMetadataStoreMock,
-          snapshotMetadataStoreMock,
-          datasetMetadataStoreMock,
-          metricsRegistry,
-          Duration.ofSeconds(2),
-          Duration.ofSeconds(2));
-
-  AstraServiceGrpc.AstraServiceFutureStub failingStub = mock(AstraServiceGrpc.AstraServiceFutureStub.class);
-  AstraServiceGrpc.AstraServiceFutureStub successfulStub = mock(AstraServiceGrpc.AstraServiceFutureStub.class);
-  service.stubs.put("http://127.0.0.1", failingStub);
-  service.stubs.put("http://127.0.0.2", successfulStub);
-
-  when(failingStub.withDeadlineAfter(anyLong(), any(TimeUnit.class))).thenReturn(failingStub);
-  when(failingStub.withInterceptors(any())).thenReturn(failingStub);
-  when(failingStub.search(any(AstraSearch.SearchRequest.class)))
-      .thenReturn(Futures.immediateFailedFuture(new RuntimeException("cache timeout")));
-
-  when(successfulStub.withDeadlineAfter(anyLong(), any(TimeUnit.class))).thenReturn(successfulStub);
-  when(successfulStub.withInterceptors(any())).thenReturn(successfulStub);
-  when(successfulStub.search(any(AstraSearch.SearchRequest.class)))
-      .thenReturn(
-          Futures.immediateFuture(
-              AstraSearch.SearchResult.newBuilder()
-                  .setTotalSnapshots(1)
-                  .setSnapshotsWithReplicas(1)
-                  .addSuccessfulSnapshotIds(snapshot)
-                  .build()));
-
-  AstraSearch.SearchResult result =
-      service.doSearch(
-          AstraSearch.SearchRequest.newBuilder()
-              .setDataset(dataset)
-              .setStartTimeEpochMs(startTime.toEpochMilli())
-              .setEndTimeEpochMs(endTime.toEpochMilli())
-              .setHowMany(1)
-              .setQuery("{\"match_all\":{}}")
-              .build());
-
-  assertThat(result.getTotalSnapshots()).isEqualTo(1);
-  assertThat(result.getSnapshotsWithReplicas()).isEqualTo(1);
-  assertThat(result.getFailedSnapshots()).isEqualTo(0);
-  assertThat(result.getSkippedSnapshots()).isEqualTo(1);
-  assertThat(result.getSuccessfulSnapshotIdsList()).containsExactly(snapshot);
-
-  service.close();
-}
-```
-
-- [ ] **Step 2: Run the failing replica-covered skipped test**
-
-Run:
-
-```bash
-mvn -pl astra -Dtest=AstraDistributedQueryServiceTest#testDistributedSearchMarksReplicaCoveredFailureAsSkippedShard test
-```
-
-Expected: the test fails because the coordinator does not retry another replica.
-
-- [ ] **Step 3: Add replica planning records**
-
-In `AstraDistributedQueryService`, add:
+Add:
 
 ```java
 private record SnapshotSearchPlan(String snapshotName, List<SearchMetadata> candidates) {}
 ```
 
-Add a helper that preserves existing preferred selection order:
+Build plans from `getMatchingSearchMetadata`. Candidate order should preserve current behavior:
 
-```java
-private static List<SearchMetadata> orderedCandidates(List<SearchMetadata> candidates) {
-  SearchMetadata first = pickSearchNodeToQuery(candidates);
-  List<SearchMetadata> ordered = new ArrayList<>();
-  ordered.add(first);
-  candidates.stream().filter(candidate -> !candidate.equals(first)).forEach(ordered::add);
-  return ordered;
-}
-```
+1. The existing `pickSearchNodeToQuery(candidates)` result first.
+2. Remaining candidates after that.
 
-- [ ] **Step 4: Build retryable search plans**
-
-After `getMatchingSearchMetadata`, create:
-
-```java
-Map<String, SnapshotSearchPlan> searchPlansBySnapshot = new HashMap<>();
-searchMetadataNodesMatchingQuery.forEach(
-    (snapshotName, candidates) ->
-        searchPlansBySnapshot.put(
-            snapshotName, new SnapshotSearchPlan(snapshotName, orderedCandidates(candidates))));
-```
-
-- [ ] **Step 5: Add a batched query helper**
-
-Extract the existing structured task fanout into a helper:
-
-```java
-private List<SearchResult<LogMessage>> querySnapshotBatches(
-    AstraSearch.SearchRequest distribSearchReq,
-    Map<String, List<String>> nodesAndSnapshotsToQuery,
-    CurrentTraceContext currentTraceContext,
-    Set<String> failedAttemptSnapshotIds) {
-  try (var scope = new StructuredTaskScope<SearchResult<LogMessage>>()) {
-    List<SearchBatch> searchBatches =
-        nodesAndSnapshotsToQuery.entrySet().stream()
-            .map(
-                searchNode ->
-                    new SearchBatch(
-                        searchNode.getKey(),
-                        searchNode.getValue(),
-                        scope.fork(
-                            currentTraceContext.wrap(
-                                () -> {
-                                  AstraServiceGrpc.AstraServiceFutureStub stub =
-                                      getStub(searchNode.getKey());
-                                  if (stub == null) {
-                                    return null;
-                                  }
-
-                                  AstraSearch.SearchRequest localSearchReq =
-                                      distribSearchReq.toBuilder()
-                                          .addAllChunkIds(searchNode.getValue())
-                                          .build();
-                                  return SearchResultUtils.fromSearchResultProtoOrEmpty(
-                                      stub.withDeadlineAfter(
-                                              defaultQueryTimeout.toMillis(), TimeUnit.MILLISECONDS)
-                                          .withInterceptors(
-                                              GrpcTracing.newBuilder(Tracing.current())
-                                                  .build()
-                                                  .newClientInterceptor())
-                                          .search(localSearchReq)
-                                          .get());
-                                }))))
-            .toList();
-
-    try {
-      scope.joinUntil(Instant.now().plus(defaultQueryTimeout));
-    } catch (TimeoutException timeoutException) {
-      scope.shutdown();
-      scope.join();
-    }
-
-    List<SearchResult<LogMessage>> response = new ArrayList<>(searchBatches.size());
-    for (SearchBatch searchBatch : searchBatches) {
-      try {
-        if (searchBatch.subtask().state().equals(StructuredTaskScope.Subtask.State.SUCCESS)) {
-          SearchResult<LogMessage> result = searchBatch.subtask().get();
-          if (result == null) {
-            failedAttemptSnapshotIds.addAll(searchBatch.snapshotNames());
-            continue;
-          }
-
-          Set<String> successfulSnapshotIds = new HashSet<>(result.successfulSnapshotIds);
-          searchBatch.snapshotNames().stream()
-              .filter(snapshotName -> !successfulSnapshotIds.contains(snapshotName))
-              .forEach(failedAttemptSnapshotIds::add);
-          response.add(result);
-        } else {
-          failedAttemptSnapshotIds.addAll(searchBatch.snapshotNames());
-          LOG.warn("Error fetching part of search result {}", searchBatch.subtask());
-        }
-      } catch (Exception e) {
-        failedAttemptSnapshotIds.addAll(searchBatch.snapshotNames());
-        LOG.error("Error fetching search result", e);
-      }
-    }
-    return response;
-  } catch (Exception e) {
-    LOG.error("Search batch failed", e);
-    nodesAndSnapshotsToQuery.values().forEach(failedAttemptSnapshotIds::addAll);
-    return List.of();
-  }
-}
-```
-
-The helper must not permanently classify final `failedSnapshots`; it only records attempts that did not return.
-
-- [ ] **Step 6: Retry unresolved snapshots on remaining replicas**
-
-In `distributedSearch`, replace the one-shot query flow with:
+Use a loop that queries unresolved snapshots until no work remains or the deadline is reached:
 
 ```java
 Set<String> fulfilledSnapshotIds = new HashSet<>();
-Set<String> failedAttemptSnapshotIds = new HashSet<>();
-List<SearchResult<LogMessage>> allSuccessfulResults = new ArrayList<>();
+Map<String, Integer> failedAttemptCountsBySnapshot = new HashMap<>();
 Map<String, Integer> nextCandidateIndexBySnapshot = new HashMap<>();
-
-while (fulfilledSnapshotIds.size() < searchPlansBySnapshot.size()) {
-  Map<String, List<String>> retryBatch = new HashMap<>();
-  for (SnapshotSearchPlan plan : searchPlansBySnapshot.values()) {
-    if (fulfilledSnapshotIds.contains(plan.snapshotName())) {
-      continue;
-    }
-    int nextCandidateIndex = nextCandidateIndexBySnapshot.getOrDefault(plan.snapshotName(), 0);
-    if (nextCandidateIndex >= plan.candidates().size()) {
-      continue;
-    }
-    SearchMetadata candidate = plan.candidates().get(nextCandidateIndex);
-    retryBatch.computeIfAbsent(candidate.url, ignored -> new ArrayList<>()).add(plan.snapshotName());
-    nextCandidateIndexBySnapshot.put(plan.snapshotName(), nextCandidateIndex + 1);
-  }
-
-  if (retryBatch.isEmpty()) {
-    break;
-  }
-
-  List<SearchResult<LogMessage>> attemptResults =
-      querySnapshotBatches(distribSearchReq, retryBatch, currentTraceContext, failedAttemptSnapshotIds);
-  for (SearchResult<LogMessage> result : attemptResults) {
-    fulfilledSnapshotIds.addAll(result.successfulSnapshotIds);
-    if (!result.successfulSnapshotIds.isEmpty()) {
-      allSuccessfulResults.add(result);
-    }
-  }
-}
+List<SearchResult<LogMessage>> successfulResults = new ArrayList<>();
 ```
 
-- [ ] **Step 7: Apply final shard classification**
+For each round:
 
-After attempts finish:
+- Build a node URL to snapshot name batch using the next candidate for every unresolved snapshot.
+- Query batches with the existing gRPC stub/deadline/interceptor behavior.
+- Add returned `successfulSnapshotIds` to `fulfilledSnapshotIds`.
+- Increment `failedAttemptCountsBySnapshot` for each requested snapshot ID missing from that attempt's successful IDs.
+- Continue only for snapshots that remain unresolved and still have untried candidates.
+
+After all attempts:
 
 ```java
 Set<String> failedSnapshotIds = new HashSet<>(searchPlansBySnapshot.keySet());
 failedSnapshotIds.removeAll(fulfilledSnapshotIds);
 
-int skippedSnapshots = 0;
-for (String failedAttemptSnapshotId : failedAttemptSnapshotIds) {
-  if (fulfilledSnapshotIds.contains(failedAttemptSnapshotId)) {
-    skippedSnapshots++;
-  }
-}
-
-if (!failedSnapshotIds.isEmpty() || skippedSnapshots > 0) {
-  allSuccessfulResults.add(
-      new SearchResult<>(
-          List.of(),
-          0,
-          failedSnapshotIds.size(),
-          0,
-          failedSnapshotIds.size(),
-          0,
-          failedSnapshotIds.size(),
-          skippedSnapshots,
-          List.of(),
-          null));
-}
-
-return allSuccessfulResults;
+int skippedSnapshots =
+    failedAttemptCountsBySnapshot.entrySet().stream()
+        .filter(entry -> fulfilledSnapshotIds.contains(entry.getKey()))
+        .mapToInt(Map.Entry::getValue)
+        .sum();
 ```
 
-- [ ] **Step 8: Run replica fallback tests**
-
-Run:
-
-```bash
-mvn -pl astra -Dtest=AstraDistributedQueryServiceTest#testDistributedSearchMarksReplicaCoveredFailureAsSkippedShard test
-mvn -pl astra -Dtest=AstraDistributedQueryServiceTest#testDistributedSearchMarksUncoveredSnapshotAsFailedShard test
-```
-
-Expected: both tests pass.
-
-- [ ] **Step 9: Commit**
-
-```bash
-git add astra/src/main/java/com/slack/astra/logstore/search/AstraDistributedQueryService.java astra/src/test/java/com/slack/astra/logstore/search/AstraDistributedQueryServiceTest.java
-git commit -m "Retry replicas and classify covered shard misses as skipped"
-```
-
-## Task 7: Emit Prometheus Counters
-
-**Files:**
-- Modify: `astra/src/main/java/com/slack/astra/logstore/search/AstraDistributedQueryService.java`
-- Test: `astra/src/test/java/com/slack/astra/logstore/search/AstraDistributedQueryServiceTest.java`
-
-- [ ] **Step 1: Write the failing metric assertions**
-
-In the failed-shard test, assert:
+Add one accounting-only `SearchResult` to the successful results before aggregation:
 
 ```java
-assertThat(metricsRegistry.counter("astra_query_failed_shards_total").count()).isEqualTo(1.0);
-assertThat(metricsRegistry.counter("astra_query_skipped_shards_total").count()).isEqualTo(0.0);
+new SearchResult<>(
+    List.of(),
+    0,
+    failedSnapshotIds.size(),
+    0,
+    failedSnapshotIds.size(),
+    0,
+    failedSnapshotIds.size(),
+    skippedSnapshots,
+    List.of(),
+    null)
 ```
 
-In the replica-covered skipped test, assert:
+This result contributes final failed/skipped counts without adding hits or aggregations.
 
-```java
-assertThat(metricsRegistry.counter("astra_query_failed_shards_total").count()).isEqualTo(0.0);
-assertThat(metricsRegistry.counter("astra_query_skipped_shards_total").count()).isEqualTo(1.0);
+Add a test where one logical snapshot has two candidates: the first stub fails, the second returns `successful_snapshot_ids = [snapshot]`. Assert:
+
+```text
+totalSnapshots = 1
+snapshotsWithReplicas = 1
+failedSnapshots = 0
+skippedSnapshots = 1
 ```
 
-- [ ] **Step 2: Run the failing metric tests**
+Add a second test where all candidates fail. Assert:
 
-Run:
-
-```bash
-mvn -pl astra -Dtest=AstraDistributedQueryServiceTest#testDistributedSearchMarksUncoveredSnapshotAsFailedShard,AstraDistributedQueryServiceTest#testDistributedSearchMarksReplicaCoveredFailureAsSkippedShard test
+```text
+totalSnapshots = 1
+snapshotsWithReplicas = 0
+failedSnapshots = 1
+skippedSnapshots = 0
 ```
 
-Expected: metric assertions fail because the counters do not exist or remain zero.
+### Task 7: Emit Metrics
 
-- [ ] **Step 3: Add counter constants and fields**
-
-In `AstraDistributedQueryService`, add:
+Modify `AstraDistributedQueryService`:
 
 ```java
 public static final String ASTRA_QUERY_SKIPPED_SHARDS_TOTAL =
@@ -1151,139 +497,115 @@ private final Counter skippedShardsTotal;
 private final Counter failedShardsTotal;
 ```
 
-Initialize them in the constructor:
+Initialize both counters in the constructor with `meterRegistry.counter(ASTRA_QUERY_SKIPPED_SHARDS_TOTAL)` and `meterRegistry.counter(ASTRA_QUERY_FAILED_SHARDS_TOTAL)`.
+
+After final aggregation in `doSearch`, increment:
 
 ```java
-this.skippedShardsTotal = meterRegistry.counter(ASTRA_QUERY_SKIPPED_SHARDS_TOTAL);
-this.failedShardsTotal = meterRegistry.counter(ASTRA_QUERY_FAILED_SHARDS_TOTAL);
+skippedShardsTotal.increment(aggregatedResult.skippedSnapshots);
+failedShardsTotal.increment(aggregatedResult.failedSnapshots);
 ```
 
-- [ ] **Step 4: Increment counters from final classification**
+Add assertions to distributed query tests:
 
-After `aggregatedResult` is available in `doSearch`, add:
-
-```java
-if (aggregatedResult.skippedSnapshots > 0) {
-  skippedShardsTotal.increment(aggregatedResult.skippedSnapshots);
-}
-if (aggregatedResult.failedSnapshots > 0) {
-  failedShardsTotal.increment(aggregatedResult.failedSnapshots);
-}
+```text
+rep=1 failed request increments astra_query_failed_shards_total by 1
+replica-covered miss increments astra_query_skipped_shards_total by 1
 ```
 
-- [ ] **Step 5: Run metric tests**
+## Compatibility, Deprecation, and Migration Plan
 
-Run:
+The protobuf change is additive. Existing serialized responses that do not contain the new fields will read the counts as zero and the successful snapshot IDs as empty.
 
-```bash
-mvn -pl astra -Dtest=AstraDistributedQueryServiceTest#testDistributedSearchMarksUncoveredSnapshotAsFailedShard,AstraDistributedQueryServiceTest#testDistributedSearchMarksReplicaCoveredFailureAsSkippedShard test
-```
+OpenSearch-compatible JSON response shape changes by adding `_shards.successful` and `_shards.skipped`. This is compatible with OpenSearch and Elasticsearch response conventions. Consumers that only read `_shards.total` and `_shards.failed` should continue to work.
 
-Expected: metric assertions pass.
+User-visible behavior changes intentionally:
 
-- [ ] **Step 6: Commit**
+- Queries with missing logical snapshot data will now show failed shards.
+- OpenSearch Dashboards may show red shard-failure banners for partial results that previously looked clean.
+- Queries fully covered by another replica will not show failed shards.
 
-```bash
-git add astra/src/main/java/com/slack/astra/logstore/search/AstraDistributedQueryService.java astra/src/test/java/com/slack/astra/logstore/search/AstraDistributedQueryServiceTest.java
-git commit -m "Emit query skipped and failed shard counters"
-```
+No metadata migration is required. No config migration is required.
 
-## Task 8: Full Verification
+Rollback is safe at the binary/API level because the protobuf fields are additive. Rolling back would restore the old behavior where some incomplete responses may appear clean in OpenSearch Dashboards.
 
-**Files:**
-- Verify changed files only.
+## Test Plan
 
-- [ ] **Step 1: Run focused tests**
+Add or update tests in:
 
-Run:
+- `astra/src/test/java/com/slack/astra/server/SearchResultTest.java`
+- `astra/src/test/java/com/slack/astra/logstore/search/SearchResultAggregatorImplTest.java`
+- `astra/src/test/java/com/slack/astra/logstore/search/AstraLocalQueryServiceTest.java`
+- `astra/src/test/java/com/slack/astra/logstore/search/AstraDistributedQueryServiceTest.java`
+- `astra/src/test/java/com/slack/astra/elasticsearchApi/ElasticsearchApiServiceTest.java`
+
+Required coverage:
+
+- Proto conversion preserves `failed_snapshots`, `skipped_snapshots`, and `successful_snapshot_ids`.
+- Aggregation sums failed/skipped snapshot counts and merges successful snapshot IDs.
+- Local chunk queries attach successful chunk IDs.
+- OpenSearch responses include `_shards.successful`, `_shards.skipped`, and `_shards.failed`.
+- `rep=1` timeout/failure returns `failed=1`, `skipped=0`.
+- First replica timeout plus second replica success returns `failed=0`, `skipped=1`.
+- All replicas fail returns `failed=1`, `skipped=0`.
+- Metrics increment from final classification, not raw attempts.
+
+Focused verification command:
 
 ```bash
 mvn -pl astra -Dtest=SearchResultTest,SearchResultAggregatorImplTest,AstraLocalQueryServiceTest,AstraDistributedQueryServiceTest,ElasticsearchApiServiceTest test
 ```
 
-Expected: all focused tests pass.
-
-- [ ] **Step 2: Run module tests**
-
-Run:
+Broader verification command:
 
 ```bash
 mvn -pl astra test
 ```
 
-Expected: the `astra` module test suite passes.
+## Documentation Plan
 
-- [ ] **Step 3: Inspect final API response shape**
+Update docs if this ADR is implemented:
 
-Use any passing `ElasticsearchApiServiceTest` response body and verify `_shards` has exactly this shape:
+- Add or update a query behavior doc under `docs/topics/` describing shard failure and skipped semantics.
+- Add the new metrics to the metrics documentation under `docs/metrics/`.
+- Mention that OpenSearch Dashboards shard-failure banners indicate incomplete logical chunk coverage.
 
-```json
-{
-  "total": 1,
-  "successful": 1,
-  "skipped": 0,
-  "failed": 0
-}
-```
+No README update is required unless the query behavior docs are linked from README in a later cleanup.
 
-For a missing logical snapshot, verify:
+## Rejected Alternatives
 
-```json
-{
-  "total": 1,
-  "successful": 0,
-  "skipped": 0,
-  "failed": 1
-}
-```
+- Always report incomplete shard responses as `skipped`.
+  - Rejected because it can make incomplete results look healthy in OpenSearch Dashboards, especially for `rep=1`.
 
-For a replica-covered miss, verify:
+- Always report every replica miss as `failed`.
+  - Rejected because it creates noisy dashboards when another replica returned complete data for the same logical chunk.
 
-```json
-{
-  "total": 2,
-  "successful": 1,
-  "skipped": 1,
-  "failed": 0
-}
-```
+- Keep only the existing `total_snapshots` and `snapshots_with_replicas` fields.
+  - Rejected because OpenSearch Dashboards relies on `_shards.failed` for user-visible partial-result warnings.
 
-- [ ] **Step 4: Review operational semantics before merge**
+- Add only metrics and leave API responses unchanged.
+  - Rejected because operators need both Prometheus visibility and UI visibility in OpenSearch Dashboards.
 
-Confirm these points in the PR description:
+- Add a config flag to choose skipped versus failed behavior.
+  - Rejected for the initial implementation because the completeness semantics are objective. A missing logical chunk should be failed.
 
-- `rep=1` timeout or failed cache shard returns `_shards.failed > 0`.
-- Replica fallback success returns `_shards.failed == 0` and `_shards.skipped > 0`.
-- `astra_query_failed_shards_total` increments only for missing logical chunks.
-- `astra_query_skipped_shards_total` increments only for covered replica misses.
-- The OpenSearch response now includes `successful`, `skipped`, and `failed`.
+## Consequences
 
-- [ ] **Step 5: Commit final verification note if docs are updated**
+Benefits:
 
-If the implementation adds or updates docs, commit those docs with:
+- Incomplete query results become visible in OpenSearch Dashboards.
+- Replica-covered misses avoid noisy shard-failure banners.
+- Operators get Prometheus counters independent of UI behavior.
+- Astra's OpenSearch-compatible response shape moves closer to Elasticsearch/OpenSearch conventions.
 
-```bash
-git add docs
-git commit -m "Document shard failure and skipped semantics"
-```
+Costs:
 
-## Review Notes
+- `AstraDistributedQueryService` becomes more complex because it must track per-snapshot replica candidates and retry unresolved snapshots.
+- The response path carries additional snapshot ID data.
+- Some existing clean-looking queries may start showing shard-failure banners because they were already returning partial results.
 
-The most important review decision is `_shards.total` for replica-covered misses. This plan uses concrete shard-attempt accounting for the OpenSearch response so the invariant remains:
+Follow-up work:
 
-```text
-_shards.total == _shards.successful + _shards.skipped + _shards.failed
-```
-
-That means one logical chunk with a failed first replica and successful second replica returns:
-
-```json
-"_shards": {
-  "total": 2,
-  "successful": 1,
-  "skipped": 1,
-  "failed": 0
-}
-```
-
-The internal `total_snapshots` field remains logical chunk count, so the same query has `total_snapshots == 1` and `snapshots_with_replicas == 1`.
+- Consider adding `_shards.failures` details with shard IDs and timeout/error reasons.
+- Consider honoring `allow_partial_search_results=false` once Astra can reliably classify partial results.
+- Consider exposing a debug field with logical `total_snapshots` and concrete `_shards.total` if operators find the distinction confusing.
