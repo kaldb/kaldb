@@ -395,9 +395,9 @@ class BlobStoreTest {
   @Test
   void testBlankS3PathPrefixBehavesLikeNoPrefix() throws ExecutionException, InterruptedException {
     BlobStore blobStore = prefixedBlobStore(s3Client, "///");
-    String logicalKey = "logical/path.txt";
+    String key = "logical/path.txt";
 
-    blobStore.uploadData(logicalKey, "plain text", false);
+    blobStore.uploadData(key, "plain text", false);
 
     assertThat(
             s3Client
@@ -408,6 +408,6 @@ class BlobStoreTest {
                 .stream()
                 .map(s3Object -> s3Object.key())
                 .toList())
-        .containsExactly(logicalKey);
+        .containsExactly(key);
   }
 }

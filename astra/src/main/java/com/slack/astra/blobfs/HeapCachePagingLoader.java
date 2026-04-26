@@ -93,7 +93,7 @@ public class HeapCachePagingLoader {
             .headObject(
                 HeadObjectRequest.builder()
                     .bucket(blobStore.bucketName)
-                    .key(blobStore.getPhysicalPath(key.getPath()))
+                    .key(blobStore.addPathPrefix(key.getPath()))
                     .build())
             .get()
             .contentLength();

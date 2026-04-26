@@ -319,6 +319,16 @@ public class AstraConfigTest {
   }
 
   @Test
+  public void testDefaultConfigSupportsS3PathPrefixEnvOverride() throws IOException {
+    final AstraConfigs.AstraConfig config =
+        AstraConfig.fromYamlConfig(
+            Files.readString(Path.of("../config/config.yaml")),
+            Map.of("S3_PATH_PREFIX", "tenant-a/astra")::get);
+
+    assertThat(getS3PathPrefix(config.getS3Config())).isEqualTo("tenant-a/astra");
+  }
+
+  @Test
   public void testParseAstraJsonConfigFileWithS3PathPrefix() throws IOException {
     final File cfgFile =
         new File(getClass().getClassLoader().getResource("test_config.json").getFile());

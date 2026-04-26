@@ -256,6 +256,7 @@ s3Config:
   s3EndPoint: localhost:9090
   s3Bucket: test-s3-bucket
   s3TargetThroughputGbps: 25
+  s3PathPrefix: shared/path
 ```
 
 <deflist type="wide">
@@ -281,6 +282,9 @@ AWS S3 bucket name
 <def title="s3TargetThroughputGbps">
 Throughput target in gigabits per second. This configuration controls how many concurrent connections will be 
 established in the AWS CRT client. Recommended to be set to match the maximum bandwidth of the underlying host.
+</def>
+<def title="s3PathPrefix">
+Optional object key prefix to use inside the configured S3 bucket.
 </def>
 </deflist>
 
