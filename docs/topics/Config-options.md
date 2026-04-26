@@ -255,6 +255,8 @@ s3Config:
   s3Region: us-east-1
   s3EndPoint: localhost:9090
   s3Bucket: test-s3-bucket
+  s3PathPrefix: ""
+  s3ForcePathStyle: false
   s3TargetThroughputGbps: 25
 ```
 
@@ -277,6 +279,15 @@ provided by the AWS client.
 AWS S3 bucket name
 
 <tip>Separate buckets per cluster is recommended for better cost tracking and improved performance.</tip>
+</def>
+<def title="s3PathPrefix">
+Optional prefix inside the configured bucket. Astra stores objects under this prefix while keeping chunk and file names
+logical internally. Leading and trailing <code>/</code> characters are ignored, so <code>astra/chunks</code>,
+<code>/astra/chunks</code>, and <code>astra/chunks/</code> behave the same.
+</def>
+<def title="s3ForcePathStyle">
+Use path-style S3 requests instead of virtual-host style. Keep this disabled for AWS S3, and enable it for local
+Docker or S3-compatible endpoints such as MinIO when bucket-style DNS is unavailable.
 </def>
 <def title="s3TargetThroughputGbps">
 Throughput target in gigabits per second. This configuration controls how many concurrent connections will be 

@@ -30,6 +30,16 @@ class DiskCachePagingLoaderTest {
   private final S3AsyncClient s3Client =
       spy(S3TestUtils.createS3CrtClient(S3_MOCK_EXTENSION.getServiceEndpoint()));
 
+  private static BlobStore prefixedBlobStore(S3AsyncClient s3Client, String prefix) {
+    try {
+      return BlobStore.class
+          .getConstructor(S3AsyncClient.class, String.class, String.class)
+          .newInstance(s3Client, TEST_BUCKET, prefix);
+    } catch (ReflectiveOperationException e) {
+      throw new AssertionError("Expected BlobStore to support an optional S3 path prefix", e);
+    }
+  }
+
   @Test
   public void testCacheKeyCalculations() {
     BlobStore blobStore = spy(new BlobStore(s3Client, TEST_BUCKET));
@@ -116,6 +126,26 @@ class DiskCachePagingLoaderTest {
     DiskCachePagingLoader diskCachePagingLoader = new DiskCachePagingLoader(blobStore, s3Client, 3);
 
     String contents = "alksjdsfuwjwui387kja83kjw8i";
+    byte[] readBytes = new byte[contents.getBytes().length];
+
+    Path directory = Files.createTempDirectory(chunkId);
+    Path exampleFile = Files.createFile(Path.of(directory.toString(), filename));
+    Files.writeString(exampleFile, contents, Charset.defaultCharset());
+    blobStore.upload(chunkId, directory);
+
+    diskCachePagingLoader.readBytes(chunkId, filename, readBytes, 0, 0, contents.getBytes().length);
+    assertThat(contents).isEqualTo(new String(readBytes));
+  }
+
+  @Test
+  public void testDiskPagingWithBlobStoreS3PathPrefix() throws IOException, ExecutionException {
+    BlobStore blobStore = spy(prefixedBlobStore(s3Client, "/astra/cache/"));
+    String filename = "file4.example";
+    String chunkId = UUID.randomUUID().toString();
+
+    DiskCachePagingLoader diskCachePagingLoader = new DiskCachePagingLoader(blobStore, s3Client, 5);
+
+    String contents = "prefixed-disk-cache-loader";
     byte[] readBytes = new byte[contents.getBytes().length];
 
     Path directory = Files.createTempDirectory(chunkId);

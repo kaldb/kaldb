@@ -21,6 +21,23 @@ import org.junit.jupiter.api.Test;
 
 public class AstraConfigTest {
 
+  private static String getS3PathPrefix(AstraConfigs.S3Config s3Config) {
+    try {
+      return (String) AstraConfigs.S3Config.class.getMethod("getS3PathPrefix").invoke(s3Config);
+    } catch (ReflectiveOperationException e) {
+      throw new AssertionError("Expected S3Config to expose s3PathPrefix", e);
+    }
+  }
+
+  private static boolean getS3ForcePathStyle(AstraConfigs.S3Config s3Config) {
+    try {
+      return (boolean)
+          AstraConfigs.S3Config.class.getMethod("getS3ForcePathStyle").invoke(s3Config);
+    } catch (ReflectiveOperationException e) {
+      throw new AssertionError("Expected S3Config to expose s3ForcePathStyle", e);
+    }
+  }
+
   @BeforeEach
   public void setUp() {
     AstraConfig.reset();
@@ -141,6 +158,8 @@ public class AstraConfigTest {
     assertThat(s3Config.getS3SecretKey()).isEmpty();
     assertThat(s3Config.getS3Region()).isEmpty();
     assertThat(s3Config.getS3EndPoint()).isEmpty();
+    assertThat(getS3PathPrefix(s3Config)).isEmpty();
+    assertThat(getS3ForcePathStyle(s3Config)).isFalse();
   }
 
   @Test
@@ -176,6 +195,8 @@ public class AstraConfigTest {
     assertThat(s3Config.getS3Region()).isEqualTo("us-east-1");
     assertThat(s3Config.getS3EndPoint()).isEqualTo("https://s3.us-east-1.amazonaws.com/");
     assertThat(s3Config.getS3Bucket()).isEqualTo("test-s3-bucket");
+    assertThat(getS3PathPrefix(s3Config)).isEmpty();
+    assertThat(getS3ForcePathStyle(s3Config)).isFalse();
 
     final AstraConfigs.TracingConfig tracingConfig = config.getTracingConfig();
     assertThat(tracingConfig.getZipkinEndpoint()).isEqualTo("http://localhost:9411/api/v2/spans");
@@ -309,6 +330,66 @@ public class AstraConfigTest {
   }
 
   @Test
+  public void testParseAstraJsonConfigFileWithS3PathPrefix() throws IOException {
+    final File cfgFile =
+        new File(getClass().getClassLoader().getResource("test_config.json").getFile());
+    String configWithPrefix =
+        Files.readString(cfgFile.toPath())
+            .replace(
+                "\"s3Bucket\": \"test-s3-bucket\"",
+                "\"s3Bucket\": \"test-s3-bucket\",\n    \"s3PathPrefix\": \"/astra/chunks/\"");
+
+    final AstraConfigs.AstraConfig config = AstraConfig.fromJsonConfig(configWithPrefix);
+
+    assertThat(getS3PathPrefix(config.getS3Config())).isEqualTo("/astra/chunks/");
+  }
+
+  @Test
+  public void testParseAstraYamlConfigFileWithS3PathPrefix() throws IOException {
+    final File cfgFile =
+        new File(getClass().getClassLoader().getResource("test_config.yaml").getFile());
+    String configWithPrefix =
+        Files.readString(cfgFile.toPath())
+            .replace(
+                "  s3Bucket: \"test-s3-bucket\"\n",
+                "  s3Bucket: \"test-s3-bucket\"\n  s3PathPrefix: \"/astra/chunks/\"\n");
+
+    final AstraConfigs.AstraConfig config = AstraConfig.fromYamlConfig(configWithPrefix);
+
+    assertThat(getS3PathPrefix(config.getS3Config())).isEqualTo("/astra/chunks/");
+  }
+
+  @Test
+  public void testParseAstraJsonConfigFileWithS3ForcePathStyle() throws IOException {
+    final File cfgFile =
+        new File(getClass().getClassLoader().getResource("test_config.json").getFile());
+    String configWithPathStyle =
+        Files.readString(cfgFile.toPath())
+            .replace(
+                "\"s3Bucket\": \"test-s3-bucket\"",
+                "\"s3Bucket\": \"test-s3-bucket\",\n    \"s3ForcePathStyle\": true");
+
+    final AstraConfigs.AstraConfig config = AstraConfig.fromJsonConfig(configWithPathStyle);
+
+    assertThat(getS3ForcePathStyle(config.getS3Config())).isTrue();
+  }
+
+  @Test
+  public void testParseAstraYamlConfigFileWithS3ForcePathStyle() throws IOException {
+    final File cfgFile =
+        new File(getClass().getClassLoader().getResource("test_config.yaml").getFile());
+    String configWithPathStyle =
+        Files.readString(cfgFile.toPath())
+            .replace(
+                "  s3Bucket: \"test-s3-bucket\"\n",
+                "  s3Bucket: \"test-s3-bucket\"\n  s3ForcePathStyle: true\n");
+
+    final AstraConfigs.AstraConfig config = AstraConfig.fromYamlConfig(configWithPathStyle);
+
+    assertThat(getS3ForcePathStyle(config.getS3Config())).isTrue();
+  }
+
+  @Test
   public void testParseAstraYamlConfigFile() throws IOException {
     final File cfgFile =
         new File(getClass().getClassLoader().getResource("test_config.yaml").getFile());
@@ -347,6 +428,8 @@ public class AstraConfigTest {
     assertThat(s3Config.getS3Region()).isEqualTo("us-east-1");
     assertThat(s3Config.getS3EndPoint()).isEqualTo("localhost:9090");
     assertThat(s3Config.getS3Bucket()).isEqualTo("test-s3-bucket");
+    assertThat(getS3PathPrefix(s3Config)).isEmpty();
+    assertThat(getS3ForcePathStyle(s3Config)).isFalse();
 
     final AstraConfigs.TracingConfig tracingConfig = config.getTracingConfig();
     assertThat(tracingConfig.getZipkinEndpoint()).isEqualTo("http://localhost:9411/api/v2/spans");

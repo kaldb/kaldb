@@ -82,6 +82,8 @@ message S3Config {
   string s3_end_point = 4;
   string s3_bucket = 5;
   double s3_target_throughput_gbps = 6;
+  string s3_path_prefix = 7;
+  bool s3_force_path_style = 8;
 }
 
 message TracingConfig {

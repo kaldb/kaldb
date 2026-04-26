@@ -34,6 +34,16 @@ class BlobStoreTest {
   private final S3AsyncClient s3Client =
       S3TestUtils.createS3CrtClient(S3_MOCK_EXTENSION.getServiceEndpoint());
 
+  private static BlobStore prefixedBlobStore(S3AsyncClient s3Client, String prefix) {
+    try {
+      return BlobStore.class
+          .getConstructor(S3AsyncClient.class, String.class, String.class)
+          .newInstance(s3Client, TEST_BUCKET, prefix);
+    } catch (ReflectiveOperationException e) {
+      throw new AssertionError("Expected BlobStore to support an optional S3 path prefix", e);
+    }
+  }
+
   @Test
   void testUploadDownload() throws IOException {
     BlobStore blobStore = new BlobStore(s3Client, TEST_BUCKET);
@@ -306,5 +316,98 @@ class BlobStoreTest {
     List<String> filesInDestination = blobStore.listFiles(destinationChunkId);
     assertThat(filesInDestination)
         .contains(String.format("%s/%s", destinationChunkId, foo.getFileName()));
+  }
+
+  @Test
+  void testUploadDownloadAndListWithS3PathPrefix()
+      throws IOException, ExecutionException, InterruptedException {
+    BlobStore blobStore = prefixedBlobStore(s3Client, "/astra/chunks/");
+
+    Path directoryUpload = Files.createTempDirectory("");
+    Path fileToUpload = Files.createTempFile(directoryUpload, "prefixed-", ".txt");
+    Files.writeString(fileToUpload, "prefixed blob store content");
+    String chunkId = UUID.randomUUID().toString();
+
+    blobStore.upload(chunkId, directoryUpload);
+
+    String expectedPhysicalKey = "astra/chunks/" + chunkId + "/" + fileToUpload.getFileName();
+    assertThat(
+            s3Client
+                .listObjects(
+                    ListObjectsRequest.builder()
+                        .bucket(TEST_BUCKET)
+                        .prefix("astra/chunks/" + chunkId)
+                        .build())
+                .get()
+                .contents()
+                .stream()
+                .map(s3Object -> s3Object.key())
+                .toList())
+        .containsExactly(expectedPhysicalKey);
+
+    assertThat(blobStore.listFiles(chunkId))
+        .containsExactly(chunkId + "/" + fileToUpload.getFileName());
+    assertThat(blobStore.pathExists(chunkId)).isTrue();
+
+    Path directoryDownloaded = Files.createTempDirectory("");
+    blobStore.download(chunkId, directoryDownloaded);
+
+    File[] downloadedFiles = directoryDownloaded.toFile().listFiles();
+    assertThat(Objects.requireNonNull(downloadedFiles)).hasSize(1);
+    assertThat(Files.readString(downloadedFiles[0].toPath()))
+        .isEqualTo(Files.readString(fileToUpload));
+  }
+
+  @Test
+  void testUploadReadCopyAndDeleteWithS3PathPrefix()
+      throws ExecutionException, InterruptedException {
+    BlobStore blobStore = prefixedBlobStore(s3Client, "trace-cache");
+    String sourceKey = "trace-cache/source.json.gz";
+    String destinationKey = "trace-cache-copy/source.json.gz";
+    String jsonData = "{\"traceId\":\"trace-123\"}";
+
+    blobStore.uploadData(sourceKey, jsonData, true);
+
+    assertThat(blobStore.readFileData(sourceKey, true)).isEqualTo(jsonData);
+    assertThat(
+            s3Client
+                .listObjects(
+                    ListObjectsRequest.builder()
+                        .bucket(TEST_BUCKET)
+                        .prefix("trace-cache/" + sourceKey)
+                        .build())
+                .get()
+                .contents()
+                .stream()
+                .map(s3Object -> s3Object.key())
+                .toList())
+        .containsExactly("trace-cache/" + sourceKey);
+
+    blobStore.copyFile(sourceKey, destinationKey);
+
+    assertThat(blobStore.readFileData(destinationKey, true)).isEqualTo(jsonData);
+    assertThat(blobStore.listFiles("trace-cache-copy")).containsExactly(destinationKey);
+
+    assertThat(blobStore.delete("trace-cache-copy")).isTrue();
+    assertThat(blobStore.fileExists(destinationKey)).isFalse();
+  }
+
+  @Test
+  void testBlankS3PathPrefixBehavesLikeNoPrefix() throws ExecutionException, InterruptedException {
+    BlobStore blobStore = prefixedBlobStore(s3Client, "///");
+    String logicalKey = "logical/path.txt";
+
+    blobStore.uploadData(logicalKey, "plain text", false);
+
+    assertThat(
+            s3Client
+                .listObjects(
+                    ListObjectsRequest.builder().bucket(TEST_BUCKET).prefix("logical/").build())
+                .get()
+                .contents()
+                .stream()
+                .map(s3Object -> s3Object.key())
+                .toList())
+        .containsExactly(logicalKey);
   }
 }

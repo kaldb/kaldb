@@ -52,12 +52,57 @@ public class BlobStore {
 
   protected final String bucketName;
   protected final S3AsyncClient s3AsyncClient;
+  private final String s3PathPrefix;
   private final S3TransferManager transferManager;
 
   public BlobStore(S3AsyncClient s3AsyncClient, String bucketName) {
+    this(s3AsyncClient, bucketName, null);
+  }
+
+  public BlobStore(S3AsyncClient s3AsyncClient, String bucketName, String s3PathPrefix) {
     this.bucketName = bucketName;
     this.s3AsyncClient = s3AsyncClient;
+    this.s3PathPrefix = normalizePathPrefix(s3PathPrefix);
     this.transferManager = S3TransferManager.builder().s3Client(s3AsyncClient).build();
+  }
+
+  private static String normalizePathPrefix(String s3PathPrefix) {
+    if (s3PathPrefix == null || s3PathPrefix.isEmpty()) {
+      return "";
+    }
+
+    int start = 0;
+    int end = s3PathPrefix.length();
+    while (start < end && s3PathPrefix.charAt(start) == '/') {
+      start++;
+    }
+    while (end > start && s3PathPrefix.charAt(end - 1) == '/') {
+      end--;
+    }
+    return s3PathPrefix.substring(start, end);
+  }
+
+  private boolean hasPathPrefix() {
+    return !s3PathPrefix.isEmpty();
+  }
+
+  String getPhysicalPath(String logicalPath) {
+    if (!hasPathPrefix()) {
+      return logicalPath;
+    }
+    return s3PathPrefix + "/" + logicalPath;
+  }
+
+  private String getLogicalPath(String physicalPath) {
+    if (!hasPathPrefix()) {
+      return physicalPath;
+    }
+
+    String prefixWithSlash = s3PathPrefix + "/";
+    if (physicalPath.startsWith(prefixWithSlash)) {
+      return physicalPath.substring(prefixWithSlash.length());
+    }
+    return physicalPath;
   }
 
   /**
@@ -79,7 +124,7 @@ public class BlobStore {
               .uploadDirectory(
                   UploadDirectoryRequest.builder()
                       .source(directoryToUpload)
-                      .s3Prefix(prefix)
+                      .s3Prefix(getPhysicalPath(prefix))
                       .bucket(bucketName)
                       .build())
               .completionFuture()
@@ -122,7 +167,7 @@ public class BlobStore {
                   DownloadDirectoryRequest.builder()
                       .bucket(bucketName)
                       .destination(destinationDirectory)
-                      .listObjectsV2RequestTransformer(l -> l.prefix(prefix))
+                      .listObjectsV2RequestTransformer(l -> l.prefix(getPhysicalPath(prefix)))
                       .build())
               .completionFuture()
               .get();
@@ -154,7 +199,9 @@ public class BlobStore {
                   .getObjectRequest(
                       GetObjectRequest.builder()
                           .bucket(bucketName)
-                          .key(String.format("%s/%s", chunkId, ReadWriteChunk.SCHEMA_FILE_NAME))
+                          .key(
+                              getPhysicalPath(
+                                  String.format("%s/%s", chunkId, ReadWriteChunk.SCHEMA_FILE_NAME)))
                           .build())
                   .responseTransformer(new ByteArrayAsyncResponseTransformer<>())
                   .build())
@@ -178,7 +225,8 @@ public class BlobStore {
   public List<String> listFiles(String prefix) {
     assert prefix != null && !prefix.isEmpty();
 
-    ListObjectsV2Request listRequest = builder().bucket(bucketName).prefix(prefix).build();
+    ListObjectsV2Request listRequest =
+        builder().bucket(bucketName).prefix(getPhysicalPath(prefix)).build();
     ListObjectsV2Publisher asyncPaginatedListResponse =
         s3AsyncClient.listObjectsV2Paginator(listRequest);
 
@@ -187,7 +235,9 @@ public class BlobStore {
       asyncPaginatedListResponse
           .subscribe(
               listResponse ->
-                  listResponse.contents().forEach(s3Object -> filesList.add(s3Object.key())))
+                  listResponse
+                      .contents()
+                      .forEach(s3Object -> filesList.add(getLogicalPath(s3Object.key()))))
           .get();
     } catch (InterruptedException | ExecutionException e) {
       throw new RuntimeException(e);
@@ -205,7 +255,8 @@ public class BlobStore {
   public boolean delete(String prefix) {
     assert prefix != null && !prefix.isEmpty();
 
-    ListObjectsV2Request listRequest = builder().bucket(bucketName).prefix(prefix).build();
+    ListObjectsV2Request listRequest =
+        builder().bucket(bucketName).prefix(getPhysicalPath(prefix)).build();
     ListObjectsV2Publisher asyncPaginatedListResponse =
         s3AsyncClient.listObjectsV2Paginator(listRequest);
 
@@ -266,7 +317,8 @@ public class BlobStore {
     assert key != null && !key.isEmpty();
     assert jsonData != null && !jsonData.isEmpty();
 
-    PutObjectRequest request = PutObjectRequest.builder().bucket(bucketName).key(key).build();
+    PutObjectRequest request =
+        PutObjectRequest.builder().bucket(bucketName).key(getPhysicalPath(key)).build();
     try {
       if (gzip) {
         byte[] compressedData = compressData(jsonData);
@@ -314,7 +366,7 @@ public class BlobStore {
       ResponseInputStream<GetObjectResponse> futureStream =
           s3AsyncClient
               .getObject(
-                  GetObjectRequest.builder().bucket(bucketName).key(key).build(),
+                  GetObjectRequest.builder().bucket(bucketName).key(getPhysicalPath(key)).build(),
                   AsyncResponseTransformer.toBlockingInputStream())
               .get();
       if (gzip) {
@@ -342,9 +394,9 @@ public class BlobStore {
       CopyObjectRequest copyRequest =
           CopyObjectRequest.builder()
               .sourceBucket(bucketName)
-              .sourceKey(sourceKey)
+              .sourceKey(getPhysicalPath(sourceKey))
               .destinationBucket(bucketName)
-              .destinationKey(destinationKey)
+              .destinationKey(getPhysicalPath(destinationKey))
               .build();
 
       try {
@@ -370,7 +422,8 @@ public class BlobStore {
   public boolean fileExists(String key) {
     assert key != null && !key.isEmpty();
 
-    HeadObjectRequest headRequest = HeadObjectRequest.builder().bucket(bucketName).key(key).build();
+    HeadObjectRequest headRequest =
+        HeadObjectRequest.builder().bucket(bucketName).key(getPhysicalPath(key)).build();
 
     try {
       s3AsyncClient.headObject(headRequest).get();
@@ -399,7 +452,10 @@ public class BlobStore {
     ListObjectsV2Request listReq =
         ListObjectsV2Request.builder()
             .bucket(bucketName)
-            .prefix(prefix.endsWith("/") ? prefix : prefix + "/")
+            .prefix(
+                getPhysicalPath(prefix).endsWith("/")
+                    ? getPhysicalPath(prefix)
+                    : getPhysicalPath(prefix) + "/")
             .maxKeys(1)
             .build();
 

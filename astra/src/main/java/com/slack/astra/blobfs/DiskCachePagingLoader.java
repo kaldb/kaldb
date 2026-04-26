@@ -115,7 +115,7 @@ public class DiskCachePagingLoader {
           .getObject(
               GetObjectRequest.builder()
                   .bucket(blobStore.bucketName)
-                  .key(key.getPath())
+                  .key(blobStore.getPhysicalPath(key.getPath()))
                   .range(String.format("bytes=%s-%s", key.getFromOffset(), key.getToOffset()))
                   .build(),
               AsyncResponseTransformer.toFile(

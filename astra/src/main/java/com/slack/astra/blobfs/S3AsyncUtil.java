@@ -53,12 +53,7 @@ public class S3AsyncUtil {
           "Using a maxNativeMemoryLimitInBytes for the S3AsyncClient of '{}' bytes",
           maxNativeMemoryLimitBytes);
       S3CrtAsyncClientBuilder s3AsyncClient =
-          S3AsyncClient.crtBuilder()
-              .retryConfiguration(S3CrtRetryConfiguration.builder().numRetries(3).build())
-              .targetThroughputInGbps(config.getS3TargetThroughputGbps())
-              .region(Region.of(region))
-              .maxNativeMemoryLimitInBytes(maxNativeMemoryLimitBytes)
-              .credentialsProvider(awsCredentialsProvider);
+          createS3CrtAsyncClientBuilder(config, awsCredentialsProvider, maxNativeMemoryLimitBytes);
 
       // We add a healthcheck to prevent an error with the CRT client, where it will
       // continue to attempt to read data from a socket that is no longer returning data
@@ -86,6 +81,19 @@ public class S3AsyncUtil {
     } catch (S3Exception e) {
       throw new RuntimeException("Could not initialize S3blobFs", e);
     }
+  }
+
+  static S3CrtAsyncClientBuilder createS3CrtAsyncClientBuilder(
+      AstraConfigs.S3Config config,
+      AwsCredentialsProvider awsCredentialsProvider,
+      long maxNativeMemoryLimitBytes) {
+    return S3AsyncClient.crtBuilder()
+        .retryConfiguration(S3CrtRetryConfiguration.builder().numRetries(3).build())
+        .targetThroughputInGbps(config.getS3TargetThroughputGbps())
+        .region(Region.of(config.getS3Region()))
+        .maxNativeMemoryLimitInBytes(maxNativeMemoryLimitBytes)
+        .credentialsProvider(awsCredentialsProvider)
+        .forcePathStyle(config.getS3ForcePathStyle());
   }
 
   static boolean notNullOrEmpty(String target) {

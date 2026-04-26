@@ -146,7 +146,11 @@ public class Astra {
     curatorFramework =
         CuratorBuilder.build(
             prometheusMeterRegistry, astraConfig.getMetadataStoreConfig().getZookeeperConfig());
-    BlobStore blobStore = new BlobStore(s3Client, astraConfig.getS3Config().getS3Bucket());
+    BlobStore blobStore =
+        new BlobStore(
+            s3Client,
+            astraConfig.getS3Config().getS3Bucket(),
+            astraConfig.getS3Config().getS3PathPrefix());
 
     Set<Service> services =
         getServices(curatorFramework, astraConfig, blobStore, prometheusMeterRegistry);
