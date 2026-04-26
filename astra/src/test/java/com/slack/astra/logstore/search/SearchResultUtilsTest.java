@@ -20,7 +20,7 @@ import org.opensearch.search.aggregations.AggregationBuilder;
 import org.opensearch.search.aggregations.bucket.histogram.DateHistogramAggregationBuilder;
 
 public class SearchResultUtilsTest {
-  @Test
+  `@Test`
   public void shouldRejectZeroHitRequestWithoutAggregations() {
     AstraSearch.SearchRequest searchRequest =
         AstraSearch.SearchRequest.newBuilder()
@@ -35,6 +35,22 @@ public class SearchResultUtilsTest {
     assertThatIllegalArgumentException()
         .isThrownBy(() -> SearchResultUtils.fromSearchRequest(searchRequest))
         .withMessage("Hits or aggregation should be requested.");
+  }
+
+  `@Test`
+  public void shouldRejectNegativeHitRequest() {
+    AstraSearch.SearchRequest searchRequest =
+        AstraSearch.SearchRequest.newBuilder()
+            .setDataset("test-data")
+            .setStartTimeEpochMs(0)
+            .setEndTimeEpochMs(1)
+            .setHowMany(-1)
+            .setAggregationJson("")
+            .build();
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> SearchResultUtils.fromSearchRequest(searchRequest))
+        .withMessage("hits requested should not be negative.");
   }
 
   @Test
