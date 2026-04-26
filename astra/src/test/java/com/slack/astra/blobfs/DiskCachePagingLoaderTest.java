@@ -42,7 +42,7 @@ class DiskCachePagingLoaderTest {
 
   @Test
   public void testCacheKeyCalculations() {
-    BlobStore blobStore = spy(new BlobStore(s3Client, TEST_BUCKET));
+    BlobStore blobStore = spy(new BlobStore(s3Client, TEST_BUCKET, ""));
     String filename = "file.example";
     String chunkId = UUID.randomUUID().toString();
 
@@ -72,7 +72,7 @@ class DiskCachePagingLoaderTest {
 
   @Test
   public void testDiskPaging() throws IOException, ExecutionException {
-    BlobStore blobStore = spy(new BlobStore(s3Client, TEST_BUCKET));
+    BlobStore blobStore = spy(new BlobStore(s3Client, TEST_BUCKET, ""));
     String filename = "file.example";
     String chunkId = UUID.randomUUID().toString();
 
@@ -98,7 +98,7 @@ class DiskCachePagingLoaderTest {
 
   @Test
   public void testDiskPagingWholeFileOneChunk() throws IOException, ExecutionException {
-    BlobStore blobStore = spy(new BlobStore(s3Client, TEST_BUCKET));
+    BlobStore blobStore = spy(new BlobStore(s3Client, TEST_BUCKET, ""));
     String filename = "file2.example";
     String chunkId = UUID.randomUUID().toString();
 
@@ -119,7 +119,7 @@ class DiskCachePagingLoaderTest {
 
   @Test
   public void testDiskPagingWholeFileSmallChunks() throws IOException, ExecutionException {
-    BlobStore blobStore = spy(new BlobStore(s3Client, TEST_BUCKET));
+    BlobStore blobStore = spy(new BlobStore(s3Client, TEST_BUCKET, ""));
     String filename = "file3.example";
     String chunkId = UUID.randomUUID().toString();
 

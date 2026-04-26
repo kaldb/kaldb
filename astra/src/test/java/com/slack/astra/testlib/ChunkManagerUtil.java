@@ -97,7 +97,7 @@ public class ChunkManagerUtil<T> {
 
     tempFolder = Files.createTempDir(); // TODO: don't use beta func.
     s3AsyncClient = S3TestUtils.createS3CrtClient(s3MockExtension.getServiceEndpoint());
-    BlobStore blobStore = new BlobStore(s3AsyncClient, s3Bucket);
+    BlobStore blobStore = new BlobStore(s3AsyncClient, s3Bucket, "");
 
     this.zkServer = zkServer;
     // noop if zk has already been started by the caller

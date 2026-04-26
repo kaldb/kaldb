@@ -55,8 +55,43 @@ public class BlobStore {
   private final String s3PathPrefix;
   private final S3TransferManager transferManager;
 
-  public BlobStore(S3AsyncClient s3AsyncClient, String bucketName) {
-    this(s3AsyncClient, bucketName, null);
+  private static String normalizePathPrefix(String s3PathPrefix) {
+    String prefix = CharMatcher.is('/').trimFrom(Strings.nullToEmpty(s3PathPrefix));
+    return prefix.isEmpty() ? "" : prefix + "/";
+  }
+
+  /**
+   * Compresses JSON data using GZIP.
+   *
+   * @param data The JSON data to compress
+   * @return The compressed byte array
+   * @throws IOException if compression fails
+   */
+  public static byte[] compressData(String data) throws IOException {
+    ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
+    try (GZIPOutputStream gzipOutputStream = new GZIPOutputStream(byteArrayOutputStream)) {
+      gzipOutputStream.write(data.getBytes(StandardCharsets.UTF_8));
+    }
+    return byteArrayOutputStream.toByteArray();
+  }
+
+  /**
+   * Decompresses JSON data that has been compressed using GZIP.
+   *
+   * @param compressedData The compressed byte array
+   * @return The decompressed JSON data as a String
+   * @throws RuntimeException if decompression fails
+   */
+  public static String decompressData(byte[] compressedData) {
+    assert compressedData != null && compressedData.length > 0;
+
+    try (GZIPInputStream gzipInputStream =
+        new GZIPInputStream(new ByteArrayInputStream(compressedData))) {
+      return new String(gzipInputStream.readAllBytes(), StandardCharsets.UTF_8);
+    } catch (IOException e) {
+      LOG.error("Error decompressing JSON data", e);
+      throw new RuntimeException("Failed to decompress JSON data", e);
+    }
   }
 
   public BlobStore(S3AsyncClient s3AsyncClient, String bucketName, String s3PathPrefix) {
@@ -64,11 +99,6 @@ public class BlobStore {
     this.s3AsyncClient = s3AsyncClient;
     this.s3PathPrefix = normalizePathPrefix(s3PathPrefix);
     this.transferManager = S3TransferManager.builder().s3Client(s3AsyncClient).build();
-  }
-
-  private static String normalizePathPrefix(String s3PathPrefix) {
-    String prefix = CharMatcher.is('/').trimFrom(Strings.nullToEmpty(s3PathPrefix));
-    return prefix.isEmpty() ? "" : prefix + "/";
   }
 
   String addPathPrefix(String key) {
@@ -266,21 +296,6 @@ public class BlobStore {
   }
 
   /**
-   * Compresses JSON data using GZIP.
-   *
-   * @param data The JSON data to compress
-   * @return The compressed byte array
-   * @throws IOException if compression fails
-   */
-  public static byte[] compressData(String data) throws IOException {
-    ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
-    try (GZIPOutputStream gzipOutputStream = new GZIPOutputStream(byteArrayOutputStream)) {
-      gzipOutputStream.write(data.getBytes(StandardCharsets.UTF_8));
-    }
-    return byteArrayOutputStream.toByteArray();
-  }
-
-  /**
    * Uploads JSON data to the object store by S3 key (full path in the bucket).
    *
    * @param key The S3 key (full path in the bucket)
@@ -304,25 +319,6 @@ public class BlobStore {
       }
     } catch (IOException | InterruptedException | ExecutionException e) {
       throw new RuntimeException("Failed to upload JSON data", e);
-    }
-  }
-
-  /**
-   * Decompresses JSON data that has been compressed using GZIP.
-   *
-   * @param compressedData The compressed byte array
-   * @return The decompressed JSON data as a String
-   * @throws RuntimeException if decompression fails
-   */
-  public static String decompressData(byte[] compressedData) {
-    assert compressedData != null && compressedData.length > 0;
-
-    try (GZIPInputStream gzipInputStream =
-        new GZIPInputStream(new ByteArrayInputStream(compressedData))) {
-      return new String(gzipInputStream.readAllBytes(), StandardCharsets.UTF_8);
-    } catch (IOException e) {
-      LOG.error("Error decompressing JSON data", e);
-      throw new RuntimeException("Failed to decompress JSON data", e);
     }
   }
 

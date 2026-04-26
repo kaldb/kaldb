@@ -46,7 +46,7 @@ class BlobStoreTest {
 
   @Test
   void testUploadDownload() throws IOException {
-    BlobStore blobStore = new BlobStore(s3Client, TEST_BUCKET);
+    BlobStore blobStore = new BlobStore(s3Client, TEST_BUCKET, "");
 
     Path directoryUpload = Files.createTempDirectory("");
     Path foo = Files.createTempFile(directoryUpload, "", "");
@@ -69,7 +69,7 @@ class BlobStoreTest {
 
   @Test
   void testUploadEmptyPrefix() throws IOException {
-    BlobStore blobStore = new BlobStore(s3Client, TEST_BUCKET);
+    BlobStore blobStore = new BlobStore(s3Client, TEST_BUCKET, "");
 
     Path directoryUpload = Files.createTempDirectory("");
 
@@ -81,7 +81,7 @@ class BlobStoreTest {
 
   @Test
   void testUploadEmpty() throws IOException {
-    BlobStore blobStore = new BlobStore(s3Client, TEST_BUCKET);
+    BlobStore blobStore = new BlobStore(s3Client, TEST_BUCKET, "");
 
     Path directoryUpload = Files.createTempDirectory("");
     String chunkId = UUID.randomUUID().toString();
@@ -92,7 +92,7 @@ class BlobStoreTest {
 
   @Test
   void testUploadNotADirectory() throws IOException {
-    BlobStore blobStore = new BlobStore(s3Client, TEST_BUCKET);
+    BlobStore blobStore = new BlobStore(s3Client, TEST_BUCKET, "");
 
     Path directory = Files.createTempDirectory("");
     Path fileUpload = Files.createTempFile(directory, "", "");
@@ -104,7 +104,7 @@ class BlobStoreTest {
 
   @Test
   void testDownloadDoesNotExist() throws IOException {
-    BlobStore blobStore = new BlobStore(s3Client, TEST_BUCKET);
+    BlobStore blobStore = new BlobStore(s3Client, TEST_BUCKET, "");
     Path directoryDownloaded = Files.createTempDirectory("");
     blobStore.download(UUID.randomUUID().toString(), directoryDownloaded);
     assertThat(Objects.requireNonNull(directoryDownloaded.toFile().listFiles()).length)
@@ -113,7 +113,7 @@ class BlobStoreTest {
 
   @Test
   void testDownloadNotADirectory() throws IOException {
-    BlobStore blobStore = new BlobStore(s3Client, TEST_BUCKET);
+    BlobStore blobStore = new BlobStore(s3Client, TEST_BUCKET, "");
 
     Path directory = Files.createTempDirectory("");
     Path fileLocation = Files.createTempFile(directory, "", "");
@@ -125,7 +125,7 @@ class BlobStoreTest {
 
   @Test
   void testDownloadEmptyPrefix() throws IOException {
-    BlobStore blobStore = new BlobStore(s3Client, TEST_BUCKET);
+    BlobStore blobStore = new BlobStore(s3Client, TEST_BUCKET, "");
 
     Path directoryDownload = Files.createTempDirectory("");
 
@@ -137,7 +137,7 @@ class BlobStoreTest {
 
   @Test
   void testDeleteMultipleFiles() throws IOException, ExecutionException, InterruptedException {
-    BlobStore blobStore = new BlobStore(s3Client, TEST_BUCKET);
+    BlobStore blobStore = new BlobStore(s3Client, TEST_BUCKET, "");
 
     Path directoryUpload = Files.createTempDirectory("");
     Path foo = Files.createTempFile(directoryUpload, "", "");
@@ -173,14 +173,14 @@ class BlobStoreTest {
 
   @Test
   void testDeleteDoesNotExist() {
-    BlobStore blobStore = new BlobStore(s3Client, TEST_BUCKET);
+    BlobStore blobStore = new BlobStore(s3Client, TEST_BUCKET, "");
     boolean deleted = blobStore.delete(UUID.randomUUID().toString());
     assertThat(deleted).isFalse();
   }
 
   @Test
   void testDeleteBadPrefix() {
-    BlobStore blobStore = new BlobStore(s3Client, TEST_BUCKET);
+    BlobStore blobStore = new BlobStore(s3Client, TEST_BUCKET, "");
 
     assertThatThrownBy(() -> blobStore.delete("")).isInstanceOf(AssertionError.class);
     assertThatThrownBy(() -> blobStore.delete(null)).isInstanceOf(AssertionError.class);
@@ -188,7 +188,7 @@ class BlobStoreTest {
 
   @Test
   void testListFiles() throws IOException {
-    BlobStore blobStore = new BlobStore(s3Client, TEST_BUCKET);
+    BlobStore blobStore = new BlobStore(s3Client, TEST_BUCKET, "");
     String chunkId = UUID.randomUUID().toString();
 
     assertThat(blobStore.listFiles(chunkId).size()).isEqualTo(0);
@@ -214,7 +214,7 @@ class BlobStoreTest {
 
   @Test
   void testListBadPrefix() {
-    BlobStore blobStore = new BlobStore(s3Client, TEST_BUCKET);
+    BlobStore blobStore = new BlobStore(s3Client, TEST_BUCKET, "");
 
     assertThatThrownBy(() -> blobStore.listFiles("")).isInstanceOf(AssertionError.class);
     assertThatThrownBy(() -> blobStore.listFiles(null)).isInstanceOf(AssertionError.class);
@@ -222,7 +222,7 @@ class BlobStoreTest {
 
   @Test
   void testListFilesNonExistingPrefix() {
-    BlobStore blobStore = new BlobStore(s3Client, TEST_BUCKET);
+    BlobStore blobStore = new BlobStore(s3Client, TEST_BUCKET, "");
     String chunkId = UUID.randomUUID().toString();
 
     assertThat(blobStore.listFiles(chunkId).size()).isEqualTo(0);
@@ -260,7 +260,7 @@ class BlobStoreTest {
 
   @Test
   public void testUploadDownloadJsonData() throws IOException {
-    BlobStore blobStore = new BlobStore(s3Client, TEST_BUCKET);
+    BlobStore blobStore = new BlobStore(s3Client, TEST_BUCKET, "");
     String chunkId = UUID.randomUUID().toString();
     String jsonData =
         "[{\"id\":\"101\",\"traceId\":\"test_trace_789\",\"name\":\"test-span\",\"tags\":{\"key1\":\"value1\",\"key2\":\"value2\",\"key3\":\"value3\"}}]";
@@ -277,7 +277,7 @@ class BlobStoreTest {
 
   @Test
   public void testUploadDownloadJsonData_gzip() throws IOException {
-    BlobStore blobStore = new BlobStore(s3Client, TEST_BUCKET);
+    BlobStore blobStore = new BlobStore(s3Client, TEST_BUCKET, "");
     String chunkId = UUID.randomUUID().toString();
     String jsonData =
         "[{\"id\":\"101\",\"traceId\":\"test_trace_789\",\"name\":\"test-span\",\"tags\":{\"key1\":\"value1\",\"key2\":\"value2\",\"key3\":\"value3\"}}]";
@@ -295,7 +295,7 @@ class BlobStoreTest {
 
   @Test
   public void testCopyFile() throws IOException {
-    BlobStore blobStore = new BlobStore(s3Client, TEST_BUCKET);
+    BlobStore blobStore = new BlobStore(s3Client, TEST_BUCKET, "");
     String sourceChunkId = UUID.randomUUID().toString();
     String destinationChunkId = UUID.randomUUID().toString();
 

@@ -128,7 +128,7 @@ public class IndexingChunkManagerTest {
     metricsRegistry = new SimpleMeterRegistry();
     // create an S3 client and a bucket for test
     s3AsyncClient = S3TestUtils.createS3CrtClient(S3_MOCK_EXTENSION.getServiceEndpoint());
-    blobStore = new BlobStore(s3AsyncClient, S3_TEST_BUCKET);
+    blobStore = new BlobStore(s3AsyncClient, S3_TEST_BUCKET, "");
 
     localZkServer = new TestingServer();
     localZkServer.start();
@@ -1310,7 +1310,7 @@ public class IndexingChunkManagerTest {
         new DiskOrMessageCountBasedRolloverStrategy(metricsRegistry, 10 * 1024 * 1024 * 1024L, 10L);
     initChunkManager(
         chunkRollOverStrategy,
-        new BlobStore(s3AsyncClient, S3_TEST_BUCKET + "Fail"),
+        new BlobStore(s3AsyncClient, S3_TEST_BUCKET + "Fail", ""),
         IndexingChunkManager.makeDefaultRollOverExecutor());
 
     // Adding a message and close the chunkManager right away should still finish the failed
@@ -1358,7 +1358,7 @@ public class IndexingChunkManagerTest {
         new DiskOrMessageCountBasedRolloverStrategy(metricsRegistry, 10 * 1024 * 1024 * 1024L, 10L);
     initChunkManager(
         chunkRollOverStrategy,
-        new BlobStore(s3AsyncClient, S3_TEST_BUCKET + "Fail"),
+        new BlobStore(s3AsyncClient, S3_TEST_BUCKET + "Fail", ""),
         IndexingChunkManager.makeDefaultRollOverExecutor());
 
     int offset = 1;
@@ -1404,7 +1404,7 @@ public class IndexingChunkManagerTest {
         new DiskOrMessageCountBasedRolloverStrategy(metricsRegistry, 10 * 1024 * 1024 * 1024L, 10L);
     initChunkManager(
         chunkRollOverStrategy,
-        new BlobStore(s3AsyncClient, S3_TEST_BUCKET + "Fail"),
+        new BlobStore(s3AsyncClient, S3_TEST_BUCKET + "Fail", ""),
         MoreExecutors.newDirectExecutorService());
 
     // Adding a messages very quickly when running a rollover in background would result in an

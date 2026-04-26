@@ -435,7 +435,7 @@ public class LuceneIndexStoreImplTest {
           S3TestUtils.createS3CrtClient(S3_MOCK_EXTENSION.getServiceEndpoint());
       String bucket = "snapshot-test";
       s3AsyncClient.createBucket(CreateBucketRequest.builder().bucket(bucket).build()).get();
-      BlobStore blobStore = new BlobStore(s3AsyncClient, bucket);
+      BlobStore blobStore = new BlobStore(s3AsyncClient, bucket, "");
 
       String chunkId = UUID.randomUUID().toString();
       blobStore.upload(chunkId, dirPath);
