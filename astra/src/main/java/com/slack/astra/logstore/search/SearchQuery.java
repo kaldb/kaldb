@@ -1,5 +1,7 @@
 package com.slack.astra.logstore.search;
 
+import static com.slack.astra.util.ArgValidationUtils.ensureTrue;
+
 import java.util.List;
 import org.opensearch.index.query.QueryBuilder;
 import org.opensearch.search.aggregations.AggregatorFactories;
@@ -34,6 +36,12 @@ public class SearchQuery {
     this.startTimeEpochMs = startTimeEpochMs;
     this.endTimeEpochMs = endTimeEpochMs;
     this.aggregatorFactoriesBuilder = aggregatorFactoriesBuilder;
+
+    ensureTrue(howMany >= 0, "hits requested should not be negative.");
+    // Reject unsupported no-op requests before they fan out to every chunk.
+    ensureTrue(
+        howMany > 0 || aggregatorFactoriesBuilder != null,
+        "Hits or aggregation should be requested.");
   }
 
   @Override

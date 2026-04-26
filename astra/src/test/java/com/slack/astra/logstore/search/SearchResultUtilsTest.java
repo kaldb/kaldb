@@ -3,6 +3,7 @@ package com.slack.astra.logstore.search;
 import static com.slack.astra.logstore.search.SearchResultUtils.fromValueProto;
 import static com.slack.astra.logstore.search.SearchResultUtils.toValueProto;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 
 import com.slack.astra.metadata.schema.FieldType;
 import com.slack.astra.proto.schema.Schema;
@@ -19,6 +20,22 @@ import org.opensearch.search.aggregations.AggregationBuilder;
 import org.opensearch.search.aggregations.bucket.histogram.DateHistogramAggregationBuilder;
 
 public class SearchResultUtilsTest {
+  @Test
+  public void shouldRejectZeroHitRequestWithoutAggregations() {
+    AstraSearch.SearchRequest searchRequest =
+        AstraSearch.SearchRequest.newBuilder()
+            .setDataset("test-data")
+            .setQuery("{\"match_all\":{}}")
+            .setStartTimeEpochMs(0)
+            .setEndTimeEpochMs(1)
+            .setHowMany(0)
+            .setAggregationJson("")
+            .build();
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> SearchResultUtils.fromSearchRequest(searchRequest))
+        .withMessage("Hits or aggregation should be requested.");
+  }
 
   @Test
   public void shouldParseAggIntoAggregationFactoriesBuilder() {
@@ -67,6 +84,7 @@ public class SearchResultUtilsTest {
   public void shouldParseBasicMustNotQueryIntoQueryBuilder() {
     AstraSearch.SearchRequest searchRequest =
         AstraSearch.SearchRequest.newBuilder()
+            .setHowMany(1)
             .setQuery(
                 """
             {
@@ -95,6 +113,7 @@ public class SearchResultUtilsTest {
   public void shouldParseMustNotTermsQueryIntoQueryBuilder() {
     AstraSearch.SearchRequest searchRequest =
         AstraSearch.SearchRequest.newBuilder()
+            .setHowMany(1)
             .setQuery(
                 """
             {
@@ -127,6 +146,7 @@ public class SearchResultUtilsTest {
   public void shouldParseBasicFilterQueryIntoQueryBuilder() {
     AstraSearch.SearchRequest searchRequest =
         AstraSearch.SearchRequest.newBuilder()
+            .setHowMany(1)
             .setQuery(
                 """
             {
@@ -155,6 +175,7 @@ public class SearchResultUtilsTest {
   public void shouldParseFilterTermsQueryIntoQueryBuilder() {
     AstraSearch.SearchRequest searchRequest =
         AstraSearch.SearchRequest.newBuilder()
+            .setHowMany(1)
             .setQuery(
                 """
             {
@@ -187,6 +208,7 @@ public class SearchResultUtilsTest {
   public void shouldParseBasicMustQueryIntoQueryBuilder() {
     AstraSearch.SearchRequest searchRequest =
         AstraSearch.SearchRequest.newBuilder()
+            .setHowMany(1)
             .setQuery(
                 """
             {
@@ -215,6 +237,7 @@ public class SearchResultUtilsTest {
   public void shouldParseMustTermsQueryIntoQueryBuilder() {
     AstraSearch.SearchRequest searchRequest =
         AstraSearch.SearchRequest.newBuilder()
+            .setHowMany(1)
             .setQuery(
                 """
             {
@@ -247,6 +270,7 @@ public class SearchResultUtilsTest {
   public void shouldParseBasicShouldQueryIntoQueryBuilder() {
     AstraSearch.SearchRequest searchRequest =
         AstraSearch.SearchRequest.newBuilder()
+            .setHowMany(1)
             .setQuery(
                 """
             {
@@ -275,6 +299,7 @@ public class SearchResultUtilsTest {
   public void shouldParseShouldTermsQueryIntoQueryBuilder() {
     AstraSearch.SearchRequest searchRequest =
         AstraSearch.SearchRequest.newBuilder()
+            .setHowMany(1)
             .setQuery(
                 """
             {
@@ -307,6 +332,7 @@ public class SearchResultUtilsTest {
   public void shouldParseNonBoolQueryIntoQueryBuilder() {
     AstraSearch.SearchRequest searchRequest =
         AstraSearch.SearchRequest.newBuilder()
+            .setHowMany(1)
             .setQuery(
                 """
             {

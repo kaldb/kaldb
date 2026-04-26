@@ -338,7 +338,7 @@ public class AstraLocalQueryServiceTest {
 
     AstraSearch.SearchRequest.Builder searchRequestBuilder = AstraSearch.SearchRequest.newBuilder();
 
-    assertThatExceptionOfType(RuntimeException.class)
+    assertThatExceptionOfType(IllegalArgumentException.class)
         .isThrownBy(
             () ->
                 astraLocalQueryService.doSearch(
