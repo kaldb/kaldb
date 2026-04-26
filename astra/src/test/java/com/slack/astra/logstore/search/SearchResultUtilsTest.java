@@ -20,7 +20,7 @@ import org.opensearch.search.aggregations.AggregationBuilder;
 import org.opensearch.search.aggregations.bucket.histogram.DateHistogramAggregationBuilder;
 
 public class SearchResultUtilsTest {
-  `@Test`
+  @Test
   public void shouldRejectZeroHitRequestWithoutAggregations() {
     AstraSearch.SearchRequest searchRequest =
         AstraSearch.SearchRequest.newBuilder()
@@ -37,7 +37,7 @@ public class SearchResultUtilsTest {
         .withMessage("Hits or aggregation should be requested.");
   }
 
-  `@Test`
+  @Test
   public void shouldRejectNegativeHitRequest() {
     AstraSearch.SearchRequest searchRequest =
         AstraSearch.SearchRequest.newBuilder()
