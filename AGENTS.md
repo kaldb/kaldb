@@ -85,8 +85,22 @@ Astra has comprehensive unit tests and integration tests. The main classes invol
 - S3MockExtension for S3 mock testing
 
 ## Repository-Specific Coding Guidance
-- Do not add one-line helper functions or wrappers unless they provide meaningful abstraction, reuse, or clarity. Inline simple one-line behavior by default.
-- Prefer concise Java code. Use Java records for simple immutable data carriers when they fit the problem.
-- Prefer updating existing code for the current request instead of preserving backwards compatibility by default. If the change touches a core API, storage format, or other compatibility-sensitive behavior, ask the user before keeping or adding backwards-compatible behavior.
-- Prefer fewer files where possible. Do not create new files for very small helper classes or tiny abstractions unless a new file materially improves readability, ownership, or reuse.
-- When adding unit tests, prefer extending an existing relevant test file instead of creating a new test file when the new coverage naturally belongs there.
+
+# Superpowers Customizations
+
+## Review Step Requirements
+Whenever performing a self-review or using the code-reviewer agent, always verify:
+- [ ] Documentation: Ensure all new public methods have JSDoc/Docstring comments.
+- [ ] Security: Check for hardcoded secrets or unvalidated user input.
+- [ ] Performance: Verify no O(n^2) loops were introduced in critical paths.
+- [ ] Formatting: Move static methods to top of the class file so they are easier to read.
+- [ ] Do not add one-line helper functions or wrappers unless they provide meaningful abstraction, reuse, or clarity. Inline simple one-line behavior by default.
+- [ ] Prefer concise Java code. 
+- [ ] Use Java records for simple immutable data carriers when they fit the problem.
+- [ ] Prefer updating existing code for the current request instead of preserving backwards compatibility by default. If the change touches a core API, storage format, or other compatibility-sensitive behavior, ask the user before keeping or adding backwards-compatible behavior.
+- [ ] Prefer fewer files where possible. Do not create new files for very small helper classes or tiny abstractions unless a new file materially improves readability, ownership, or reuse.
+- [ ] When adding unit tests, prefer extending an existing relevant test file instead of creating a new test file when the new coverage naturally belongs there.
+- [ ] Documentation: If we add new config to config.proto or other proto modifications, ensure documentation is also updated at the same time. 
+- [ ] Ensure, all proto fields have associated comments on what they do and how to set them. Also, ensure sample config files are updated when proto files are updated.
+
+
