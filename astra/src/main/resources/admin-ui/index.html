@@ -130,9 +130,9 @@
         <label>Dataset Name
           <input type="text" name="name" readonly>
         </label>
-        <label>Throughput (bytes, -1 to skip)
-          <input type="number" name="throughput_bytes" value="-1">
-          <span class="field-help">Set a non-negative throughput limit, or <code>-1</code> to keep existing.</span>
+        <label>Throughput (bytes)
+          <input type="number" name="throughput_bytes" value="0" min="0">
+          <span class="field-help">Set a non-negative throughput limit. Zero is valid.</span>
         </label>
         <label>Partition IDs (comma-separated, empty for auto-assign)
           <input type="text" name="partition_ids">

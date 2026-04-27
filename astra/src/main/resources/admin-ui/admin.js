@@ -323,7 +323,7 @@
     var form = document.getElementById("form-partition");
     form.reset();
     form.elements.name.value = dataset.name;
-    form.elements.throughput_bytes.value = dataset.throughputBytes == null ? -1 : dataset.throughputBytes;
+    form.elements.throughput_bytes.value = dataset.throughputBytes == null ? 0 : dataset.throughputBytes;
     form.elements.partition_ids.value = "";
     openModal("modal-partition");
   }
@@ -362,10 +362,14 @@
       var form = this;
       var ids = form.elements.partition_ids.value.trim();
       var throughputInput = form.elements.throughput_bytes.value.trim();
-      var parsedThroughput = parseInt(throughputInput, 10);
+      var parsedThroughput = Number(throughputInput);
+      if (throughputInput === "" || !Number.isInteger(parsedThroughput) || parsedThroughput < 0) {
+        showToast("Error: throughput must be a non-negative integer", "error");
+        return;
+      }
       var body = {
         name: form.elements.name.value,
-        throughput_bytes: throughputInput === "" || isNaN(parsedThroughput) ? -1 : parsedThroughput,
+        throughput_bytes: parsedThroughput,
         partition_ids: ids
           ? ids
               .split(",")

@@ -25,9 +25,6 @@ import org.slf4j.LoggerFactory;
 public class PartitionAssignmentUpdateService {
   private static final Logger LOG = LoggerFactory.getLogger(PartitionAssignmentUpdateService.class);
 
-  /** A requested throughput of -1 preserves the existing dataset throughput. */
-  static final long PRESERVE_THROUGHPUT_SENTINEL = -1L;
-
   /** Tri-state override for preserving or explicitly changing dedicated partition mode. */
   public enum DedicatedPartitionModeOverride {
     PRESERVE_EXISTING,
@@ -64,8 +61,7 @@ public class PartitionAssignmentUpdateService {
     validateUpdateInputs(datasetName, requestedPartitionIds);
 
     DatasetMetadata existingDatasetMetadata = datasetMetadataStore.getSync(datasetName);
-    long effectiveThroughputBytes =
-        resolveThroughput(existingDatasetMetadata, requestedThroughputBytes);
+    long effectiveThroughputBytes = validateThroughput(requestedThroughputBytes);
     boolean useDedicatedPartitions =
         resolveUsingDedicatedPartitions(existingDatasetMetadata, dedicatedPartitionModeOverride);
 
@@ -92,13 +88,10 @@ public class PartitionAssignmentUpdateService {
         "PartitionIds list must not contain blank strings");
   }
 
-  private static long resolveThroughput(DatasetMetadata existing, long requestedThroughputBytes) {
-    if (requestedThroughputBytes == PRESERVE_THROUGHPUT_SENTINEL) {
-      return existing.getThroughputBytes();
-    }
+  private static long validateThroughput(long requestedThroughputBytes) {
     Preconditions.checkArgument(
         requestedThroughputBytes >= 0,
-        "throughputBytes must be non-negative or the preserve sentinel (-1), got %s",
+        "throughputBytes must be non-negative, got %s",
         requestedThroughputBytes);
     return requestedThroughputBytes;
   }

@@ -449,11 +449,11 @@ public class ManagerApiGrpcTest {
     assertThat(firstDatasetMetadata.getThroughputBytes()).isEqualTo(throughputBytes);
     assertThat(firstDatasetMetadata.getPartitionConfigs().size()).isEqualTo(1);
 
-    // only update the partition assignment, leaving throughput
+    // update the partition assignment while re-sending the current throughput
     managerApiStub.updatePartitionAssignment(
         ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
             .setName(datasetName)
-            .setThroughputBytes(-1)
+            .setThroughputBytes(throughputBytes)
             .addAllPartitionIds(List.of("3", "4", "5"))
             .build());
 
@@ -489,7 +489,7 @@ public class ManagerApiGrpcTest {
     assertThat(secondDatasetMetadata.getThroughputBytes()).isEqualTo(throughputBytes);
     assertThat(secondDatasetMetadata.getPartitionConfigs().size()).isEqualTo(2);
 
-    // only update the throughput while explicitly preserving the partition assignment
+    // update the throughput while explicitly re-sending the current partition assignment
     long updatedThroughputBytes = 12;
     managerApiStub.updatePartitionAssignment(
         ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
@@ -1448,7 +1448,7 @@ public class ManagerApiGrpcTest {
                     managerApiStub.updatePartitionAssignment(
                         ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
                             .setName(datasetName)
-                            .setThroughputBytes(-1)
+                            .setThroughputBytes(0)
                             .addAllPartitionIds(partitionList)
                             .build()));
     assertThat(throwable1.getStatus().getCode()).isEqualTo(Status.UNKNOWN.getCode());
@@ -1508,7 +1508,7 @@ public class ManagerApiGrpcTest {
   }
 
   @Test
-  public void shouldRejectNegativeThroughputValuesOtherThanPreserveSentinel() {
+  public void shouldRejectNegativeThroughputValues() {
     String datasetName = "negativeThroughputDataset";
     managerApiStub.createDatasetMetadata(
         ManagerApi.CreateDatasetMetadataRequest.newBuilder()
@@ -1530,7 +1530,40 @@ public class ManagerApiGrpcTest {
 
     assertThat(throwable.getStatus().getCode()).isEqualTo(Status.INVALID_ARGUMENT.getCode());
     assertThat(throwable.getStatus().getDescription())
-        .contains("throughputBytes must be non-negative or the preserve sentinel (-1), got -2");
+        .contains("throughputBytes must be non-negative, got -2");
+  }
+
+  @Test
+  public void shouldTreatOmittedThroughputAsZero() {
+    String datasetName = "defaultThroughputDataset";
+    managerApiStub.createDatasetMetadata(
+        ManagerApi.CreateDatasetMetadataRequest.newBuilder()
+            .setName(datasetName)
+            .setOwner("owner")
+            .build());
+    createPartitions(List.of("1", "2"));
+
+    managerApiStub.updatePartitionAssignment(
+        ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
+            .setName(datasetName)
+            .addAllPartitionIds(List.of("1", "2"))
+            .build());
+
+    AtomicReference<Metadata.DatasetMetadata> assignment = new AtomicReference<>();
+    await()
+        .until(
+            () -> {
+              assignment.set(
+                  managerApiStub.getDatasetMetadata(
+                      ManagerApi.GetDatasetMetadataRequest.newBuilder()
+                          .setName(datasetName)
+                          .build()));
+              return assignment.get().getPartitionConfigsList().size() == 1;
+            });
+
+    assertThat(assignment.get().getThroughputBytes()).isZero();
+    assertThat(assignment.get().getPartitionConfigsList().get(0).getPartitionsList())
+        .isEqualTo(List.of("1", "2"));
   }
 
   @Test

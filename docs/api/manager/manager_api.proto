@@ -151,7 +151,8 @@ message ListDatasetMetadataResponse {
 message UpdatePartitionAssignmentRequest {
   // Must be an exact string name match
   string name = 1;
-  // Optional maximum throughput of the dataset - if set to -1 the existing value will not be updated
+  // Dataset throughput in bytes. Clients should always set this field. Zero is valid, negative
+  // values are rejected, and omitted proto3 fields are observed as 0 by the server.
   int64 throughput_bytes = 2;
   // Optional desired numeric partition IDs - if empty will be automatically assigned
   repeated string partition_ids = 3;
