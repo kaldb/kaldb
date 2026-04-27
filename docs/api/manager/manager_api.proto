@@ -40,6 +40,8 @@ message DatasetMetadata {
 message PartitionMetadata {
   // Numeric-only partition identifier; allocator ordering compares this as an integer.
   string partition_id = 1;
+  // Maximum provisionable throughput for this partition, in bytes per second. Assignment planning
+  // and validation treat this as a hard capacity limit.
   int64 max_capacity = 2;
 }
 
