@@ -284,7 +284,9 @@ Throughput target in gigabits per second. This configuration controls how many c
 established in the AWS CRT client. Recommended to be set to match the maximum bandwidth of the underlying host.
 </def>
 <def title="s3PathPrefix">
-Optional object key prefix to use inside the configured S3 bucket.
+Object key prefix to use inside the configured S3 bucket. Set this when the bucket is shared with
+other KalDB clusters or non-KalDB objects so this cluster's objects are isolated under the prefix.
+Leave this empty when the bucket is dedicated to this cluster.
 </def>
 </deflist>
 
