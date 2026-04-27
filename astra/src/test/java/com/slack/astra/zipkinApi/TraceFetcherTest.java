@@ -71,7 +71,8 @@ public class TraceFetcherTest {
     MockitoAnnotations.openMocks(this);
     S3AsyncClient s3AsyncClient =
         S3TestUtils.createS3CrtClient(S3_MOCK_EXTENSION.getServiceEndpoint());
-    BlobStore blobStore = new BlobStore(s3AsyncClient, TEST_S3_BUCKET, "");
+    BlobStore blobStore =
+        S3TestUtils.prefixedBlobStore(s3AsyncClient, TEST_S3_BUCKET, "astra/trace-fetcher");
     mockBlobStore = spy(blobStore);
     traceFetcher =
         spy(
