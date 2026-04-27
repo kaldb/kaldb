@@ -49,6 +49,9 @@ The motivation for this ADR is to make dataset assignment capacity-aware while p
 - Question: What happens if `require_dedicated_partition` is omitted for an existing dataset?
   Answer: The existing mode is preserved. A dedicated dataset stays dedicated unless the request explicitly sets `require_dedicated_partition = false`. New datasets default to shared partitions.
 
+- Question: What should `throughput_bytes` mean when it is omitted, set to `0`, or set to a negative value?
+  Answer: `0` is a valid dataset throughput and means the dataset currently reserves no throughput capacity. Omission should mean "preserve the existing dataset throughput". Negative values have no domain meaning and should be rejected. Because a non-optional proto3 scalar collapses omission and `0` into the same observed value, the clean API shape is presence-aware `optional int64 throughput_bytes`.
+
 - Question: What happens when a dataset moves from dedicated to shared?
   Answer: The mode changes only when the request explicitly sets `require_dedicated_partition = false`. The dataset may keep the same partition IDs on that update if they are still a valid shared assignment, but after the mode flip those partitions are no longer reserved exclusively for that dataset.
 
@@ -126,6 +129,46 @@ For shared assignments, eligible partitions are partitions that are not dedicate
 For dedicated assignments, eligible partitions are empty partitions and partitions already dedicated to the same dataset. The current implementation evaluates partitions already dedicated to the same dataset before empty partitions. Within each group, it sorts by lowest available capacity, then partition ID as a deterministic tie-breaker. The allocator must not treat selected partitions as a single pooled capacity bucket. Even if total capacity is sufficient, each selected partition must individually have enough capacity for the equal traffic share.
 
 Manual assignment remains supported when `partition_ids` is non-empty.
+
+#### Throughput Update Semantics
+
+`DatasetMetadata.throughputBytes` is a real persisted property of the dataset model. A value of
+`0` is valid and means the dataset currently reserves no throughput capacity. New datasets may be
+created in that idle state and still participate in assignment history.
+
+`UpdatePartitionAssignment` needs to represent three distinct intents:
+
+- preserve the existing throughput
+- explicitly set the throughput to `0`
+- explicitly set the throughput to a positive value
+
+Those intents should not be collapsed. In particular, `0` must not be treated as an implicit
+"leave unchanged" marker because zero throughput is a legitimate business value.
+
+The API-design problem is that a non-optional proto3 scalar cannot distinguish omission from an
+explicit `0`. If `throughput_bytes` is declared as plain `int64`, both of these requests arrive at
+the server as `0`:
+
+- caller omitted `throughput_bytes`
+- caller explicitly set `throughput_bytes = 0`
+
+The clean solution is to make throughput presence-aware:
+
+```proto
+message UpdatePartitionAssignmentRequest {
+  string name = 1;
+  optional int64 throughput_bytes = 2;
+  repeated string partition_ids = 3;
+  optional bool require_dedicated_partition = 4;
+}
+```
+
+With that shape, the semantics are unambiguous:
+
+- `throughput_bytes` omitted: preserve the existing throughput
+- `throughput_bytes = 0`: explicitly set throughput to zero
+- `throughput_bytes > 0`: explicitly update throughput
+- `throughput_bytes < 0`: reject as invalid input
 
 ### Partition Selection and Dataset Scaling Policy
 
