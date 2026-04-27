@@ -68,8 +68,7 @@ public class DatasetPartitionMetadataTest {
   public void testDatasetPartitionMetadata() {
     final Instant start = Instant.now();
     final Instant end = Instant.now().plus(1, ChronoUnit.DAYS);
-    final String name = "partitionName";
-    final List<String> list = List.of(name);
+    final List<String> list = List.of("1");
 
     final DatasetPartitionMetadata datasetPartitionMetadata =
         new DatasetPartitionMetadata(start.toEpochMilli(), end.toEpochMilli(), list);
@@ -94,8 +93,7 @@ public class DatasetPartitionMetadataTest {
   public void testEqualsAndHashCode() {
     final Instant start = Instant.now();
     final Instant end = Instant.now().plus(1, ChronoUnit.DAYS);
-    final String name = "partitionName";
-    final List<String> list = List.of(name);
+    final List<String> list = List.of("1");
 
     final DatasetPartitionMetadata datasetPartitionMetadata1 =
         new DatasetPartitionMetadata(start.toEpochMilli(), end.toEpochMilli(), list);
@@ -129,8 +127,7 @@ public class DatasetPartitionMetadataTest {
   public void testValidDatasetPartitionMetadata() {
     final Instant start = Instant.now();
     final Instant end = Instant.now().plus(1, ChronoUnit.DAYS);
-    final String name = "partitionName";
-    final List<String> list = List.of(name);
+    final List<String> list = List.of("1");
 
     assertThatIllegalArgumentException()
         .isThrownBy(() -> new DatasetPartitionMetadata(0, end.toEpochMilli(), list));
@@ -139,6 +136,20 @@ public class DatasetPartitionMetadataTest {
     assertThatIllegalArgumentException()
         .isThrownBy(
             () -> new DatasetPartitionMetadata(start.toEpochMilli(), end.toEpochMilli(), null));
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                new DatasetPartitionMetadata(
+                    start.toEpochMilli(), end.toEpochMilli(), List.of("partition-a")))
+        .withMessageContaining(
+            "partitions must contain only canonical non-negative integer partition IDs");
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                new DatasetPartitionMetadata(
+                    start.toEpochMilli(), end.toEpochMilli(), List.of("01")))
+        .withMessageContaining(
+            "partitions must contain only canonical non-negative integer partition IDs");
   }
 
   @Test

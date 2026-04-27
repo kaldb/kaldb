@@ -355,7 +355,7 @@ public class PartitionAutoAssignmentPlannerTest {
   }
 
   @Test
-  public void shouldFailFastWhenPartitionIdIsNotNumericForOrdering() {
+  public void shouldFailFastWhenPartitionIdIsNotCanonicalForOrdering() {
     DatasetMetadata datasetMetadata =
         new DatasetMetadata("shared-dataset", "owner", 0, List.of(), "", false);
 
@@ -366,12 +366,12 @@ public class PartitionAutoAssignmentPlannerTest {
                     100,
                     false,
                     List.of(
-                        new LivePartitionState("a", 0, 60, new PartitionOccupancy.Empty()),
+                        new LivePartitionState("01", 0, 60, new PartitionOccupancy.Empty()),
                         new LivePartitionState("2", 0, 60, new PartitionOccupancy.Empty()),
                         new LivePartitionState("3", 0, 60, new PartitionOccupancy.Empty())),
                     2))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("Dataset shared-dataset cannot use non-numeric partition ID: a");
+        .hasMessageContaining("Dataset shared-dataset cannot use invalid partition ID: 01");
   }
 
   @Test

@@ -5,6 +5,8 @@ import static com.google.common.base.Preconditions.checkArgument;
 import com.google.common.collect.ImmutableList;
 import com.slack.astra.chunk.ChunkInfo;
 import com.slack.astra.proto.metadata.Metadata;
+import com.slack.astra.server.partitionassignment.PartitionIdOrdering;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.stream.Collectors;
@@ -30,6 +32,18 @@ public class DatasetPartitionMetadata {
         endTimeEpochMs > startTimeEpochMs,
         "endTimeEpochMs must be greater than the startTimeEpochMs");
     checkArgument(partitions != null, "partitions must be non-null");
+    List<String> invalidPartitionIds = new ArrayList<>();
+    for (String partitionId : partitions) {
+      checkArgument(Objects.nonNull(partitionId), "partitions must not contain null IDs");
+      if (!PartitionIdOrdering.isCanonicalNonNegativePartitionId(partitionId)) {
+        invalidPartitionIds.add(partitionId);
+      }
+    }
+    invalidPartitionIds = invalidPartitionIds.stream().distinct().sorted().toList();
+    checkArgument(
+        invalidPartitionIds.isEmpty(),
+        "partitions must contain only canonical non-negative integer partition IDs: %s",
+        invalidPartitionIds);
 
     this.startTimeEpochMs = startTimeEpochMs;
     this.endTimeEpochMs = endTimeEpochMs;

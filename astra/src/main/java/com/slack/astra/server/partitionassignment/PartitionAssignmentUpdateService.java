@@ -198,7 +198,7 @@ public class PartitionAssignmentUpdateService {
         duplicateRequestedPartitionIds.isEmpty(),
         "Requested partition IDs must be unique: %s".formatted(duplicateRequestedPartitionIds));
 
-    List<String> nonNumericRequestedPartitionIds =
+    List<String> invalidRequestedPartitionIds =
         requestedPartitionIds.stream()
             .filter(
                 id -> {
@@ -212,8 +212,9 @@ public class PartitionAssignmentUpdateService {
             .sorted()
             .toList();
     Preconditions.checkArgument(
-        nonNumericRequestedPartitionIds.isEmpty(),
-        "Requested partition IDs must be numeric: %s".formatted(nonNumericRequestedPartitionIds));
+        invalidRequestedPartitionIds.isEmpty(),
+        "Requested partition IDs must be canonical non-negative integers: %s"
+            .formatted(invalidRequestedPartitionIds));
 
     Set<String> configuredPartitionIds = partitionMetadataStore.listPartitionIdsSync();
     List<String> nonExistentRequestedPartitionIds =

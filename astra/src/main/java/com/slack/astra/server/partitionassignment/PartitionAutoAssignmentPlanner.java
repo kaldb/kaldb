@@ -35,7 +35,7 @@ public final class PartitionAutoAssignmentPlanner {
     List<LivePartitionState> statesWithoutSelf =
         PartitionAssignmentConstraints.liveStatesWithoutSelfContribution(
             datasetMetadata, livePartitionStates);
-    validateNumericCandidateIds(datasetMetadata.getName(), statesWithoutSelf);
+    validateCandidatePartitionIds(datasetMetadata.getName(), statesWithoutSelf);
 
     List<LivePartitionState> sortedCandidates;
     String branchLabel;
@@ -101,7 +101,7 @@ public final class PartitionAutoAssignmentPlanner {
         .reversed();
   }
 
-  private static void validateNumericCandidateIds(
+  private static void validateCandidatePartitionIds(
       String datasetName, List<LivePartitionState> livePartitionStates) {
     for (LivePartitionState livePartitionState : livePartitionStates) {
       try {

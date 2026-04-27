@@ -574,7 +574,7 @@ public class ManagerApiGrpcTest {
 
     assertThat(throwable.getStatus().getCode()).isEqualTo(Status.INVALID_ARGUMENT.getCode());
     assertThat(throwable.getStatus().getDescription())
-        .contains("Partition ID must be numeric: partition-a");
+        .contains("Partition ID must be a canonical non-negative integer: partition-a");
   }
 
   @Test
@@ -1433,7 +1433,7 @@ public class ManagerApiGrpcTest {
 
     assertThat(throwable.getStatus().getCode()).isEqualTo(Status.INVALID_ARGUMENT.getCode());
     assertThat(throwable.getStatus().getDescription())
-        .contains("Partition ID must be numeric: partition-a");
+        .contains("Partition ID must be a canonical non-negative integer: partition-a");
   }
 
   @Test
@@ -1567,7 +1567,7 @@ public class ManagerApiGrpcTest {
   }
 
   @Test
-  public void shouldRejectManualAssignmentWithNonNumericPartitionIds() {
+  public void shouldRejectManualAssignmentWithInvalidPartitionIds() {
     String datasetName = "manualNonNumericPartitionDataset";
     managerApiStub.createDatasetMetadata(
         ManagerApi.CreateDatasetMetadataRequest.newBuilder()
@@ -1584,12 +1584,13 @@ public class ManagerApiGrpcTest {
                         ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
                             .setName(datasetName)
                             .setThroughputBytes(50)
-                            .addAllPartitionIds(List.of("1", "partition-a"))
+                            .addAllPartitionIds(List.of("1", "01", "partition-a"))
                             .build()));
 
     assertThat(throwable.getStatus().getCode()).isEqualTo(Status.INVALID_ARGUMENT.getCode());
     assertThat(throwable.getStatus().getDescription())
-        .contains("Requested partition IDs must be numeric: [partition-a]");
+        .contains(
+            "Requested partition IDs must be canonical non-negative integers: [01, partition-a]");
   }
 
   @Test
@@ -1805,7 +1806,7 @@ public class ManagerApiGrpcTest {
     // this test should be updated to expect successful deletion.
     String datasetNameToDelete = "datasetWithReassignedPartition";
     String otherDatasetName = "datasetWithCurrentPartitionOwner";
-    String reassignedPartitionId = "shared-partition";
+    String reassignedPartitionId = "7";
 
     datasetMetadataStore.createSync(
         new DatasetMetadata(
@@ -1905,36 +1906,36 @@ public class ManagerApiGrpcTest {
     long end = startTime + 10;
 
     SnapshotMetadata overlapsStartTimeIncluded =
-        new SnapshotMetadata("a", startTime, startTime + 6, 0, "a", 0);
+        new SnapshotMetadata("a", startTime, startTime + 6, 0, "1", 0);
     SnapshotMetadata overlapsStartTimeExcluded =
-        new SnapshotMetadata("b", startTime, startTime + 6, 0, "b", 0);
+        new SnapshotMetadata("b", startTime, startTime + 6, 0, "2", 0);
 
     SnapshotMetadata fullyOverlapsStartEndTimeIncluded =
-        new SnapshotMetadata("c", startTime + 4, startTime + 11, 0, "a", 0);
+        new SnapshotMetadata("c", startTime + 4, startTime + 11, 0, "1", 0);
     SnapshotMetadata fullyOverlapsStartEndTimeExcluded =
-        new SnapshotMetadata("d", startTime + 4, startTime + 11, 0, "b", 0);
+        new SnapshotMetadata("d", startTime + 4, startTime + 11, 0, "2", 0);
 
     SnapshotMetadata partiallyOverlapsStartEndTimeIncluded =
-        new SnapshotMetadata("e", startTime + 4, startTime + 5, 0, "a", 0);
+        new SnapshotMetadata("e", startTime + 4, startTime + 5, 0, "1", 0);
     SnapshotMetadata partiallyOverlapsStartEndTimeExcluded =
-        new SnapshotMetadata("f", startTime + 4, startTime + 5, 0, "b", 0);
+        new SnapshotMetadata("f", startTime + 4, startTime + 5, 0, "2", 0);
 
     SnapshotMetadata overlapsEndTimeIncluded =
-        new SnapshotMetadata("g", startTime + 10, startTime + 15, 0, "a", 0);
+        new SnapshotMetadata("g", startTime + 10, startTime + 15, 0, "1", 0);
     SnapshotMetadata overlapsEndTimeExcluded =
-        new SnapshotMetadata("h", startTime + 10, startTime + 15, 0, "b", 0);
+        new SnapshotMetadata("h", startTime + 10, startTime + 15, 0, "2", 0);
 
     SnapshotMetadata notWithinStartEndTimeExcluded1 =
-        new SnapshotMetadata("i", startTime, startTime + 4, 0, "a", 0);
+        new SnapshotMetadata("i", startTime, startTime + 4, 0, "1", 0);
     SnapshotMetadata notWithinStartEndTimeExcluded2 =
-        new SnapshotMetadata("j", startTime + 11, startTime + 15, 0, "a", 0);
+        new SnapshotMetadata("j", startTime + 11, startTime + 15, 0, "1", 0);
 
     DatasetMetadata datasetWithDataInPartitionA =
         new DatasetMetadata(
             "foo",
             "a",
             1,
-            List.of(new DatasetPartitionMetadata(startTime + 5, startTime + 6, List.of("a"))),
+            List.of(new DatasetPartitionMetadata(startTime + 5, startTime + 6, List.of("1"))),
             "fooService");
 
     datasetMetadataStore.createSync(datasetWithDataInPartitionA);
@@ -2012,9 +2013,9 @@ public class ManagerApiGrpcTest {
     long end = startTime + 10;
 
     SnapshotMetadata snapshotIncluded =
-        new SnapshotMetadata("g", startTime + 10, startTime + 15, 0, "a", 0);
+        new SnapshotMetadata("g", startTime + 10, startTime + 15, 0, "1", 0);
     SnapshotMetadata snapshotExcluded =
-        new SnapshotMetadata("h", startTime + 10, startTime + 15, 0, "b", 0);
+        new SnapshotMetadata("h", startTime + 10, startTime + 15, 0, "2", 0);
 
     snapshotMetadataStore.createSync(snapshotIncluded);
     snapshotMetadataStore.createSync(snapshotExcluded);
@@ -2024,7 +2025,7 @@ public class ManagerApiGrpcTest {
             "foo",
             "a",
             1,
-            List.of(new DatasetPartitionMetadata(startTime + 5, startTime + 6, List.of("a"))),
+            List.of(new DatasetPartitionMetadata(startTime + 5, startTime + 6, List.of("1"))),
             "fooService");
 
     datasetMetadataStore.createSync(serviceWithDataInPartitionA);
@@ -2054,11 +2055,11 @@ public class ManagerApiGrpcTest {
     long end = startTime + 10;
 
     SnapshotMetadata snapshotIncluded =
-        new SnapshotMetadata("a", startTime + 10, startTime + 15, 0, "a", 0);
+        new SnapshotMetadata("a", startTime + 10, startTime + 15, 0, "1", 0);
     SnapshotMetadata snapshotIncluded2 =
-        new SnapshotMetadata("b", startTime + 10, startTime + 15, 0, "b", 0);
+        new SnapshotMetadata("b", startTime + 10, startTime + 15, 0, "2", 0);
     SnapshotMetadata snapshotExcluded =
-        new SnapshotMetadata("c", startTime + 10, startTime + 15, 0, "c", 0);
+        new SnapshotMetadata("c", startTime + 10, startTime + 15, 0, "3", 0);
 
     snapshotMetadataStore.createSync(snapshotIncluded);
     snapshotMetadataStore.createSync(snapshotIncluded2);
@@ -2069,7 +2070,7 @@ public class ManagerApiGrpcTest {
             "foo",
             "a",
             1,
-            List.of(new DatasetPartitionMetadata(startTime + 5, startTime + 6, List.of("a", "b"))),
+            List.of(new DatasetPartitionMetadata(startTime + 5, startTime + 6, List.of("1", "2"))),
             "fooService");
 
     datasetMetadataStore.createSync(serviceWithDataInPartitionA);
@@ -2101,11 +2102,11 @@ public class ManagerApiGrpcTest {
     long startTime = Instant.now().toEpochMilli();
 
     SnapshotMetadata snapshotFoo =
-        new SnapshotMetadata("foo", startTime + 10, startTime + 15, 0, "a", 0);
+        new SnapshotMetadata("foo", startTime + 10, startTime + 15, 0, "1", 0);
     SnapshotMetadata snapshotBar =
-        new SnapshotMetadata("bar", startTime + 10, startTime + 15, 0, "b", 0);
+        new SnapshotMetadata("bar", startTime + 10, startTime + 15, 0, "2", 0);
     SnapshotMetadata snapshotBaz =
-        new SnapshotMetadata("baz", startTime + 10, startTime + 15, 0, "c", 0);
+        new SnapshotMetadata("baz", startTime + 10, startTime + 15, 0, "3", 0);
 
     snapshotMetadataStore.createSync(snapshotFoo);
     snapshotMetadataStore.createSync(snapshotBar);
