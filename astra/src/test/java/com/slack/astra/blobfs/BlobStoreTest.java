@@ -1,5 +1,6 @@
 package com.slack.astra.blobfs;
 
+import static com.slack.astra.blobfs.S3TestUtils.prefixedBlobStore;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -33,16 +34,6 @@ class BlobStoreTest {
 
   private final S3AsyncClient s3Client =
       S3TestUtils.createS3CrtClient(S3_MOCK_EXTENSION.getServiceEndpoint());
-
-  private static BlobStore prefixedBlobStore(S3AsyncClient s3Client, String prefix) {
-    try {
-      return BlobStore.class
-          .getConstructor(S3AsyncClient.class, String.class, String.class)
-          .newInstance(s3Client, TEST_BUCKET, prefix);
-    } catch (ReflectiveOperationException e) {
-      throw new AssertionError("Expected BlobStore to support an optional S3 path prefix", e);
-    }
-  }
 
   @Test
   void testUploadDownload() throws IOException {
@@ -321,7 +312,7 @@ class BlobStoreTest {
   @Test
   void testUploadDownloadAndListWithS3PathPrefix()
       throws IOException, ExecutionException, InterruptedException {
-    BlobStore blobStore = prefixedBlobStore(s3Client, "/astra/chunks/");
+    BlobStore blobStore = prefixedBlobStore(s3Client, TEST_BUCKET, "/astra/chunks/");
 
     Path directoryUpload = Files.createTempDirectory("");
     Path fileToUpload = Files.createTempFile(directoryUpload, "prefixed-", ".txt");
@@ -361,7 +352,7 @@ class BlobStoreTest {
   @Test
   void testUploadReadCopyAndDeleteWithS3PathPrefix()
       throws ExecutionException, InterruptedException {
-    BlobStore blobStore = prefixedBlobStore(s3Client, "trace-cache");
+    BlobStore blobStore = prefixedBlobStore(s3Client, TEST_BUCKET, "trace-cache");
     String sourceKey = "trace-cache/source.json.gz";
     String destinationKey = "trace-cache-copy/source.json.gz";
     String jsonData = "{\"traceId\":\"trace-123\"}";
@@ -394,7 +385,7 @@ class BlobStoreTest {
 
   @Test
   void testBlankS3PathPrefixBehavesLikeNoPrefix() throws ExecutionException, InterruptedException {
-    BlobStore blobStore = prefixedBlobStore(s3Client, "///");
+    BlobStore blobStore = prefixedBlobStore(s3Client, TEST_BUCKET, "///");
     String key = "logical/path.txt";
 
     blobStore.uploadData(key, "plain text", false);

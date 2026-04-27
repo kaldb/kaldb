@@ -1,5 +1,6 @@
 package com.slack.astra.blobfs;
 
+import static com.slack.astra.blobfs.S3TestUtils.prefixedBlobStore;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.spy;
 
@@ -28,16 +29,6 @@ class HeapCachePagingLoaderTest {
 
   private final S3AsyncClient s3Client =
       spy(S3TestUtils.createS3CrtClient(S3_MOCK_EXTENSION.getServiceEndpoint()));
-
-  private static BlobStore prefixedBlobStore(S3AsyncClient s3Client, String prefix) {
-    try {
-      return BlobStore.class
-          .getConstructor(S3AsyncClient.class, String.class, String.class)
-          .newInstance(s3Client, TEST_BUCKET, prefix);
-    } catch (ReflectiveOperationException e) {
-      throw new AssertionError("Expected BlobStore to support an optional S3 path prefix", e);
-    }
-  }
 
   @Test
   public void testHeapCachingPartialByteRead() throws IOException, ExecutionException {
@@ -114,7 +105,7 @@ class HeapCachePagingLoaderTest {
 
   @Test
   public void testHeapLengthWithBlobStoreS3PathPrefix() throws IOException, ExecutionException {
-    BlobStore blobStore = spy(prefixedBlobStore(s3Client, "astra/heap"));
+    BlobStore blobStore = spy(prefixedBlobStore(s3Client, TEST_BUCKET, "astra/heap"));
     String filename = "file4.example";
     String chunkId = UUID.randomUUID().toString();
 

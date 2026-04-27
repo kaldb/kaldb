@@ -8,6 +8,11 @@ import software.amazon.awssdk.services.s3.S3AsyncClient;
 import software.amazon.awssdk.services.s3.crt.S3CrtHttpConfiguration;
 
 public class S3TestUtils {
+  public static BlobStore prefixedBlobStore(
+      S3AsyncClient s3AsyncClient, String bucketName, String s3PathPrefix) {
+    return new BlobStore(s3AsyncClient, bucketName, s3PathPrefix);
+  }
+
   /**
    * Based off of S3_MOCK_EXTENSION.createS3ClientV2();
    *
