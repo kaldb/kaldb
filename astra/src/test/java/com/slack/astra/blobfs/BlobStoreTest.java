@@ -365,7 +365,7 @@ class BlobStoreTest {
                 .listObjects(
                     ListObjectsRequest.builder()
                         .bucket(TEST_BUCKET)
-                        .prefix("trace-cache/" + sourceKey)
+                        .prefix("trace-cache/trace-cache")
                         .build())
                 .get()
                 .contents()
@@ -387,8 +387,9 @@ class BlobStoreTest {
   void testBlankS3PathPrefixBehavesLikeNoPrefix() throws ExecutionException, InterruptedException {
     BlobStore blobStore = prefixedBlobStore(s3Client, TEST_BUCKET, "///");
     String key = "logical/path.txt";
+    String contents = "plain text";
 
-    blobStore.uploadData(key, "plain text", false);
+    blobStore.uploadData(key, contents, false);
 
     assertThat(
             s3Client
@@ -400,5 +401,10 @@ class BlobStoreTest {
                 .map(s3Object -> s3Object.key())
                 .toList())
         .containsExactly(key);
+    assertThat(blobStore.listFiles("logical")).containsExactly(key);
+    assertThat(blobStore.pathExists("logical")).isTrue();
+    assertThat(blobStore.readFileData(key, false)).isEqualTo(contents);
+    assertThat(blobStore.delete("logical")).isTrue();
+    assertThat(blobStore.pathExists("logical")).isFalse();
   }
 }

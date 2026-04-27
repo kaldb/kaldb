@@ -60,7 +60,7 @@ class HeapCachePagingLoaderTest {
 
   @Test
   public void testDiskPagingWholeFileOneChunk() throws IOException, ExecutionException {
-    BlobStore blobStore = spy(new BlobStore(s3Client, TEST_BUCKET, ""));
+    BlobStore blobStore = spy(prefixedBlobStore(s3Client, TEST_BUCKET, "astra/heap"));
     String filename = "file2.example";
     String chunkId = UUID.randomUUID().toString();
 
@@ -77,6 +77,8 @@ class HeapCachePagingLoaderTest {
     Files.writeString(exampleFile, contents, Charset.defaultCharset());
     blobStore.upload(chunkId, directory);
 
+    assertThat(heapCachePagingLoader.length(chunkId, filename))
+        .isEqualTo(contents.getBytes().length);
     heapCachePagingLoader.readBytes(chunkId, filename, readBytes, 0, 0, contents.getBytes().length);
     assertThat(contents).isEqualTo(new String(readBytes));
   }
@@ -101,25 +103,5 @@ class HeapCachePagingLoaderTest {
 
     heapCachePagingLoader.readBytes(chunkId, filename, readBytes, 0, 0, contents.getBytes().length);
     assertThat(contents).isEqualTo(new String(readBytes));
-  }
-
-  @Test
-  public void testHeapLengthWithBlobStoreS3PathPrefix() throws IOException, ExecutionException {
-    BlobStore blobStore = spy(prefixedBlobStore(s3Client, TEST_BUCKET, "astra/heap"));
-    String filename = "file4.example";
-    String chunkId = UUID.randomUUID().toString();
-
-    DiskCachePagingLoader diskCachePagingLoader = new DiskCachePagingLoader(blobStore, s3Client, 8);
-    HeapCachePagingLoader heapCachePagingLoader =
-        new HeapCachePagingLoader(blobStore, s3Client, diskCachePagingLoader, 4);
-
-    String contents = "prefixed-heap-cache-loader";
-    Path directory = Files.createTempDirectory(chunkId);
-    Path exampleFile = Files.createFile(Path.of(directory.toString(), filename));
-    Files.writeString(exampleFile, contents, Charset.defaultCharset());
-    blobStore.upload(chunkId, directory);
-
-    assertThat(heapCachePagingLoader.length(chunkId, filename))
-        .isEqualTo(contents.getBytes().length);
   }
 }

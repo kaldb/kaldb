@@ -37,7 +37,6 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import org.apache.commons.text.StringSubstitutor;
 import org.apache.curator.test.TestingServer;
 import org.apache.curator.x.async.AsyncCuratorFramework;
@@ -54,7 +53,6 @@ import org.junit.jupiter.api.extension.RegisterExtension;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
-import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
 
 public class AstraTest {
   private static final Logger LOG = LoggerFactory.getLogger(AstraTest.class);
@@ -184,26 +182,21 @@ public class AstraTest {
       String zkPathPrefix,
       AstraConfigs.NodeRole nodeRole,
       int maxOffsetDelay,
-      int recoveryPort,
-      String s3PathPrefix) {
-    AstraConfigs.AstraConfig astraConfig =
-        AstraConfigUtil.makeAstraConfig(
-            "localhost:" + kafkaServer.getBroker().getKafkaPort().get(),
-            indexPort,
-            kafkaTopic,
-            kafkaPartition,
-            clientName,
-            TEST_S3_BUCKET,
-            queryPort,
-            zkServer.getConnectString(),
-            zkPathPrefix,
-            nodeRole,
-            maxOffsetDelay,
-            recoveryPort,
-            100);
-    return astraConfig.toBuilder()
-        .setS3Config(astraConfig.getS3Config().toBuilder().setS3PathPrefix(s3PathPrefix))
-        .build();
+      int recoveryPort) {
+    return AstraConfigUtil.makeAstraConfig(
+        "localhost:" + kafkaServer.getBroker().getKafkaPort().get(),
+        indexPort,
+        kafkaTopic,
+        kafkaPartition,
+        clientName,
+        TEST_S3_BUCKET,
+        queryPort,
+        zkServer.getConnectString(),
+        zkPathPrefix,
+        nodeRole,
+        maxOffsetDelay,
+        recoveryPort,
+        100);
   }
 
   private Astra makeIndexerAndIndexMessages(
@@ -214,8 +207,7 @@ public class AstraTest {
       String indexerPathPrefix,
       int indexerCount,
       Instant indexedMessagesStartTime,
-      PrometheusMeterRegistry indexerMeterRegistry,
-      String s3PathPrefix)
+      PrometheusMeterRegistry indexerMeterRegistry)
       throws Exception {
     LOG.info(
         "Creating indexer service at port {}, topic: {} and partition {}",
@@ -233,8 +225,7 @@ public class AstraTest {
             indexerPathPrefix,
             AstraConfigs.NodeRole.INDEX,
             1000,
-            9003,
-            s3PathPrefix);
+            9003);
 
     Astra indexer = new Astra(indexerConfig, s3Client, indexerMeterRegistry);
     indexer.start();
@@ -259,7 +250,6 @@ public class AstraTest {
   @Test
   public void testDistributedQueryOneIndexerOneQueryNode() throws Exception {
     assertThat(kafkaServer.getBroker().isRunning()).isTrue();
-    String s3PathPrefix = "astra/e2e/" + UUID.randomUUID();
 
     LOG.info("Starting query service");
     int queryServicePort = 8887;
@@ -273,8 +263,7 @@ public class AstraTest {
             ZK_PATH_PREFIX,
             AstraConfigs.NodeRole.QUERY,
             1000,
-            -1,
-            s3PathPrefix);
+            -1);
     Astra queryService = new Astra(queryServiceConfig, meterRegistry);
     queryService.start();
     queryService.serviceManager.awaitHealthy(DEFAULT_START_STOP_DURATION);
@@ -297,21 +286,8 @@ public class AstraTest {
             ZK_PATH_PREFIX,
             1,
             startTime,
-            indexerMeterRegistry,
-            s3PathPrefix);
+            indexerMeterRegistry);
     indexer.serviceManager.awaitHealthy(DEFAULT_START_STOP_DURATION);
-
-    assertThat(
-            s3Client
-                .listObjectsV2(
-                    ListObjectsV2Request.builder()
-                        .bucket(TEST_S3_BUCKET)
-                        .prefix(s3PathPrefix + "/")
-                        .maxKeys(1)
-                        .build())
-                .get()
-                .contents())
-        .isNotEmpty();
 
     AstraSearch.SearchResult indexerSearchResponse =
         searchUsingGrpcApi("*:*", indexerPort, 0, end1Time.toEpochMilli(), "3650d");
@@ -451,8 +427,7 @@ public class AstraTest {
             ZK_PATH_PREFIX,
             AstraConfigs.NodeRole.QUERY,
             1000,
-            -1,
-            "");
+            -1);
     Astra queryService = new Astra(queryServiceConfig, meterRegistry);
     queryService.start();
     queryService.serviceManager.awaitHealthy(DEFAULT_START_STOP_DURATION);
@@ -472,8 +447,7 @@ public class AstraTest {
             ZK_PATH_PREFIX,
             1,
             startTime,
-            indexer1MeterRegistry,
-            "");
+            indexer1MeterRegistry);
     indexer1.serviceManager.awaitHealthy(DEFAULT_START_STOP_DURATION);
 
     LOG.info("Starting indexer service 2");
@@ -491,8 +465,7 @@ public class AstraTest {
             ZK_PATH_PREFIX,
             2,
             startTime2,
-            indexer2MeterRegistry,
-            "");
+            indexer2MeterRegistry);
     indexer2.serviceManager.awaitHealthy(DEFAULT_START_STOP_DURATION);
 
     AstraSearch.SearchResult indexerSearchResponse =

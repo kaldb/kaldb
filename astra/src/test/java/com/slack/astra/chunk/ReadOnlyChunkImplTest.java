@@ -95,8 +95,7 @@ public class ReadOnlyChunkImplTest {
 
     S3AsyncClient s3AsyncClient =
         S3TestUtils.createS3CrtClient(S3_MOCK_EXTENSION.getServiceEndpoint());
-    blobStore =
-        S3TestUtils.prefixedBlobStore(s3AsyncClient, TEST_S3_BUCKET, "astra/read-only-chunk");
+    blobStore = new BlobStore(s3AsyncClient, TEST_S3_BUCKET, "");
   }
 
   @AfterEach

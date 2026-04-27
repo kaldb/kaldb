@@ -15,6 +15,7 @@ import java.util.concurrent.ExecutionException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
+import software.amazon.awssdk.services.s3.model.ListObjectsRequest;
 
 class DiskCachePagingLoaderTest {
 
@@ -88,8 +89,9 @@ class DiskCachePagingLoaderTest {
   }
 
   @Test
-  public void testDiskPagingWholeFileOneChunk() throws IOException, ExecutionException {
-    BlobStore blobStore = spy(new BlobStore(s3Client, TEST_BUCKET, ""));
+  public void testDiskPagingWholeFileOneChunk()
+      throws IOException, ExecutionException, InterruptedException {
+    BlobStore blobStore = spy(prefixedBlobStore(s3Client, TEST_BUCKET, "/astra/cache/"));
     String filename = "file2.example";
     String chunkId = UUID.randomUUID().toString();
 
@@ -104,6 +106,20 @@ class DiskCachePagingLoaderTest {
     Files.writeString(exampleFile, contents, Charset.defaultCharset());
     blobStore.upload(chunkId, directory);
 
+    assertThat(
+            s3Client
+                .listObjects(
+                    ListObjectsRequest.builder()
+                        .bucket(TEST_BUCKET)
+                        .prefix("astra/cache/" + chunkId)
+                        .build())
+                .get()
+                .contents()
+                .stream()
+                .map(s3Object -> s3Object.key())
+                .toList())
+        .containsExactly("astra/cache/" + chunkId + "/" + filename);
+
     diskCachePagingLoader.readBytes(chunkId, filename, readBytes, 0, 0, contents.getBytes().length);
     assertThat(contents).isEqualTo(new String(readBytes));
   }
@@ -117,26 +133,6 @@ class DiskCachePagingLoaderTest {
     DiskCachePagingLoader diskCachePagingLoader = new DiskCachePagingLoader(blobStore, s3Client, 3);
 
     String contents = "alksjdsfuwjwui387kja83kjw8i";
-    byte[] readBytes = new byte[contents.getBytes().length];
-
-    Path directory = Files.createTempDirectory(chunkId);
-    Path exampleFile = Files.createFile(Path.of(directory.toString(), filename));
-    Files.writeString(exampleFile, contents, Charset.defaultCharset());
-    blobStore.upload(chunkId, directory);
-
-    diskCachePagingLoader.readBytes(chunkId, filename, readBytes, 0, 0, contents.getBytes().length);
-    assertThat(contents).isEqualTo(new String(readBytes));
-  }
-
-  @Test
-  public void testDiskPagingWithBlobStoreS3PathPrefix() throws IOException, ExecutionException {
-    BlobStore blobStore = spy(prefixedBlobStore(s3Client, TEST_BUCKET, "/astra/cache/"));
-    String filename = "file4.example";
-    String chunkId = UUID.randomUUID().toString();
-
-    DiskCachePagingLoader diskCachePagingLoader = new DiskCachePagingLoader(blobStore, s3Client, 5);
-
-    String contents = "prefixed-disk-cache-loader";
     byte[] readBytes = new byte[contents.getBytes().length];
 
     Path directory = Files.createTempDirectory(chunkId);

@@ -28,8 +28,7 @@ class S3IndexInputTest {
 
   @Test
   public void shouldPageInContents() throws IOException {
-    BlobStore blobStore =
-        spy(S3TestUtils.prefixedBlobStore(s3Client, TEST_BUCKET, "astra/s3-index-input"));
+    BlobStore blobStore = spy(new BlobStore(s3Client, TEST_BUCKET, ""));
     String resourceDescription = "resource";
     String chunkId = UUID.randomUUID().toString();
 

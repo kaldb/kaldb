@@ -93,10 +93,7 @@ public class SnapshotDeletionServiceTest {
         spy(new ReplicaMetadataStore(curatorFramework, metadataStoreConfig, meterRegistry));
 
     s3AsyncClient = S3TestUtils.createS3CrtClient(S3_MOCK_EXTENSION.getServiceEndpoint());
-    blobStore =
-        spy(
-            S3TestUtils.prefixedBlobStore(
-                s3AsyncClient, S3_TEST_BUCKET, "astra/snapshot-deletion"));
+    blobStore = spy(new BlobStore(s3AsyncClient, S3_TEST_BUCKET, ""));
   }
 
   @AfterEach

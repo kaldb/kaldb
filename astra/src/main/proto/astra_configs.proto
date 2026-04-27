@@ -82,8 +82,10 @@ message S3Config {
   string s3_end_point = 4;
   string s3_bucket = 5;
   double s3_target_throughput_gbps = 6;
-  // Set when the S3 bucket is not exclusive to this KalDB cluster so stored objects
-  // are isolated under this prefix.
+  // Key prefix for objects written to s3_bucket when the bucket is shared with
+  // other KalDB clusters or non-KalDB objects. Empty string disables prefixing.
+  // Leading and trailing "/" characters are trimmed and BlobStore adds one
+  // trailing "/" to non-empty prefixes.
   string s3_path_prefix = 7;
 }
 
