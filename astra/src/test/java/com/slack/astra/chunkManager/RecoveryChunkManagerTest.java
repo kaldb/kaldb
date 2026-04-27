@@ -98,7 +98,7 @@ public class RecoveryChunkManagerTest {
     metricsRegistry = new SimpleMeterRegistry();
     // create an S3 client.
     s3AsyncClient = S3TestUtils.createS3CrtClient(S3_MOCK_EXTENSION.getServiceEndpoint());
-    blobStore = new BlobStore(s3AsyncClient, S3_TEST_BUCKET);
+    blobStore = new BlobStore(s3AsyncClient, S3_TEST_BUCKET, "");
 
     localZkServer = new TestingServer();
     localZkServer.start();
@@ -420,7 +420,7 @@ public class RecoveryChunkManagerTest {
   @Test
   public void testAddMessagesWithFailedRollOverStopsIngestion() throws Exception {
     // Use a non-existent bucket to induce roll-over failure.
-    initChunkManager(new BlobStore(s3AsyncClient, "fakebucket"));
+    initChunkManager(new BlobStore(s3AsyncClient, "fakebucket", ""));
 
     int offset = 1;
 

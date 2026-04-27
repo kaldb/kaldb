@@ -91,7 +91,10 @@ public class HeapCachePagingLoader {
     return key ->
         s3AsyncClient
             .headObject(
-                HeadObjectRequest.builder().bucket(blobStore.bucketName).key(key.getPath()).build())
+                HeadObjectRequest.builder()
+                    .bucket(blobStore.bucketName)
+                    .key(blobStore.addPathPrefix(key.getPath()))
+                    .build())
             .get()
             .contentLength();
   }
