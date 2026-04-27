@@ -6,6 +6,7 @@ import static org.awaitility.Awaitility.await;
 import com.slack.astra.metadata.core.AstraMetadataTestUtils;
 import com.slack.astra.metadata.core.CuratorBuilder;
 import com.slack.astra.proto.config.AstraConfigs;
+import com.slack.astra.util.TestingZKServer;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.io.IOException;
 import org.apache.curator.test.TestingServer;
@@ -23,7 +24,7 @@ public class PartitionMetadataStoreTest {
   @BeforeEach
   public void setUp() throws Exception {
     meterRegistry = new SimpleMeterRegistry();
-    testingServer = new TestingServer();
+    testingServer = TestingZKServer.createTestingServer();
 
     AstraConfigs.MetadataStoreConfig metadataStoreConfig =
         AstraConfigs.MetadataStoreConfig.newBuilder()
