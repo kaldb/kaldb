@@ -49,7 +49,8 @@ public record LivePartitionState(
     // TODO(shard-autoassignment): listSync() is cache-backed in the ZooKeeper path. Rapid
     // back-to-back manager updates can therefore compute placement or render ListPartition from a
     // stale global view even though manager RPC entrypoints are synchronized. Revisit whether this
-    // path needs a direct read or stronger coordination for correctness-sensitive callers.
+    // path needs a direct read or stronger coordination for correctness-sensitive callers. See
+    // docs/topics/Shard-assignment-consistency.md for the broader consistency model.
     return fromMetadata(datasetMetadataStore.listSync(), partitionMetadataStore.listSync());
   }
 
@@ -91,7 +92,8 @@ public record LivePartitionState(
             // rapid sequence of updates can transiently make this derived view look impossible even
             // when the underlying writes are converging. Decide whether ListPartition /
             // UpdatePartitionAssignment should keep failing closed here or degrade this into an
-            // operator-visible inconsistent-state marker.
+            // operator-visible inconsistent-state marker. See
+            // docs/topics/Shard-assignment-consistency.md for the broader consistency model.
             throw new InvalidPartitionAssignmentStateException(
                 "partition %s cannot be dedicated to multiple datasets".formatted(partitionId));
           }

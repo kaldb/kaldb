@@ -485,7 +485,8 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
       // TODO(shard-autoassignment): this destructive check currently trusts the cache-backed
       // dataset list. After a rapid assignment update, a stale listSync() here can falsely allow
       // deletion of a partition that is still referenced. Switch this check to a direct read or
-      // another source of truth before relying on it for strict safety.
+      // another source of truth before relying on it for strict safety. See
+      // docs/topics/Shard-assignment-consistency.md for the broader consistency model.
       boolean partitionIsReferenced =
           datasetMetadataStore.listSync().stream()
               .flatMap(dataset -> dataset.getPartitionConfigs().stream())
