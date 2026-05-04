@@ -215,8 +215,10 @@ public class LuceneIndexStoreImplTest {
               null,
               aggregatorFactoriesBuilder);
       assertThat(result1.hits.size()).isEqualTo(1);
-      assertThat(result1.internalAggregation.getName()).isEqualTo("1");
-      assertThat(result1.internalAggregation.getType()).isEqualTo("date_histogram");
+      assertThat(Objects.requireNonNull(result1.internalAggregations).get("1").getName())
+          .isEqualTo("1");
+      assertThat(Objects.requireNonNull(result1.internalAggregations).get("1").getType())
+          .isEqualTo("date_histogram");
     }
 
     @Test

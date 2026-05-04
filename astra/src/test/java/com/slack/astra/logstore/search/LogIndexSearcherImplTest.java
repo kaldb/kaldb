@@ -481,21 +481,14 @@ public class LogIndexSearcherImplTest {
                           time.plusSeconds(2).toEpochMilli(),
                           time.plusSeconds(10).toEpochMilli()))));
 
-      assertThat(((InternalFilters) scriptNull.internalAggregation).getBuckets().size())
-          .isEqualTo(2);
-      assertThat(
-              ((InternalFilters) scriptNull.internalAggregation).getBuckets().get(0).getDocCount())
-          .isEqualTo(2);
-      assertThat(((InternalFilters) scriptNull.internalAggregation).getBuckets().get(0).getKey())
-          .isIn(List.of("foo", "bar"));
-      assertThat(
-              ((InternalFilters) scriptNull.internalAggregation).getBuckets().get(1).getDocCount())
-          .isEqualTo(2);
-      assertThat(((InternalFilters) scriptNull.internalAggregation).getBuckets().get(1).getKey())
-          .isIn(List.of("foo", "bar"));
-      assertThat(((InternalFilters) scriptNull.internalAggregation).getBuckets().get(0).getKey())
-          .isNotEqualTo(
-              ((InternalFilters) scriptNull.internalAggregation).getBuckets().get(1).getKey());
+      InternalFilters filters = (InternalFilters) scriptNull.internalAggregations.get("1");
+      assertThat(filters.getBuckets().size()).isEqualTo(2);
+      assertThat(filters.getBuckets().get(0).getDocCount()).isEqualTo(2);
+      assertThat(filters.getBuckets().get(0).getKey()).isIn(List.of("foo", "bar"));
+      assertThat(filters.getBuckets().get(1).getDocCount()).isEqualTo(2);
+      assertThat(filters.getBuckets().get(1).getKey()).isIn(List.of("foo", "bar"));
+      assertThat(filters.getBuckets().get(0).getKey())
+          .isNotEqualTo(filters.getBuckets().get(1).getKey());
 
       featureFlagEnabledStrictLogStore.closeAll();
     }
@@ -1077,7 +1070,7 @@ public class LogIndexSearcherImplTest {
     assertThat(babies.hits.size()).isEqualTo(1);
 
     InternalDateHistogram histogram =
-        (InternalDateHistogram) Objects.requireNonNull(babies.internalAggregation);
+        (InternalDateHistogram) Objects.requireNonNull(babies.internalAggregations.get("1"));
     assertThat(histogram.getBuckets().size()).isEqualTo(1);
     assertThat(histogram.getBuckets().get(0).getDocCount()).isEqualTo(1);
   }
@@ -1367,7 +1360,7 @@ public class LogIndexSearcherImplTest {
     assertThat(apples.hits.size()).isEqualTo(2);
 
     InternalDateHistogram histogram =
-        (InternalDateHistogram) Objects.requireNonNull(apples.internalAggregation);
+        (InternalDateHistogram) Objects.requireNonNull(apples.internalAggregations.get("1"));
 
     assertThat(histogram.getBuckets().size()).isEqualTo(3);
     assertThat(histogram.getBuckets().get(0).getDocCount()).isEqualTo(1);
@@ -1492,7 +1485,7 @@ public class LogIndexSearcherImplTest {
     assertThat(allIndexItems.hits.size()).isEqualTo(4);
 
     InternalDateHistogram histogram =
-        (InternalDateHistogram) Objects.requireNonNull(allIndexItems.internalAggregation);
+        (InternalDateHistogram) Objects.requireNonNull(allIndexItems.internalAggregations.get("1"));
     // assertThat(histogram.getTargetBuckets()).isEqualTo(1);
 
     assertThat(histogram.getBuckets().size()).isEqualTo(4);
@@ -1514,7 +1507,7 @@ public class LogIndexSearcherImplTest {
             QueryBuilderUtil.generateQueryBuilder("", 0L, MAX_TIME),
             null,
             createAverageAggregatorFactoriesBuilder("1", TEST_SOURCE_LONG_PROPERTY, 0, null));
-    assertThat(((InternalAvg) scriptNull.internalAggregation).value()).isEqualTo(3.25);
+    assertThat(((InternalAvg) scriptNull.internalAggregations.get("1")).value()).isEqualTo(3.25);
 
     SearchResult<LogMessage> scriptEmpty =
         strictLogStore.logSearcher.search(
@@ -1523,7 +1516,7 @@ public class LogIndexSearcherImplTest {
             QueryBuilderUtil.generateQueryBuilder("", 0L, MAX_TIME),
             null,
             createAverageAggregatorFactoriesBuilder("1", TEST_SOURCE_LONG_PROPERTY, 0, ""));
-    assertThat(((InternalAvg) scriptEmpty.internalAggregation).value()).isEqualTo(3.25);
+    assertThat(((InternalAvg) scriptEmpty.internalAggregations.get("1")).value()).isEqualTo(3.25);
 
     SearchResult<LogMessage> scripted =
         strictLogStore.logSearcher.search(
@@ -1533,7 +1526,7 @@ public class LogIndexSearcherImplTest {
             null,
             createAverageAggregatorFactoriesBuilder(
                 "1", TEST_SOURCE_LONG_PROPERTY, 0, "return 9;"));
-    assertThat(((InternalAvg) scripted.internalAggregation).value()).isEqualTo(9);
+    assertThat(((InternalAvg) scripted.internalAggregations.get("1")).value()).isEqualTo(9);
   }
 
   @Test
@@ -1568,18 +1561,14 @@ public class LogIndexSearcherImplTest {
                         time.plusSeconds(2).toEpochMilli(),
                         time.plusSeconds(10).toEpochMilli()))));
 
-    assertThat(((InternalFilters) scriptNull.internalAggregation).getBuckets().size()).isEqualTo(2);
-    assertThat(((InternalFilters) scriptNull.internalAggregation).getBuckets().get(0).getDocCount())
-        .isEqualTo(2);
-    assertThat(((InternalFilters) scriptNull.internalAggregation).getBuckets().get(0).getKey())
-        .isIn(List.of("foo", "bar"));
-    assertThat(((InternalFilters) scriptNull.internalAggregation).getBuckets().get(1).getDocCount())
-        .isEqualTo(2);
-    assertThat(((InternalFilters) scriptNull.internalAggregation).getBuckets().get(1).getKey())
-        .isIn(List.of("foo", "bar"));
-    assertThat(((InternalFilters) scriptNull.internalAggregation).getBuckets().get(0).getKey())
-        .isNotEqualTo(
-            ((InternalFilters) scriptNull.internalAggregation).getBuckets().get(1).getKey());
+    InternalFilters filters = (InternalFilters) scriptNull.internalAggregations.get("1");
+    assertThat(filters.getBuckets().size()).isEqualTo(2);
+    assertThat(filters.getBuckets().get(0).getDocCount()).isEqualTo(2);
+    assertThat(filters.getBuckets().get(0).getKey()).isIn(List.of("foo", "bar"));
+    assertThat(filters.getBuckets().get(1).getDocCount()).isEqualTo(2);
+    assertThat(filters.getBuckets().get(1).getKey()).isIn(List.of("foo", "bar"));
+    assertThat(filters.getBuckets().get(0).getKey())
+        .isNotEqualTo(filters.getBuckets().get(1).getKey());
   }
 
   @Test
@@ -1599,7 +1588,7 @@ public class LogIndexSearcherImplTest {
     assertThat(allIndexItems.hits.size()).isEqualTo(4);
 
     InternalMin internalMin =
-        (InternalMin) Objects.requireNonNull(allIndexItems.internalAggregation);
+        (InternalMin) Objects.requireNonNull(allIndexItems.internalAggregations.get("test"));
 
     assertThat(Double.valueOf(internalMin.getValue()).longValue()).isEqualTo(time.toEpochMilli());
   }
@@ -1621,7 +1610,7 @@ public class LogIndexSearcherImplTest {
     assertThat(allIndexItems.hits.size()).isEqualTo(4);
 
     InternalMax internalMax =
-        (InternalMax) Objects.requireNonNull(allIndexItems.internalAggregation);
+        (InternalMax) Objects.requireNonNull(allIndexItems.internalAggregations.get("test"));
 
     // 4 seconds because of test data
     assertThat(Double.valueOf(internalMax.getValue()).longValue())
@@ -1644,7 +1633,7 @@ public class LogIndexSearcherImplTest {
     assertThat(allIndexItems.hits.size()).isEqualTo(4);
 
     InternalSum internalSum =
-        (InternalSum) Objects.requireNonNull(allIndexItems.internalAggregation);
+        (InternalSum) Objects.requireNonNull(allIndexItems.internalAggregations.get("test"));
 
     // 1, 3, 4, 5
     assertThat(internalSum.getValue()).isEqualTo(13);
@@ -1667,7 +1656,8 @@ public class LogIndexSearcherImplTest {
     assertThat(allIndexItems.hits.size()).isEqualTo(4);
 
     InternalExtendedStats internalExtendedStats =
-        (InternalExtendedStats) Objects.requireNonNull(allIndexItems.internalAggregation);
+        (InternalExtendedStats)
+            Objects.requireNonNull(allIndexItems.internalAggregations.get("test"));
 
     // 1, 3, 4, 5
     assertThat(internalExtendedStats).isNotNull();
@@ -1702,7 +1692,7 @@ public class LogIndexSearcherImplTest {
 
     assertThat(allIndexItems.hits.size()).isEqualTo(4);
 
-    StringTerms stringTerms = (StringTerms) allIndexItems.internalAggregation;
+    StringTerms stringTerms = (StringTerms) allIndexItems.internalAggregations.get("1");
     assertThat(stringTerms.getBuckets().size()).isEqualTo(4);
 
     List<String> bucketKeys =
@@ -1729,7 +1719,7 @@ public class LogIndexSearcherImplTest {
 
     assertThat(allIndexItems.hits.size()).isEqualTo(4);
 
-    StringTerms stringTerms = (StringTerms) allIndexItems.internalAggregation;
+    StringTerms stringTerms = (StringTerms) allIndexItems.internalAggregations.get("1");
     assertThat(stringTerms.getBuckets().size()).isEqualTo(1);
     assertThat(stringTerms.getBuckets().get(0).getKey()).isEqualTo("foo");
   }
@@ -2099,7 +2089,8 @@ public class LogIndexSearcherImplTest {
     assertThat(allIndexItems.hits.size()).isEqualTo(0);
 
     InternalAutoDateHistogram histogram =
-        (InternalAutoDateHistogram) Objects.requireNonNull(allIndexItems.internalAggregation);
+        (InternalAutoDateHistogram)
+            Objects.requireNonNull(allIndexItems.internalAggregations.get("1"));
     assertThat(histogram.getTargetBuckets()).isEqualTo(1);
 
     assertThat(histogram.getBuckets().size()).isEqualTo(4);
@@ -2124,7 +2115,7 @@ public class LogIndexSearcherImplTest {
     assertThat(elephants.hits.size()).isEqualTo(0);
 
     InternalDateHistogram histogram =
-        (InternalDateHistogram) Objects.requireNonNull(elephants.internalAggregation);
+        (InternalDateHistogram) Objects.requireNonNull(elephants.internalAggregations.get("1"));
     assertThat(histogram.getBuckets().size()).isEqualTo(0);
   }
 
@@ -2143,7 +2134,7 @@ public class LogIndexSearcherImplTest {
             null,
             null);
     assertThat(results.hits.size()).isEqualTo(2);
-    assertThat(results.internalAggregation).isNull();
+    assertThat(results.internalAggregations).isNull();
   }
 
   @Test
@@ -2163,7 +2154,7 @@ public class LogIndexSearcherImplTest {
     assertThat(babies.hits.size()).isEqualTo(0);
 
     InternalDateHistogram histogram =
-        (InternalDateHistogram) Objects.requireNonNull(babies.internalAggregation);
+        (InternalDateHistogram) Objects.requireNonNull(babies.internalAggregations.get("1"));
     assertThat(histogram.getBuckets().size()).isEqualTo(2);
 
     assertThat(histogram.getBuckets().get(0).getDocCount()).isEqualTo(1);

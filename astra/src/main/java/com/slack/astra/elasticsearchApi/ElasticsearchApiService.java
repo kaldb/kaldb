@@ -38,7 +38,9 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.TreeMap;
 import java.util.concurrent.StructuredTaskScope;
-import org.opensearch.search.aggregations.InternalAggregation;
+import org.opensearch.core.common.Strings;
+import org.opensearch.core.xcontent.MediaTypeRegistry;
+import org.opensearch.search.aggregations.InternalAggregations;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -239,10 +241,14 @@ public class ElasticsearchApiService {
   }
 
   private JsonNode parseAggregations(ByteString byteInput) throws IOException {
-    InternalAggregation internalAggregations =
+    InternalAggregations internalAggregations =
         OpenSearchInternalAggregation.fromByteArray(byteInput.toByteArray());
     if (internalAggregations != null) {
-      return OBJECT_MAPPER.readTree(internalAggregations.toString());
+      // OpenSearch renders InternalAggregations as {"aggregations": {...}}, but this response
+      // builder wants only the inner aggregations object for the top-level response field.
+      JsonNode aggregationsJson =
+          OBJECT_MAPPER.readTree(Strings.toString(MediaTypeRegistry.JSON, internalAggregations));
+      return aggregationsJson.get("aggregations");
     }
     return null;
   }
