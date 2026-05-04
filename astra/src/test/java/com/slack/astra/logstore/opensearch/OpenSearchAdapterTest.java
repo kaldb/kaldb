@@ -31,6 +31,7 @@ import org.opensearch.index.query.MatchAllQueryBuilder;
 import org.opensearch.index.query.QueryStringQueryBuilder;
 import org.opensearch.index.query.RangeQueryBuilder;
 import org.opensearch.search.aggregations.AggregatorFactories;
+import org.opensearch.search.aggregations.InternalAggregations;
 import org.opensearch.search.aggregations.metrics.AvgAggregationBuilder;
 import org.opensearch.search.aggregations.metrics.InternalAvg;
 
@@ -89,8 +90,13 @@ public class OpenSearchAdapterTest {
     avgAggregationBuilder.field(LogMessage.SystemField.TIME_SINCE_EPOCH.fieldName);
     avgAggregationBuilder.missing("2");
 
+    AvgAggregationBuilder avgAggregationBuilder2 = new AvgAggregationBuilder("bar");
+    avgAggregationBuilder2.field(LogMessage.SystemField.TIME_SINCE_EPOCH.fieldName);
+    avgAggregationBuilder2.missing("2");
+
     AggregatorFactories.Builder aggregatorFactoriesBuilder = new AggregatorFactories.Builder();
     aggregatorFactoriesBuilder.addAggregator(avgAggregationBuilder);
+    aggregatorFactoriesBuilder.addAggregator(avgAggregationBuilder2);
     OpenSearchAdapter.AggregationExecution aggregationExecution =
         openSearchAdapter.createAggregationExecution(
             aggregatorFactoriesBuilder,
@@ -100,12 +106,16 @@ public class OpenSearchAdapterTest {
                 .getLuceneSearcherManager()
                 .acquire(),
             null);
+    InternalAggregations reduced = aggregationExecution.finish();
+    InternalAvg reducedAvg = (InternalAvg) reduced.get("foo");
+    InternalAvg reducedAvg2 = (InternalAvg) reduced.get("bar");
 
-    InternalAvg reduced = (InternalAvg) aggregationExecution.finish();
-
-    assertThat(reduced.getName()).isEqualTo("foo");
-    assertThat(reduced.getType()).isEqualTo("avg");
-    assertThat(reduced.getValue()).isEqualTo(Double.valueOf("NaN"));
+    assertThat(reducedAvg.getName()).isEqualTo("foo");
+    assertThat(reducedAvg.getType()).isEqualTo("avg");
+    assertThat(reducedAvg.getValue()).isEqualTo(Double.valueOf("NaN"));
+    assertThat(reducedAvg2.getName()).isEqualTo("bar");
+    assertThat(reducedAvg2.getType()).isEqualTo("avg");
+    assertThat(reducedAvg2.getValue()).isEqualTo(Double.valueOf("NaN"));
 
     // todo - we don't have access to the package local methods for extra asserts - use reflection?
   }

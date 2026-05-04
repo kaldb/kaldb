@@ -512,6 +512,133 @@ public class ElasticsearchApiServiceTest {
   }
 
   @Test
+  public void testSingleSearchReturnsMultipleSiblingAggregations() throws Exception {
+    addMessagesToChunkManager(SpanUtil.makeSpansWithTimeDifference(1, 100, 1, Instant.now()));
+
+    String postBody =
+        """
+        {
+          "size": 0,
+          "query": {
+            "match_all": {}
+          },
+          "aggs": {
+            "over_time": {
+              "date_histogram": {
+                "field": "@timestamp",
+                "interval": "1h",
+                "min_doc_count": 1
+              },
+              "aggs": {}
+            },
+            "services": {
+              "terms": {
+                "field": "service_name",
+                "size": 10
+              }
+            }
+          }
+        }
+        """;
+    HttpResponse response = elasticsearchApiService.search(TEST_DATASET_NAME, postBody);
+
+    AggregatedHttpResponse aggregatedRes = response.aggregate().join();
+    String body = aggregatedRes.content(StandardCharsets.UTF_8);
+    JsonNode jsonNode = OBJECT_MAPPER.readTree(body);
+
+    assertThat(aggregatedRes.status().code()).isEqualTo(200);
+    assertThat(jsonNode.get("aggregations").get("over_time").get("buckets").size()).isEqualTo(1);
+    assertThat(jsonNode.get("aggregations").get("services").get("buckets").size()).isEqualTo(1);
+    assertThat(
+            jsonNode
+                .get("aggregations")
+                .get("services")
+                .get("buckets")
+                .get(0)
+                .get("doc_count")
+                .asInt())
+        .isEqualTo(100);
+  }
+
+  @Test
+  public void testSingleSearchReturnsNestedAndSiblingAggregations() throws Exception {
+    addMessagesToChunkManager(SpanUtil.makeSpansWithTimeDifference(1, 100, 1, Instant.now()));
+
+    String postBody =
+        """
+        {
+          "size": 0,
+          "query": {
+            "match_all": {}
+          },
+          "aggs": {
+            "over_time": {
+              "date_histogram": {
+                "field": "@timestamp",
+                "interval": "1h",
+                "min_doc_count": 1
+              },
+              "aggs": {
+                "bucket_services": {
+                  "terms": {
+                    "field": "service_name",
+                    "size": 10
+                  }
+                }
+              }
+            },
+            "all_services": {
+              "terms": {
+                "field": "service_name",
+                "size": 10
+              }
+            }
+          }
+        }
+        """;
+    HttpResponse response = elasticsearchApiService.search(TEST_DATASET_NAME, postBody);
+
+    AggregatedHttpResponse aggregatedRes = response.aggregate().join();
+    String body = aggregatedRes.content(StandardCharsets.UTF_8);
+    JsonNode jsonNode = OBJECT_MAPPER.readTree(body);
+
+    assertThat(aggregatedRes.status().code()).isEqualTo(200);
+    assertThat(jsonNode.get("aggregations").get("over_time").get("buckets").size()).isEqualTo(1);
+    assertThat(jsonNode.get("aggregations").get("all_services").get("buckets").size()).isEqualTo(1);
+    assertThat(
+            jsonNode
+                .get("aggregations")
+                .get("over_time")
+                .get("buckets")
+                .get(0)
+                .get("bucket_services")
+                .get("buckets")
+                .size())
+        .isEqualTo(1);
+    assertThat(
+            jsonNode
+                .get("aggregations")
+                .get("over_time")
+                .get("buckets")
+                .get(0)
+                .get("bucket_services")
+                .get("buckets")
+                .get(0)
+                .get("doc_count")
+                .asInt())
+        .isEqualTo(100);
+    assertThat(
+            jsonNode
+                .get("aggregations")
+                .get("all_services")
+                .get("buckets")
+                .get(0)
+                .get("doc_count")
+                .asInt())
+        .isEqualTo(100);
+  }
+
+  @Test
   public void testLargeSetOfQueries() throws Exception {
     addMessagesToChunkManager(SpanUtil.makeSpansWithTimeDifference(1, 100, 1, Instant.now()));
     String postBody = readResource("elasticsearchApi/multisearch_query_10results.ndjson");

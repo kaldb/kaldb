@@ -7,7 +7,9 @@ import com.slack.astra.logstore.LogMessage;
 import com.slack.astra.metadata.schema.LuceneFieldDef;
 import java.io.IOException;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 import org.apache.lucene.search.IndexSearcher;
@@ -34,8 +36,10 @@ import org.opensearch.index.similarity.SimilarityService;
 import org.opensearch.indices.fielddata.cache.IndicesFieldDataCache;
 import org.opensearch.search.aggregations.Aggregator;
 import org.opensearch.search.aggregations.AggregatorFactories;
-import org.opensearch.search.aggregations.CardinalityUpperBound;
+import org.opensearch.search.aggregations.BucketCollector;
 import org.opensearch.search.aggregations.InternalAggregation;
+import org.opensearch.search.aggregations.InternalAggregations;
+import org.opensearch.search.aggregations.MultiBucketCollector;
 import org.opensearch.search.aggregations.bucket.filter.FiltersAggregationBuilder;
 import org.opensearch.search.aggregations.bucket.histogram.AutoDateHistogramAggregationBuilder;
 import org.opensearch.search.aggregations.bucket.histogram.DateHistogramAggregationBuilder;
@@ -75,15 +79,20 @@ public class OpenSearchAdapter {
   }
 
   /** Aggregation execution state for one local Lucene search. */
-  public record AggregationExecution(Aggregator aggregator) {
+  public record AggregationExecution(
+      List<Aggregator> topLevelAggregators, BucketCollector collector) {
     /** Finalizes collection and builds the aggregation result. */
-    public InternalAggregation finish() throws IOException {
-      aggregator.postCollection();
-      return aggregator.buildTopLevel();
+    public InternalAggregations finish() throws IOException {
+      collector.postCollection();
+      List<InternalAggregation> internalAggregations = new ArrayList<>(topLevelAggregators.size());
+      for (Aggregator aggregator : topLevelAggregators) {
+        internalAggregations.add(aggregator.buildTopLevel());
+      }
+      return InternalAggregations.from(internalAggregations);
     }
   }
 
-  public Aggregator buildAggregatorFromFactory(
+  private List<Aggregator> buildAggregatorsFromFactory(
       IndexSearcher indexSearcher,
       AggregatorFactories.Builder aggregatorFactoriesBuilder,
       Query query) {
@@ -97,10 +106,7 @@ public class OpenSearchAdapter {
         SearchContext searchContext =
             new AstraSearchContext(
                 AstraBigArrays.getInstance(), queryShardContext, indexSearcher, query);
-        Aggregator[] aggregators =
-            aggregatorFactories.createSubAggregators(
-                searchContext, null, CardinalityUpperBound.ONE);
-        return aggregators[0];
+        return aggregatorFactories.createTopLevelAggregators(searchContext);
       } catch (Exception e) {
         LOG.error(
             "Aggregator parse exception {} for AggregatorFactoriesBuilder {} and Query {}",
@@ -110,8 +116,7 @@ public class OpenSearchAdapter {
         throw new IllegalArgumentException(e);
       }
     }
-    // TODO: Should this return null? Raise an error?
-    return null;
+    return List.of();
   }
 
   /**
@@ -234,10 +239,11 @@ public class OpenSearchAdapter {
       IndexSearcher indexSearcher,
       Query query)
       throws IOException {
-    Aggregator aggregator =
-        buildAggregatorFromFactory(indexSearcher, aggregatorFactoriesBuilder, query);
-    aggregator.preCollection();
-    return new AggregationExecution(aggregator);
+    List<Aggregator> topLevelAggregators =
+        buildAggregatorsFromFactory(indexSearcher, aggregatorFactoriesBuilder, query);
+    BucketCollector collector = MultiBucketCollector.wrap(topLevelAggregators);
+    collector.preCollection();
+    return new AggregationExecution(topLevelAggregators, collector);
   }
 
   /**

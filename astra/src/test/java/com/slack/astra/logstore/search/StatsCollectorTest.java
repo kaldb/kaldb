@@ -57,7 +57,8 @@ public class StatsCollectorTest {
 
     assertThat(allIndexItems.hits.size()).isEqualTo(0);
 
-    InternalDateHistogram dateHistogram = (InternalDateHistogram) allIndexItems.internalAggregation;
+    InternalDateHistogram dateHistogram =
+        (InternalDateHistogram) allIndexItems.internalAggregations.get("1");
     assertThat(Objects.requireNonNull(dateHistogram).getBuckets().size()).isEqualTo(5);
     for (InternalDateHistogram.Bucket bucket : Objects.requireNonNull(dateHistogram).getBuckets()) {
       assertThat(bucket.getDocCount()).isEqualTo(1);

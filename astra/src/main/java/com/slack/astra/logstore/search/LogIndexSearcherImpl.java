@@ -33,7 +33,7 @@ import org.apache.lucene.search.SortField.Type;
 import org.apache.lucene.search.TopFieldCollector;
 import org.opensearch.index.query.QueryBuilder;
 import org.opensearch.search.aggregations.AggregatorFactories;
-import org.opensearch.search.aggregations.InternalAggregation;
+import org.opensearch.search.aggregations.InternalAggregations;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -109,7 +109,7 @@ public class LogIndexSearcherImpl implements LogIndexSearcher<LogMessage> {
 
       try {
         List<LogMessage> results;
-        InternalAggregation internalAggregation = null;
+        InternalAggregations internalAggregations = null;
         Query query = openSearchAdapter.buildQuery(searcher, dataset, queryBuilder);
         OpenSearchAdapter.AggregationExecution aggregationExecution =
             aggregatorFactoriesBuilder == null
@@ -124,8 +124,8 @@ public class LogIndexSearcherImpl implements LogIndexSearcher<LogMessage> {
 
         Collector collector =
             topFieldCollector != null && aggregationExecution != null
-                ? MultiCollector.wrap(topFieldCollector, aggregationExecution.aggregator())
-                : topFieldCollector != null ? topFieldCollector : aggregationExecution.aggregator();
+                ? MultiCollector.wrap(topFieldCollector, aggregationExecution.collector())
+                : topFieldCollector != null ? topFieldCollector : aggregationExecution.collector();
         searcher.search(query, collector);
 
         if (topFieldCollector != null) {
@@ -138,12 +138,12 @@ public class LogIndexSearcherImpl implements LogIndexSearcher<LogMessage> {
           results = Collections.emptyList();
         }
         if (aggregationExecution != null) {
-          internalAggregation = aggregationExecution.finish();
+          internalAggregations = aggregationExecution.finish();
         }
 
         elapsedTime.stop();
         return new SearchResult<>(
-            results, elapsedTime.elapsed(TimeUnit.MICROSECONDS), 0, 0, 1, 1, internalAggregation);
+            results, elapsedTime.elapsed(TimeUnit.MICROSECONDS), 0, 0, 1, 1, internalAggregations);
       } finally {
         searcherManager.release(searcher);
       }
