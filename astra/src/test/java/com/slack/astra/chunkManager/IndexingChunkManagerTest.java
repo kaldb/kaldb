@@ -536,8 +536,8 @@ public class IndexingChunkManagerTest {
       List<String> chunkIds,
       String searchString,
       int expectedHitCount,
-      int totalSnapshots,
-      int expectedSnapshotsWithReplicas,
+      int expectedRequestedSnapshots,
+      int expectedFulfilledSnapshots,
       int expectedFailedNodes) {
 
     AstraLocalQueryService<LogMessage> astraLocalQueryService =
@@ -558,8 +558,8 @@ public class IndexingChunkManagerTest {
                 .build());
 
     assertThat(response.getHitsList().size()).isEqualTo(expectedHitCount);
-    assertThat(response.getTotalSnapshots()).isEqualTo(totalSnapshots);
-    assertThat(response.getSnapshotsWithReplicas()).isEqualTo(expectedSnapshotsWithReplicas);
+    assertThat(response.getRequestedSnapshots()).isEqualTo(expectedRequestedSnapshots);
+    assertThat(response.getFulfilledSnapshots()).isEqualTo(expectedFulfilledSnapshots);
     assertThat(response.getFailedNodes()).isEqualTo(expectedFailedNodes);
   }
 
@@ -567,8 +567,8 @@ public class IndexingChunkManagerTest {
       ChunkManager<LogMessage> chunkManager,
       String searchString,
       int expectedHitCount,
-      int totalSnapshots,
-      int expectedSnapshotsWithReplicas,
+      int expectedRequestedSnapshots,
+      int expectedFulfilledSnapshots,
       int expectedFailedNodes) {
 
     testChunkManagerSearch(
@@ -576,8 +576,8 @@ public class IndexingChunkManagerTest {
         Collections.emptyList(),
         searchString,
         expectedHitCount,
-        totalSnapshots,
-        expectedSnapshotsWithReplicas,
+        expectedRequestedSnapshots,
+        expectedFulfilledSnapshots,
         expectedFailedNodes);
   }
 

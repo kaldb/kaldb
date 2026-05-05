@@ -355,15 +355,14 @@ public class RecoveryChunkManagerTest {
 
     assertThat(result.hits.size()).isEqualTo(expectedHitCount);
 
-    // Special case: if we're expecting this search to have no hits then it won't have any
-    // snapshots
-    // or replicas either
+    // Special case: if the search has no hits then it requested no logical snapshot coverage.
+    // Otherwise one snapshot was requested and fulfilled.
     if (expectedHitCount == 0) {
-      assertThat(result.totalSnapshots).isEqualTo(0);
-      assertThat(result.snapshotsWithReplicas).isEqualTo(0);
+      assertThat(result.requestedSnapshots).isEqualTo(0);
+      assertThat(result.fulfilledSnapshots).isEqualTo(0);
     } else {
-      assertThat(result.totalSnapshots).isEqualTo(1);
-      assertThat(result.snapshotsWithReplicas).isEqualTo(1);
+      assertThat(result.requestedSnapshots).isEqualTo(1);
+      assertThat(result.fulfilledSnapshots).isEqualTo(1);
     }
   }
 

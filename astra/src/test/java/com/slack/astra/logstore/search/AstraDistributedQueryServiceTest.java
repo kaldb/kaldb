@@ -16,9 +16,15 @@ import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.when;
 
 import brave.Tracing;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.util.concurrent.Futures;
+import com.google.common.util.concurrent.ListenableFuture;
+import com.linecorp.armeria.common.AggregatedHttpResponse;
+import com.linecorp.armeria.common.HttpResponse;
 import com.slack.astra.chunk.ChunkInfo;
 import com.slack.astra.chunk.SearchContext;
+import com.slack.astra.elasticsearchApi.ElasticsearchApiService;
 import com.slack.astra.metadata.core.AstraMetadataTestUtils;
 import com.slack.astra.metadata.core.CuratorBuilder;
 import com.slack.astra.metadata.dataset.DatasetMetadata;
@@ -33,6 +39,7 @@ import com.slack.astra.proto.schema.Schema;
 import com.slack.astra.proto.service.AstraSearch;
 import com.slack.astra.proto.service.AstraServiceGrpc;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -51,6 +58,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 public class AstraDistributedQueryServiceTest {
+
+  private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
   private SimpleMeterRegistry metricsRegistry;
 
@@ -1046,6 +1055,287 @@ public class AstraDistributedQueryServiceTest {
     AstraSearch.SchemaResult schemaResultWrongDataset =
         distributedQueryService.getSchema(schemaRequestWrongDataset);
     assertThat(schemaResultWrongDataset.getFieldDefinitionMap().size()).isEqualTo(0);
+    distributedQueryService.close();
+  }
+
+  @Test
+  public void testDoSearchMarksMissingQueryableSnapshotAsFailed() {
+    Instant endTime = Instant.now();
+    Instant startTime = endTime.minus(1, ChronoUnit.HOURS);
+
+    SearchMetadataStore searchMetadataStoreMock = mock(SearchMetadataStore.class);
+    when(searchMetadataStoreMock.listSync()).thenReturn(List.of());
+
+    SnapshotMetadataStore snapshotMetadataStoreMock = mock(SnapshotMetadataStore.class);
+    when(snapshotMetadataStoreMock.listSync())
+        .thenReturn(
+            List.of(
+                new SnapshotMetadata(
+                    "snapshot1", startTime.toEpochMilli(), endTime.toEpochMilli(), 10, "1", 0)));
+
+    DatasetMetadataStore datasetMetadataStoreMock = mock(DatasetMetadataStore.class);
+    when(datasetMetadataStoreMock.listSync())
+        .thenReturn(
+            List.of(
+                new DatasetMetadata(
+                    "foo",
+                    "foo",
+                    10,
+                    List.of(
+                        new DatasetPartitionMetadata(
+                            startTime.minus(1, ChronoUnit.HOURS).toEpochMilli(),
+                            Long.MAX_VALUE,
+                            List.of("1"))),
+                    "foo")));
+
+    AstraDistributedQueryService distributedQueryService =
+        new AstraDistributedQueryService(
+            searchMetadataStoreMock,
+            snapshotMetadataStoreMock,
+            datasetMetadataStoreMock,
+            metricsRegistry,
+            Duration.ofSeconds(2),
+            Duration.ofSeconds(2));
+
+    AstraSearch.SearchRequest searchRequest =
+        AstraSearch.SearchRequest.newBuilder()
+            .setDataset("foo")
+            .setStartTimeEpochMs(startTime.toEpochMilli())
+            .setEndTimeEpochMs(endTime.toEpochMilli())
+            .setHowMany(10)
+            .setQuery("{\"match_all\":{}}")
+            .build();
+
+    AstraSearch.SearchResult searchResult = distributedQueryService.doSearch(searchRequest);
+
+    assertThat(searchResult.getFailedNodes()).isEqualTo(0);
+    assertThat(searchResult.getTotalNodes()).isEqualTo(0);
+    assertThat(searchResult.getRequestedSnapshots()).isEqualTo(1);
+    assertThat(searchResult.getFulfilledSnapshots()).isEqualTo(0);
+    assertThat(
+            metricsRegistry
+                .get(AstraDistributedQueryService.DISTRIBUTED_QUERY_REQUESTED_SNAPSHOTS)
+                .counter()
+                .count())
+        .isEqualTo(1);
+    assertThat(
+            metricsRegistry
+                .get(AstraDistributedQueryService.DISTRIBUTED_QUERY_FULFILLED_SNAPSHOTS)
+                .counter()
+                .count())
+        .isZero();
+
+    distributedQueryService.close();
+  }
+
+  @Test
+  public void testDoSearchCountsFailedDistributedSubrequestAsFailedShards() {
+    Instant endTime = Instant.now();
+    Instant startTime = endTime.minus(1, ChronoUnit.HOURS);
+    SearchMetadataStore searchMetadataStoreMock = mock(SearchMetadataStore.class);
+    when(searchMetadataStoreMock.listSync())
+        .thenReturn(
+            List.of(
+                new SearchMetadata("snapshot1-node1", "snapshot1", "127.0.0.1:1", true),
+                new SearchMetadata("snapshot2-node1", "snapshot2", "127.0.0.1:1", true)));
+
+    SnapshotMetadataStore snapshotMetadataStoreMock = mock(SnapshotMetadataStore.class);
+    when(snapshotMetadataStoreMock.listSync())
+        .thenReturn(
+            List.of(
+                new SnapshotMetadata(
+                    "snapshot1", startTime.toEpochMilli(), endTime.toEpochMilli(), 10, "1", 0),
+                new SnapshotMetadata(
+                    "snapshot2", startTime.toEpochMilli(), endTime.toEpochMilli(), 10, "1", 0)));
+
+    DatasetMetadataStore datasetMetadataStoreMock = mock(DatasetMetadataStore.class);
+    when(datasetMetadataStoreMock.listSync())
+        .thenReturn(
+            List.of(
+                new DatasetMetadata(
+                    "foo",
+                    "foo",
+                    10,
+                    List.of(
+                        new DatasetPartitionMetadata(
+                            startTime.minus(1, ChronoUnit.HOURS).toEpochMilli(),
+                            Long.MAX_VALUE,
+                            List.of("1"))),
+                    "foo")));
+
+    AstraDistributedQueryService distributedQueryService =
+        new AstraDistributedQueryService(
+            searchMetadataStoreMock,
+            snapshotMetadataStoreMock,
+            datasetMetadataStoreMock,
+            metricsRegistry,
+            Duration.ofMillis(200),
+            Duration.ofMillis(200));
+
+    AstraSearch.SearchRequest searchRequest =
+        AstraSearch.SearchRequest.newBuilder()
+            .setDataset("foo")
+            .setStartTimeEpochMs(startTime.toEpochMilli())
+            .setEndTimeEpochMs(endTime.toEpochMilli())
+            .setHowMany(10)
+            .setQuery("{\"match_all\":{}}")
+            .build();
+
+    AstraSearch.SearchResult searchResult = distributedQueryService.doSearch(searchRequest);
+
+    assertThat(searchResult.getFailedNodes()).isEqualTo(1);
+    assertThat(searchResult.getTotalNodes()).isEqualTo(1);
+    assertThat(searchResult.getRequestedSnapshots()).isEqualTo(2);
+    assertThat(searchResult.getFulfilledSnapshots()).isEqualTo(0);
+    assertThat(
+            metricsRegistry
+                .get(AstraDistributedQueryService.DISTRIBUTED_QUERY_REQUESTED_SNAPSHOTS)
+                .counter()
+                .count())
+        .isEqualTo(2);
+    assertThat(
+            metricsRegistry
+                .get(AstraDistributedQueryService.DISTRIBUTED_QUERY_FULFILLED_SNAPSHOTS)
+                .counter()
+                .count())
+        .isZero();
+
+    distributedQueryService.close();
+  }
+
+  @Test
+  public void testMultiSearchReportsFailedShardForMissingQueryableSnapshot() throws Exception {
+    Instant endTime = Instant.now();
+    Instant startTime = endTime.minus(1, ChronoUnit.HOURS);
+    List<SearchMetadata> noQueryableSearchMetadata = List.of();
+
+    SearchMetadataStore searchMetadataStoreMock = mock(SearchMetadataStore.class);
+    when(searchMetadataStoreMock.listSync()).thenReturn(noQueryableSearchMetadata);
+
+    SnapshotMetadataStore snapshotMetadataStoreMock = mock(SnapshotMetadataStore.class);
+    when(snapshotMetadataStoreMock.listSync())
+        .thenReturn(
+            List.of(
+                new SnapshotMetadata(
+                    "snapshot1", startTime.toEpochMilli(), endTime.toEpochMilli(), 10, "1", 0)));
+
+    DatasetMetadataStore datasetMetadataStoreMock = mock(DatasetMetadataStore.class);
+    when(datasetMetadataStoreMock.listSync())
+        .thenReturn(
+            List.of(
+                new DatasetMetadata(
+                    "foo",
+                    "foo",
+                    10,
+                    List.of(
+                        new DatasetPartitionMetadata(
+                            startTime.minus(1, ChronoUnit.HOURS).toEpochMilli(),
+                            Long.MAX_VALUE,
+                            List.of("1"))),
+                    "foo")));
+
+    AstraDistributedQueryService distributedQueryService =
+        new AstraDistributedQueryService(
+            searchMetadataStoreMock,
+            snapshotMetadataStoreMock,
+            datasetMetadataStoreMock,
+            metricsRegistry,
+            Duration.ofSeconds(2),
+            Duration.ofSeconds(2));
+    ElasticsearchApiService elasticsearchApiService =
+        new ElasticsearchApiService(
+            distributedQueryService, "astra", "localhost", 8081, mock(DatasetMetadataStore.class));
+
+    HttpResponse response =
+        elasticsearchApiService.multiSearch(
+            "{\"index\":\"foo\"}\n{\"size\":10,\"query\":{\"match_all\":{}}}");
+
+    AggregatedHttpResponse aggregatedRes = response.aggregate().join();
+    String body = aggregatedRes.content(StandardCharsets.UTF_8);
+    JsonNode jsonNode = OBJECT_MAPPER.readTree(body);
+    JsonNode responseNode = jsonNode.get("responses").get(0);
+
+    assertThat(aggregatedRes.status().code()).isEqualTo(200);
+    assertThat(responseNode.get("_shards").get("failed").asInt()).isEqualTo(1);
+    assertThat(responseNode.get("_shards").get("total").asInt()).isEqualTo(1);
+
+    distributedQueryService.close();
+  }
+
+  @Test
+  public void testMultiSearchReportsAllAssignedShardsForFailedDistributedSubrequest()
+      throws Exception {
+    Instant endTime = Instant.now();
+    Instant startTime = endTime.minus(1, ChronoUnit.HOURS);
+    String sharedSearchNodeUrl = "http://127.0.0.1";
+    List<SearchMetadata> snapshotsAssignedToSameSearchNode =
+        List.of(
+            new SearchMetadata("snapshot1-node1", "snapshot1", sharedSearchNodeUrl, true),
+            new SearchMetadata("snapshot2-node1", "snapshot2", sharedSearchNodeUrl, true));
+
+    SearchMetadataStore searchMetadataStoreMock = mock(SearchMetadataStore.class);
+    when(searchMetadataStoreMock.listSync()).thenReturn(snapshotsAssignedToSameSearchNode);
+
+    SnapshotMetadataStore snapshotMetadataStoreMock = mock(SnapshotMetadataStore.class);
+    when(snapshotMetadataStoreMock.listSync())
+        .thenReturn(
+            List.of(
+                new SnapshotMetadata(
+                    "snapshot1", startTime.toEpochMilli(), endTime.toEpochMilli(), 10, "1", 0),
+                new SnapshotMetadata(
+                    "snapshot2", startTime.toEpochMilli(), endTime.toEpochMilli(), 10, "1", 0)));
+
+    DatasetMetadataStore datasetMetadataStoreMock = mock(DatasetMetadataStore.class);
+    when(datasetMetadataStoreMock.listSync())
+        .thenReturn(
+            List.of(
+                new DatasetMetadata(
+                    "foo",
+                    "foo",
+                    10,
+                    List.of(
+                        new DatasetPartitionMetadata(
+                            startTime.minus(1, ChronoUnit.HOURS).toEpochMilli(),
+                            Long.MAX_VALUE,
+                            List.of("1"))),
+                    "foo")));
+
+    AstraDistributedQueryService distributedQueryService =
+        new AstraDistributedQueryService(
+            searchMetadataStoreMock,
+            snapshotMetadataStoreMock,
+            datasetMetadataStoreMock,
+            metricsRegistry,
+            Duration.ofMillis(200),
+            Duration.ofMillis(200));
+
+    AstraServiceGrpc.AstraServiceFutureStub futureStub =
+        mock(AstraServiceGrpc.AstraServiceFutureStub.class);
+    ListenableFuture<AstraSearch.SearchResult> failedDistributedSubrequest =
+        Futures.immediateFailedFuture(new RuntimeException("boom"));
+    distributedQueryService.stubs.put(sharedSearchNodeUrl, futureStub);
+    when(futureStub.withDeadlineAfter(anyLong(), any(TimeUnit.class))).thenReturn(futureStub);
+    when(futureStub.withInterceptors(any())).thenReturn(futureStub);
+    when(futureStub.search(any(AstraSearch.SearchRequest.class)))
+        .thenReturn(failedDistributedSubrequest);
+
+    ElasticsearchApiService elasticsearchApiService =
+        new ElasticsearchApiService(
+            distributedQueryService, "astra", "localhost", 8081, mock(DatasetMetadataStore.class));
+
+    HttpResponse response =
+        elasticsearchApiService.multiSearch(
+            "{\"index\":\"foo\"}\n{\"size\":10,\"query\":{\"match_all\":{}}}");
+
+    AggregatedHttpResponse aggregatedRes = response.aggregate().join();
+    String body = aggregatedRes.content(StandardCharsets.UTF_8);
+    JsonNode jsonNode = OBJECT_MAPPER.readTree(body);
+    JsonNode responseNode = jsonNode.get("responses").get(0);
+
+    assertThat(aggregatedRes.status().code()).isEqualTo(200);
+    assertThat(responseNode.get("_shards").get("failed").asInt()).isEqualTo(2);
+    assertThat(responseNode.get("_shards").get("total").asInt()).isEqualTo(2);
+
     distributedQueryService.close();
   }
 

@@ -4,6 +4,7 @@ import com.slack.astra.logstore.LogMessage;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 import org.opensearch.search.aggregations.InternalAggregation;
 
 public class SearchResult<T> {
@@ -11,11 +12,10 @@ public class SearchResult<T> {
   private static final SearchResult EMPTY =
       new SearchResult<>(Collections.emptyList(), 0, 0, 1, 0, 0, null);
 
-  // Astra problem (instead of a user-caused issue)
-  private static final SearchResult ASTRA_ERROR =
-      new SearchResult<>(Collections.emptyList(), 0, 1, 1, 0, 0, null);
+  private static final SearchResult LOCAL_HARD_FAILURE =
+      new SearchResult<>(Collections.emptyList(), 0, 1, 1, 1, 0, null);
 
-  private static final SearchResult USER_ERROR =
+  private static final SearchResult LOCAL_SOFT_FAILURE =
       new SearchResult<>(Collections.emptyList(), 0, 0, 0, 1, 0, null);
 
   // TODO: Make hits an iterator.
@@ -25,8 +25,10 @@ public class SearchResult<T> {
 
   public final int failedNodes;
   public final int totalNodes;
-  public final int totalSnapshots;
-  public final int snapshotsWithReplicas;
+  // Coverage is represented as requested vs fulfilled logical snapshots.
+  // Failed coverage is derived as requestedSnapshots - fulfilledSnapshots.
+  public final int requestedSnapshots;
+  public final int fulfilledSnapshots;
 
   public final InternalAggregation internalAggregation;
 
@@ -35,8 +37,8 @@ public class SearchResult<T> {
     this.tookMicros = 0;
     this.failedNodes = 0;
     this.totalNodes = 0;
-    this.totalSnapshots = 0;
-    this.snapshotsWithReplicas = 0;
+    this.requestedSnapshots = 0;
+    this.fulfilledSnapshots = 0;
     this.internalAggregation = null;
   }
 
@@ -46,15 +48,15 @@ public class SearchResult<T> {
       long tookMicros,
       int failedNodes,
       int totalNodes,
-      int totalSnapshots,
-      int snapshotsWithReplicas,
+      int requestedSnapshots,
+      int fulfilledSnapshots,
       InternalAggregation internalAggregation) {
     this.hits = hits;
     this.tookMicros = tookMicros;
     this.failedNodes = failedNodes;
     this.totalNodes = totalNodes;
-    this.totalSnapshots = totalSnapshots;
-    this.snapshotsWithReplicas = snapshotsWithReplicas;
+    this.requestedSnapshots = requestedSnapshots;
+    this.fulfilledSnapshots = fulfilledSnapshots;
     this.internalAggregation = internalAggregation;
   }
 
@@ -69,10 +71,10 @@ public class SearchResult<T> {
         + failedNodes
         + ", totalNodes="
         + totalNodes
-        + ", totalSnapshots="
-        + totalSnapshots
-        + ", snapshotsWithReplicas="
-        + snapshotsWithReplicas
+        + ", requestedSnapshots="
+        + requestedSnapshots
+        + ", fulfilledSnapshots="
+        + fulfilledSnapshots
         + ", internalAggregation="
         + internalAggregation
         + '}';
@@ -88,8 +90,8 @@ public class SearchResult<T> {
     if (tookMicros != that.tookMicros) return false;
     if (failedNodes != that.failedNodes) return false;
     if (totalNodes != that.totalNodes) return false;
-    if (totalSnapshots != that.totalSnapshots) return false;
-    if (snapshotsWithReplicas != that.snapshotsWithReplicas) return false;
+    if (requestedSnapshots != that.requestedSnapshots) return false;
+    if (fulfilledSnapshots != that.fulfilledSnapshots) return false;
     if (!hits.equals(that.hits)) return false;
 
     // todo - this is pending a PR to OpenSearch to address
@@ -97,7 +99,9 @@ public class SearchResult<T> {
     // this is because DocValueFormat.DateTime in OpenSearch does not implement a proper equals
     // method
     // As such the DocValueFormat.parser are never equal to each other
-    return internalAggregation.toString().equals(that.internalAggregation.toString());
+    return Objects.equals(
+        internalAggregation == null ? null : internalAggregation.toString(),
+        that.internalAggregation == null ? null : that.internalAggregation.toString());
   }
 
   @Override
@@ -106,9 +110,11 @@ public class SearchResult<T> {
     result = 31 * result + (int) (tookMicros ^ (tookMicros >>> 32));
     result = 31 * result + failedNodes;
     result = 31 * result + totalNodes;
-    result = 31 * result + totalSnapshots;
-    result = 31 * result + snapshotsWithReplicas;
-    result = 31 * result + internalAggregation.hashCode();
+    result = 31 * result + requestedSnapshots;
+    result = 31 * result + fulfilledSnapshots;
+    result =
+        31 * result
+            + Objects.hashCode(internalAggregation == null ? null : internalAggregation.toString());
     return result;
   }
 
@@ -116,11 +122,60 @@ public class SearchResult<T> {
     return EMPTY;
   }
 
-  public static SearchResult<LogMessage> error() {
-    return ASTRA_ERROR;
+  /**
+   * Logical shard coverage that was requested but not fulfilled. Drives OpenSearch _shards.failed.
+   */
+  public int failedSnapshots() {
+    return Math.max(0, requestedSnapshots - fulfilledSnapshots);
   }
 
-  public static SearchResult<LogMessage> soft_error() {
-    return USER_ERROR;
+  /** Same invariant as {@link #failedSnapshots()}, on the proto wire form. */
+  public static int failedSnapshots(
+      com.slack.astra.proto.service.AstraSearch.SearchResult protoSearchResult) {
+    return Math.max(
+        0, protoSearchResult.getRequestedSnapshots() - protoSearchResult.getFulfilledSnapshots());
+  }
+
+  // Catalog of "missing coverage" SearchResults. Each case fixes the
+  // (requested, fulfilled, failedNodes, totalNodes) tuple:
+  //   localHardFailure              : 1 / 0, 1 / 1   (Astra-side chunk failure)
+  //   localSoftFailure              : 1 / 0, 0 / 0   (user-attributable chunk failure)
+  //   failedDistributedSubrequest(N): N / 0, 1 / 1   (a remote node was contacted and failed)
+  //   missingQueryableSnapshotCoverage(N): N / 0, 0 / 0 (no node was contacted at all)
+
+  /**
+   * Astra-side chunk failure after a node was contacted. Tuple: requested=1, fulfilled=0,
+   * failedNodes=1, totalNodes=1.
+   */
+  public static SearchResult<LogMessage> localHardFailure() {
+    return LOCAL_HARD_FAILURE;
+  }
+
+  /**
+   * User-attributable chunk failure that does not count against node health. Tuple: requested=1,
+   * fulfilled=0, failedNodes=0, totalNodes=0.
+   */
+  public static SearchResult<LogMessage> localSoftFailure() {
+    return LOCAL_SOFT_FAILURE;
+  }
+
+  /**
+   * A distributed subrequest covering {@code requestedSnapshots} logical snapshots failed. Tuple:
+   * requested=N, fulfilled=0, failedNodes=1, totalNodes=1.
+   *
+   * @param requestedSnapshots logical snapshot count the failed subrequest was responsible for
+   */
+  public static SearchResult<LogMessage> failedDistributedSubrequest(int requestedSnapshots) {
+    return new SearchResult<>(Collections.emptyList(), 0, 1, 1, requestedSnapshots, 0, null);
+  }
+
+  /**
+   * Matching logical snapshots had no queryable SearchMetadata, so no node was contacted. Tuple:
+   * requested=N, fulfilled=0, failedNodes=0, totalNodes=0.
+   *
+   * @param requestedSnapshots logical snapshot count missing queryable coverage
+   */
+  public static SearchResult<LogMessage> missingQueryableSnapshotCoverage(int requestedSnapshots) {
+    return new SearchResult<>(Collections.emptyList(), 0, 0, 0, requestedSnapshots, 0, null);
   }
 }

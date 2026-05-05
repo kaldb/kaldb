@@ -835,6 +835,45 @@ public class ElasticsearchApiServiceTest {
     }
   }
 
+  /**
+   * Verifies that the OpenSearch response derives shard totals from snapshot coverage fields.
+   *
+   * @throws Exception on response parsing failures
+   */
+  @Test
+  public void testSearchResponseIncludesFailedShardCount() throws Exception {
+    AstraQueryServiceBase searcher = mock(AstraQueryServiceBase.class);
+    ElasticsearchApiService serviceUnderTest =
+        new ElasticsearchApiService(
+            searcher,
+            DEFAULT_CLUSTER_NAME,
+            DEFAULT_HOST,
+            DEFAULT_PORT,
+            mock(DatasetMetadataStore.class));
+
+    when(searcher.doSearch(any()))
+        .thenReturn(
+            AstraSearch.SearchResult.newBuilder()
+                .setTookMicros(1000)
+                .setFailedNodes(0)
+                .setTotalNodes(9)
+                .setRequestedSnapshots(7)
+                .setFulfilledSnapshots(4)
+                .build());
+
+    HttpResponse response =
+        serviceUnderTest.multiSearch(
+            "{\"index\":\"foo\"}\n{\"size\":1,\"query\":{\"match_all\":{}}}");
+
+    AggregatedHttpResponse aggregatedRes = response.aggregate().join();
+    JsonNode jsonNode = new ObjectMapper().readTree(aggregatedRes.content(StandardCharsets.UTF_8));
+    JsonNode responseNode = jsonNode.get("responses").get(0);
+
+    assertThat(aggregatedRes.status().code()).isEqualTo(200);
+    assertThat(responseNode.get("_shards").get("failed").asInt()).isEqualTo(3);
+    assertThat(responseNode.get("_shards").get("total").asInt()).isEqualTo(7);
+  }
+
   private void addMessagesToChunkManager(List<Trace.Span> messages) throws IOException {
     IndexingChunkManager<LogMessage> chunkManager = chunkManagerUtil.chunkManager;
     int offset = 1;

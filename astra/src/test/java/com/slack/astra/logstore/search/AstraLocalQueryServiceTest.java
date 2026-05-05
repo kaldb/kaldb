@@ -7,10 +7,14 @@ import static com.slack.astra.testlib.ChunkManagerUtil.makeChunkManagerUtil;
 import static com.slack.astra.testlib.MetricsUtil.getCount;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.AssertionsForClassTypes.assertThatExceptionOfType;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import brave.Tracing;
 import com.adobe.testing.s3mock.junit5.S3MockExtension;
 import com.google.protobuf.ByteString;
+import com.slack.astra.chunkManager.ChunkManager;
 import com.slack.astra.chunkManager.IndexingChunkManager;
 import com.slack.astra.chunkManager.RollOverChunkTask;
 import com.slack.astra.logstore.LogMessage;
@@ -143,8 +147,8 @@ public class AstraLocalQueryServiceTest {
     assertThat(response.getTookMicros()).isNotZero();
     assertThat(response.getFailedNodes()).isZero();
     assertThat(response.getTotalNodes()).isEqualTo(1);
-    assertThat(response.getTotalSnapshots()).isEqualTo(1);
-    assertThat(response.getSnapshotsWithReplicas()).isEqualTo(1);
+    assertThat(response.getRequestedSnapshots()).isEqualTo(1);
+    assertThat(response.getFulfilledSnapshots()).isEqualTo(1);
 
     // Test hit contents
     assertThat(response.getHits(0)).contains("Message100");
@@ -206,8 +210,8 @@ public class AstraLocalQueryServiceTest {
     assertThat(response.getHitsList().asByteStringList().size()).isZero();
     assertThat(response.getFailedNodes()).isZero();
     assertThat(response.getTotalNodes()).isEqualTo(1);
-    assertThat(response.getTotalSnapshots()).isEqualTo(1);
-    assertThat(response.getSnapshotsWithReplicas()).isEqualTo(1);
+    assertThat(response.getRequestedSnapshots()).isEqualTo(1);
+    assertThat(response.getFulfilledSnapshots()).isEqualTo(1);
 
     // Test histogram buckets
     InternalDateHistogram dateHistogram =
@@ -252,8 +256,8 @@ public class AstraLocalQueryServiceTest {
     assertThat(response.getTookMicros()).isNotZero();
     assertThat(response.getFailedNodes()).isZero();
     assertThat(response.getTotalNodes()).isEqualTo(1);
-    assertThat(response.getTotalSnapshots()).isEqualTo(1);
-    assertThat(response.getSnapshotsWithReplicas()).isEqualTo(1);
+    assertThat(response.getRequestedSnapshots()).isEqualTo(1);
+    assertThat(response.getFulfilledSnapshots()).isEqualTo(1);
     assertThat(response.getHitsList().asByteStringList().size()).isZero();
 
     // Test histogram buckets
@@ -298,8 +302,8 @@ public class AstraLocalQueryServiceTest {
     assertThat(response.getTookMicros()).isNotZero();
     assertThat(response.getFailedNodes()).isZero();
     assertThat(response.getTotalNodes()).isEqualTo(1);
-    assertThat(response.getTotalSnapshots()).isEqualTo(1);
-    assertThat(response.getSnapshotsWithReplicas()).isEqualTo(1);
+    assertThat(response.getRequestedSnapshots()).isEqualTo(1);
+    assertThat(response.getFulfilledSnapshots()).isEqualTo(1);
 
     // Test hit contents
     assertThat(response.getHitsList().asByteStringList().size()).isEqualTo(1);
@@ -355,6 +359,33 @@ public class AstraLocalQueryServiceTest {
   }
 
   @Test
+  public void testAstraSearchPropagatesSoftErrorAsShardFailure() {
+    @SuppressWarnings("unchecked")
+    ChunkManager<LogMessage> chunkManager = mock(ChunkManager.class);
+    when(chunkManager.query(any(), any())).thenReturn(SearchResult.localSoftFailure());
+
+    AstraLocalQueryService<LogMessage> serviceUnderTest =
+        new AstraLocalQueryService<>(chunkManager, Duration.ofSeconds(3));
+
+    Instant now = Instant.now();
+    AstraSearch.SearchResult response =
+        serviceUnderTest.doSearch(
+            AstraSearch.SearchRequest.newBuilder()
+                .setDataset(MessageUtil.TEST_DATASET_NAME)
+                .setQuery(
+                    buildQueryFromQueryString("Message1", now.toEpochMilli(), now.toEpochMilli()))
+                .setStartTimeEpochMs(now.toEpochMilli())
+                .setEndTimeEpochMs(now.toEpochMilli())
+                .setHowMany(10)
+                .build());
+
+    assertThat(response.getFailedNodes()).isZero();
+    assertThat(response.getTotalNodes()).isZero();
+    assertThat(response.getRequestedSnapshots()).isEqualTo(1);
+    assertThat(response.getFulfilledSnapshots()).isZero();
+  }
+
+  @Test
   public void testAstraGrpcSearch() throws IOException {
     // Load test data into chunk manager.
     IndexingChunkManager<LogMessage> chunkManager = chunkManagerUtil.chunkManager;
@@ -407,8 +438,8 @@ public class AstraLocalQueryServiceTest {
     assertThat(response.getTookMicros()).isNotZero();
     assertThat(response.getFailedNodes()).isZero();
     assertThat(response.getTotalNodes()).isEqualTo(1);
-    assertThat(response.getTotalSnapshots()).isEqualTo(1);
-    assertThat(response.getSnapshotsWithReplicas()).isEqualTo(1);
+    assertThat(response.getRequestedSnapshots()).isEqualTo(1);
+    assertThat(response.getFulfilledSnapshots()).isEqualTo(1);
 
     // Test hit contents
     assertThat(response.getHits(0)).contains("Message1");

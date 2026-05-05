@@ -5,6 +5,6 @@
   ],
   "tookMicros": "2732",
   "totalNodes": 1,
-  "totalSnapshots": 1,
-  "snapshotsWithReplicas": 1
+  "requestedSnapshots": 1,
+  "fulfilledSnapshots": 1
 }

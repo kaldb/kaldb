@@ -134,7 +134,7 @@ public abstract class ChunkManagerBase<T> extends AbstractIdleService implements
                           LOG.warn("Chunk Query Exception", throwable);
                         }
                         // else UNAVAILABLE (ie, timedout), return 0 snapshots
-                        return (SearchResult<T>) SearchResult.error();
+                        return (SearchResult<T>) SearchResult.localHardFailure();
                       } catch (Exception err) {
                         if (err instanceof IllegalArgumentException) {
                           throw err;
@@ -145,7 +145,7 @@ public abstract class ChunkManagerBase<T> extends AbstractIdleService implements
                         // invalid queries are received
                         // return 1 snapshot, still searchable but user-side error cause
                         LOG.warn("Chunk Query Exception: {}", err.getMessage());
-                        return (SearchResult<T>) SearchResult.soft_error();
+                        return (SearchResult<T>) SearchResult.localSoftFailure();
                       }
                     })
                 .toList();
@@ -174,8 +174,8 @@ public abstract class ChunkManagerBase<T> extends AbstractIdleService implements
         searchResult.tookMicros,
         searchResult.failedNodes,
         searchResult.totalNodes + 1,
-        searchResult.totalSnapshots,
-        searchResult.snapshotsWithReplicas,
+        searchResult.requestedSnapshots,
+        searchResult.fulfilledSnapshots,
         searchResult.internalAggregation);
   }
 
