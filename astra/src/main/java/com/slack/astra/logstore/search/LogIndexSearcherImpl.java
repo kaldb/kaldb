@@ -20,9 +20,9 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
-import org.apache.lucene.search.CollectorManager;
+import org.apache.lucene.search.Collector;
 import org.apache.lucene.search.IndexSearcher;
-import org.apache.lucene.search.MultiCollectorManager;
+import org.apache.lucene.search.MultiCollector;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.ReferenceManager;
 import org.apache.lucene.search.ScoreDoc;
@@ -31,7 +31,6 @@ import org.apache.lucene.search.Sort;
 import org.apache.lucene.search.SortField;
 import org.apache.lucene.search.SortField.Type;
 import org.apache.lucene.search.TopFieldCollector;
-import org.apache.lucene.search.TopFieldDocs;
 import org.opensearch.index.query.QueryBuilder;
 import org.opensearch.search.aggregations.AggregatorFactories;
 import org.opensearch.search.aggregations.InternalAggregation;
@@ -112,39 +111,34 @@ public class LogIndexSearcherImpl implements LogIndexSearcher<LogMessage> {
         List<LogMessage> results;
         InternalAggregation internalAggregation = null;
         Query query = openSearchAdapter.buildQuery(searcher, dataset, queryBuilder);
+        OpenSearchAdapter.AggregationExecution aggregationExecution =
+            aggregatorFactoriesBuilder == null
+                ? null
+                : openSearchAdapter.createAggregationExecution(
+                    aggregatorFactoriesBuilder, searcher, query);
+        TopFieldCollector topFieldCollector =
+            howMany > 0
+                ? buildTopFieldCollector(
+                    howMany, aggregationExecution != null ? Integer.MAX_VALUE : howMany)
+                : null;
 
-        if (howMany > 0) {
-          CollectorManager<TopFieldCollector, TopFieldDocs> topFieldCollector =
-              buildTopFieldCollector(
-                  howMany, aggregatorFactoriesBuilder != null ? Integer.MAX_VALUE : howMany);
-          MultiCollectorManager collectorManager;
+        Collector collector =
+            topFieldCollector != null && aggregationExecution != null
+                ? MultiCollector.wrap(topFieldCollector, aggregationExecution.aggregator())
+                : topFieldCollector != null ? topFieldCollector : aggregationExecution.aggregator();
+        searcher.search(query, collector);
 
-          if (aggregatorFactoriesBuilder != null) {
-            collectorManager =
-                new MultiCollectorManager(
-                    topFieldCollector,
-                    openSearchAdapter.getCollectorManager(
-                        aggregatorFactoriesBuilder, searcher, query));
-          } else {
-            collectorManager = new MultiCollectorManager(topFieldCollector);
-          }
-          Object[] collector = searcher.search(query, collectorManager);
-
-          ScoreDoc[] hits = ((TopFieldDocs) collector[0]).scoreDocs;
+        if (topFieldCollector != null) {
+          ScoreDoc[] hits = topFieldCollector.topDocs().scoreDocs;
           results = new ArrayList<>(hits.length);
           for (ScoreDoc hit : hits) {
             results.add(buildLogMessage(searcher, hit, sourceFieldFilter));
           }
-          if (aggregatorFactoriesBuilder != null) {
-            internalAggregation = (InternalAggregation) collector[1];
-          }
         } else {
           results = Collections.emptyList();
-          internalAggregation =
-              searcher.search(
-                  query,
-                  openSearchAdapter.getCollectorManager(
-                      aggregatorFactoriesBuilder, searcher, query));
+        }
+        if (aggregationExecution != null) {
+          internalAggregation = aggregationExecution.finish();
         }
 
         elapsedTime.stop();
@@ -201,15 +195,10 @@ public class LogIndexSearcherImpl implements LogIndexSearcher<LogMessage> {
    * value can be set to equal howMany to allow early exiting (ScoreMode.TOP_SCORES), but should
    * only be done when all collectors are tolerant of an early exit.
    */
-  private CollectorManager<TopFieldCollector, TopFieldDocs> buildTopFieldCollector(
-      int howMany, int totalHitsThreshold) {
-    if (howMany > 0) {
-      SortField sortField = new SortField(SystemField.TIME_SINCE_EPOCH.fieldName, Type.LONG, true);
-      return TopFieldCollector.createSharedManager(
-          new Sort(sortField), howMany, null, totalHitsThreshold);
-    } else {
-      return null;
-    }
+  private TopFieldCollector buildTopFieldCollector(int howMany, int totalHitsThreshold)
+      throws IOException {
+    SortField sortField = new SortField(SystemField.TIME_SINCE_EPOCH.fieldName, Type.LONG, true);
+    return TopFieldCollector.create(new Sort(sortField), howMany, null, totalHitsThreshold);
   }
 
   @Override
