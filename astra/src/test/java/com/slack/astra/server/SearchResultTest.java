@@ -19,7 +19,6 @@ import java.util.Map;
 import java.util.Random;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
-import org.opensearch.search.aggregations.Aggregator;
 import org.opensearch.search.aggregations.InternalAggregation;
 
 public class SearchResultTest {
@@ -46,16 +45,16 @@ public class SearchResultTest {
     }
     OpenSearchAdapter openSearchAdapter = new OpenSearchAdapter(Map.of());
 
-    Aggregator dateHistogramAggregation =
-        openSearchAdapter.buildAggregatorFromFactory(
+    OpenSearchAdapter.AggregationExecution aggregationExecution =
+        openSearchAdapter.createAggregationExecution(
+            createGenericDateHistogramAggregatorFactoriesBuilder(),
             logStoreAndSearcherRule
                 .logStore
                 .getAstraSearcherManager()
                 .getLuceneSearcherManager()
                 .acquire(),
-            createGenericDateHistogramAggregatorFactoriesBuilder(),
             null);
-    InternalAggregation internalAggregation = dateHistogramAggregation.buildTopLevel();
+    InternalAggregation internalAggregation = aggregationExecution.finish();
     SearchResult<LogMessage> searchResult =
         new SearchResult<>(logMessages, 1, 1, 5, 7, 7, internalAggregation);
     AstraSearch.SearchResult protoSearchResult =
