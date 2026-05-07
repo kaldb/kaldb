@@ -10,5 +10,9 @@ public class PartitionAssignmentConstraintsTest {
     assertThatThrownBy(() -> PartitionAssignmentConstraints.perPartitionDemand(100, 0))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("partitionCount must be positive, got 0");
+
+    assertThatThrownBy(() -> PartitionAssignmentConstraints.perPartitionDemand(100, -1))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("partitionCount must be positive, got -1");
   }
 }
