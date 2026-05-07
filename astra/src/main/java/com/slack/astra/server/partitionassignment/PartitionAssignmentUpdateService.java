@@ -53,6 +53,21 @@ public class PartitionAssignmentUpdateService {
     this.minNumberOfPartitions = minNumberOfPartitions;
   }
 
+  /**
+   * Applies a manual or automatic partition-assignment update for an existing dataset.
+   *
+   * @param datasetName dataset name to update; must be non-blank and already exist
+   * @param requestedThroughputBytes requested dataset throughput in bytes per second; must be
+   *     non-negative
+   * @param requestedPartitionIds explicit numeric partition IDs for manual assignment, or an empty
+   *     list to auto-assign from the catalog; blank and duplicate IDs are rejected
+   * @param dedicatedPartitionModeOverride override for preserving or changing the dataset's
+   *     dedicated/shared mode during this update
+   * @return the partition IDs that were assigned for the new active dataset window
+   * @throws IllegalArgumentException if the request arguments are invalid
+   * @throws InvalidPartitionAssignmentStateException if persisted metadata yields an impossible
+   *     live partition view during validation or planning
+   */
   public ImmutableList<String> applyAssignmentUpdate(
       String datasetName,
       long requestedThroughputBytes,
@@ -154,6 +169,14 @@ public class PartitionAssignmentUpdateService {
     return autoAssigned;
   }
 
+  /**
+   * Returns the current derived live partition view from dataset assignment history and the
+   * partition catalog.
+   *
+   * @return one live-state entry per known partition
+   * @throws InvalidPartitionAssignmentStateException if persisted metadata yields an impossible
+   *     occupancy state
+   */
   public List<LivePartitionState> listLivePartitionStates() {
     return LivePartitionState.loadAll(datasetMetadataStore, partitionMetadataStore);
   }
