@@ -90,12 +90,15 @@ def log_step(message: str) -> None:
 def load_selenium() -> tuple:
     try:
         from selenium import webdriver
-        from selenium.common.exceptions import TimeoutException
+        from selenium.common.exceptions import (
+            StaleElementReferenceException,
+            TimeoutException,
+        )
         from selenium.webdriver.chrome.options import Options
         from selenium.webdriver.chrome.service import Service
         from selenium.webdriver.common.by import By
         from selenium.webdriver.support import expected_conditions as EC
-        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support.ui import Select, WebDriverWait
     except ModuleNotFoundError as exc:
         print(
             "selenium is not installed. Install it with: pip install selenium",
@@ -103,7 +106,17 @@ def load_selenium() -> tuple:
         )
         raise SystemExit(2) from exc
 
-    return webdriver, TimeoutException, Options, Service, By, EC, WebDriverWait
+    return (
+        webdriver,
+        StaleElementReferenceException,
+        TimeoutException,
+        Options,
+        Service,
+        By,
+        EC,
+        Select,
+        WebDriverWait,
+    )
 
 
 def resolve_chrome_binary(explicit_path: str | None) -> str | None:
@@ -142,7 +155,7 @@ def resolve_chromedriver(explicit_path: str | None) -> str:
 
 
 def make_driver(args: argparse.Namespace):
-    webdriver, _, Options, Service, _, _, _ = load_selenium()
+    webdriver, _, _, Options, Service, _, _, _, _ = load_selenium()
 
     chrome_binary = resolve_chrome_binary(args.chrome_binary)
     chromedriver = resolve_chromedriver(args.chromedriver)
@@ -161,7 +174,9 @@ def make_driver(args: argparse.Namespace):
 
 
 def run_test(args: argparse.Namespace) -> None:
-    _, TimeoutException, _, _, By, EC, WebDriverWait = load_selenium()
+    _, StaleElementReferenceException, TimeoutException, _, _, By, EC, Select, WebDriverWait = (
+        load_selenium()
+    )
     driver = make_driver(args)
     wait = WebDriverWait(driver, args.timeout)
 
@@ -174,32 +189,46 @@ def run_test(args: argparse.Namespace) -> None:
     updated_service_pattern = f"svc-updated-{suffix}*"
     redaction_name = f"selenium-redaction-{suffix}"
     field_name = f"field_{suffix}"
+    partition_seed = int(uuid4().hex[:8], 16) % 100000000
+    partition_ids = [str(partition_seed), str(partition_seed + 1)]
 
     screenshot_dir = Path(args.screenshot_dir)
     screenshot_dir.mkdir(parents=True, exist_ok=True)
 
     def wait_for_toast(text: str) -> None:
-        wait.until(
-            lambda d: any(
-                text in toast.text
-                for toast in d.find_elements(By.CSS_SELECTOR, "#toast-container .toast")
-            )
-        )
+        text_lower = text.lower()
+
+        def has_toast_text() -> bool:
+            for toast in driver.find_elements(By.CSS_SELECTOR, "#toast-container .toast"):
+                try:
+                    if text_lower in toast.text.lower():
+                        return True
+                except StaleElementReferenceException:
+                    continue
+            return False
+
+        wait.until(lambda d: has_toast_text())
 
     def current_grid_page_marker(d, grid_id: str) -> tuple[str, str]:
-        current_buttons = d.find_elements(
-            By.CSS_SELECTOR,
-            f"#{grid_id} .gridjs-pagination .gridjs-pages button.gridjs-currentPage",
-        )
-        current_page = current_buttons[0].text if current_buttons else ""
-        rows = d.find_elements(By.CSS_SELECTOR, f"#{grid_id} tbody tr")
-        first_row_text = rows[0].text if rows else ""
-        return current_page, first_row_text
+        try:
+            current_buttons = d.find_elements(
+                By.CSS_SELECTOR,
+                f"#{grid_id} .gridjs-pagination .gridjs-pages button.gridjs-currentPage",
+            )
+            current_page = current_buttons[0].text if current_buttons else ""
+            rows = d.find_elements(By.CSS_SELECTOR, f"#{grid_id} tbody tr")
+            first_row_text = rows[0].text if rows else ""
+            return current_page, first_row_text
+        except StaleElementReferenceException:
+            return "", ""
 
     def current_grid_row(d, grid_id: str, text: str):
         for row in d.find_elements(By.CSS_SELECTOR, f"#{grid_id} tbody tr"):
-            if text in row.text:
-                return row
+            try:
+                if text in row.text:
+                    return row
+            except StaleElementReferenceException:
+                continue
         return None
 
     def grid_edge_button(d, grid_id: str, *, next_page: bool):
@@ -239,9 +268,16 @@ def run_test(args: argparse.Namespace) -> None:
         wait.until(lambda d: find_grid_row(grid_id, text) is not None)
 
     def wait_for_grid_row_text(grid_id: str, row_text: str, expected_text: str) -> None:
+        expected_text_lower = expected_text.lower()
+
         def row_contains_text() -> bool:
             row = find_grid_row(grid_id, row_text)
-            return row is not None and expected_text in row.text
+            if row is None:
+                return False
+            try:
+                return expected_text_lower in row.text.lower()
+            except StaleElementReferenceException:
+                return False
 
         wait.until(lambda d: row_contains_text())
 
@@ -249,15 +285,37 @@ def run_test(args: argparse.Namespace) -> None:
         wait.until(lambda d: find_grid_row(grid_id, text) is None)
 
     def click_grid_row_action(grid_id: str, row_text: str, action: str) -> None:
-        row = find_grid_row(grid_id, row_text)
-        if row is None:
-            fail(f"Could not find row containing {row_text!r} in {grid_id}")
-        action_button = row.find_element(By.CSS_SELECTOR, f"[data-action='{action}']")
-        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", action_button)
-        action_button.click()
+        def resolve_action_button():
+            row = find_grid_row(grid_id, row_text)
+            if row is None:
+                return None
+            try:
+                return row.find_element(By.CSS_SELECTOR, f"[data-action='{action}']")
+            except StaleElementReferenceException:
+                return None
+
+        action_button = wait.until(
+            lambda d: resolve_action_button(),
+            message=f"Could not find row containing {row_text!r} in {grid_id}",
+        )
+
+        try:
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", action_button)
+            action_button.click()
+        except StaleElementReferenceException:
+            action_button = wait.until(
+                lambda d: resolve_action_button(),
+                message=f"Could not re-find row containing {row_text!r} in {grid_id}",
+            )
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", action_button)
+            action_button.click()
 
     def click(locator: tuple[str, str]) -> None:
         wait.until(EC.element_to_be_clickable(locator)).click()
+
+    def select_value(locator: tuple[str, str], value: str) -> None:
+        element = wait.until(EC.presence_of_element_located(locator))
+        Select(element).select_by_value(value)
 
     def capture_failure(name: str) -> None:
         timestamp = time.strftime("%Y%m%d-%H%M%S")
@@ -290,7 +348,44 @@ def run_test(args: argparse.Namespace) -> None:
         wait_for_grid_row_text("datasets-grid", dataset_name, dataset_owner)
         wait_for_grid_row_text("datasets-grid", dataset_name, service_pattern)
 
+        catalog_supported = False
+        log_step("Checking partition catalog support")
+        click((By.CSS_SELECTOR, ".tab[data-tab='partitions']"))
+        wait.until(lambda d: d.find_element(By.ID, "partitions").is_displayed())
+        wait.until(
+            lambda d: d.find_element(By.ID, "partitions-empty-state").is_displayed()
+            or d.find_elements(By.CSS_SELECTOR, "#partitions-grid .gridjs-container")
+        )
+        empty_state = driver.find_element(By.ID, "partitions-empty-state")
+        if empty_state.is_displayed():
+            empty_title = empty_state.find_element(By.TAG_NAME, "h3").text.strip()
+            catalog_supported = empty_title != "Partition catalog unavailable"
+        else:
+            catalog_supported = True
+
+        if catalog_supported:
+            log_step("Creating catalog partitions")
+            for partition_id in partition_ids:
+                click((By.ID, "btn-new-partition"))
+                wait.until(
+                    lambda d: "open"
+                    in d.find_element(By.ID, "modal-create-partition").get_attribute("class")
+                )
+                driver.find_element(
+                    By.CSS_SELECTOR, "#form-create-partition [name='partition_id']"
+                ).send_keys(partition_id)
+                driver.find_element(
+                    By.CSS_SELECTOR, "#form-create-partition [name='max_capacity']"
+                ).send_keys("2000")
+                click((By.CSS_SELECTOR, "#form-create-partition button[type='submit']"))
+                wait_for_grid_row("partitions-grid", partition_id)
+                wait_for_grid_row_text("partitions-grid", partition_id, "Empty")
+        else:
+            log_step("Partition catalog unavailable on this manager build; skipping catalog-only actions")
+
         log_step("Editing dataset")
+        click((By.CSS_SELECTOR, ".tab[data-tab='datasets']"))
+        wait.until(lambda d: d.find_element(By.ID, "datasets").is_displayed())
         click_grid_row_action("datasets-grid", dataset_name, "edit")
         wait.until(lambda d: d.find_element(By.ID, "dataset-form-page").is_displayed())
         owner_input = driver.find_element(By.CSS_SELECTOR, "#form-dataset [name='owner']")
@@ -304,20 +399,31 @@ def run_test(args: argparse.Namespace) -> None:
         wait_for_grid_row_text("datasets-grid", dataset_name, updated_owner)
         wait_for_grid_row_text("datasets-grid", dataset_name, updated_service_pattern)
 
-        log_step("Updating capacity")
-        click_grid_row_action("datasets-grid", dataset_name, "partitions")
+        log_step("Updating assignment")
+        click_grid_row_action("datasets-grid", dataset_name, "assignment")
         wait.until(lambda d: "open" in d.find_element(By.ID, "modal-partition").get_attribute("class"))
         throughput_input = driver.find_element(By.CSS_SELECTOR, "#form-partition [name='throughput_bytes']")
+        select_value((By.CSS_SELECTOR, "#form-partition [name='assignment_strategy']"), "manual")
+        if catalog_supported:
+            select_value((By.CSS_SELECTOR, "#form-partition [name='partition_mode']"), "dedicated")
+        else:
+            select_value((By.CSS_SELECTOR, "#form-partition [name='partition_mode']"), "preserve")
         partition_ids_input = driver.find_element(By.CSS_SELECTOR, "#form-partition [name='partition_ids']")
         throughput_input.clear()
         throughput_input.send_keys("1234")
         partition_ids_input.clear()
-        partition_ids_input.send_keys("partition-a, partition-b")
+        partition_ids_input.send_keys(", ".join(partition_ids))
         click((By.CSS_SELECTOR, "#form-partition button[type='submit']"))
-        wait_for_toast("Partitions assigned")
+        wait_for_toast("Assignment updated")
         wait_for_grid_row_text("datasets-grid", dataset_name, "1234")
-        wait_for_grid_row_text("datasets-grid", dataset_name, "partition-a")
-        wait_for_grid_row_text("datasets-grid", dataset_name, "partition-b")
+        wait_for_grid_row_text("datasets-grid", dataset_name, partition_ids[0])
+        wait_for_grid_row_text("datasets-grid", dataset_name, partition_ids[1])
+        if catalog_supported:
+            wait_for_grid_row_text("datasets-grid", dataset_name, "Dedicated")
+            click((By.CSS_SELECTOR, ".tab[data-tab='partitions']"))
+            wait_for_grid_row("partitions-grid", partition_ids[0])
+            wait_for_grid_row_text("partitions-grid", partition_ids[0], "Dedicated")
+            wait_for_grid_row_text("partitions-grid", partition_ids[0], dataset_name)
 
         log_step("Creating redaction")
         click((By.CSS_SELECTOR, ".tab[data-tab='redactions']"))
@@ -371,6 +477,20 @@ def run_test(args: argparse.Namespace) -> None:
         click((By.ID, "danger-confirm-ok"))
         wait_for_toast("Dataset deleted")
         wait_for_grid_row_absent("datasets-grid", dataset_name)
+
+        if catalog_supported:
+            log_step("Deleting catalog partitions")
+            click((By.CSS_SELECTOR, ".tab[data-tab='partitions']"))
+            wait.until(lambda d: d.find_element(By.ID, "partitions").is_displayed())
+            for partition_id in partition_ids:
+                wait_for_grid_row("partitions-grid", partition_id)
+                click_grid_row_action("partitions-grid", partition_id, "delete-partition")
+                wait.until(
+                    lambda d: "open" in d.find_element(By.ID, "modal-confirm").get_attribute("class")
+                )
+                click((By.ID, "confirm-ok"))
+                wait_for_toast("Deleted partition")
+                wait_for_grid_row_absent("partitions-grid", partition_id)
 
         log_step("Admin UI Selenium test passed")
     except TimeoutException as exc:
