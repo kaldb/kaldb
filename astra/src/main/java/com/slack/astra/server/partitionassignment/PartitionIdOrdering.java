@@ -12,6 +12,7 @@ public final class PartitionIdOrdering {
 
   private PartitionIdOrdering() {}
 
+  /** Returns a comparator that orders canonical partition IDs by numeric value. */
   public static Comparator<String> numericComparator() {
     return NUMERIC_COMPARATOR;
   }
@@ -28,6 +29,16 @@ public final class PartitionIdOrdering {
     }
   }
 
+  /**
+   * Parses a canonical non-negative integer partition ID.
+   *
+   * @param partitionId partition ID string in canonical decimal form, such as {@code 0} or {@code
+   *     12}
+   * @return the parsed numeric partition ID
+   * @throws NullPointerException if {@code partitionId} is null
+   * @throws IllegalArgumentException if {@code partitionId} is not a canonical non-negative integer
+   *     or does not fit in a {@code long}
+   */
   public static long parseNumericPartitionId(String partitionId) {
     Objects.requireNonNull(partitionId, "partitionId");
     if (!CANONICAL_PARTITION_ID_PATTERN.matcher(partitionId).matches()) {
