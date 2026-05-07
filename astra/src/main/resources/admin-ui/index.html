@@ -12,6 +12,7 @@
     <h1>Astra Cluster Manager</h1>
     <nav>
       <button type="button" class="tab active" data-tab="datasets">Datasets</button>
+      <button type="button" class="tab" data-tab="partitions">Partitions</button>
       <button type="button" class="tab" data-tab="redactions">Field Redactions</button>
       <button type="button" class="tab" data-tab="operations">Operations</button>
     </nav>
@@ -53,6 +54,30 @@
           </form>
         </div>
       </div>
+    </section>
+
+    <!-- Partitions Tab -->
+    <section id="partitions" class="tab-content">
+      <div class="toolbar" id="partitions-toolbar">
+        <div>
+          <h2>Partition Catalog</h2>
+          <p class="section-copy">
+            Live shard capacity, occupancy, and catalog management for auto-assignment.
+          </p>
+        </div>
+        <div class="toolbar-actions">
+          <button type="button" class="btn" id="btn-refresh-partitions">Refresh</button>
+          <button type="button" class="btn btn-primary" id="btn-new-partition">New Partition</button>
+        </div>
+      </div>
+      <div class="stats-strip" id="partitions-stats"></div>
+      <div class="empty-state" id="partitions-empty-state" hidden>
+        <h3>Partition catalog unavailable</h3>
+        <p id="partitions-empty-copy">
+          This manager build does not expose partition catalog APIs yet.
+        </p>
+      </div>
+      <div id="partitions-grid"></div>
     </section>
 
     <!-- Field Redactions Tab -->
@@ -123,24 +148,65 @@
   <div class="modal-overlay" id="modal-partition">
     <div class="modal">
       <div class="modal-header">
-        <h3>Update Partition Assignment</h3>
+        <h3>Update Capacity &amp; Assignment</h3>
         <button type="button" class="modal-close">&times;</button>
       </div>
       <form id="form-partition">
         <label>Dataset Name
           <input type="text" name="name" readonly>
         </label>
+        <div class="summary-card" id="partition-current-summary"></div>
         <label>Throughput (bytes)
           <input type="number" name="throughput_bytes" value="0" min="0">
-          <span class="field-help">Set a non-negative throughput limit. Zero is valid.</span>
+          <span class="field-help">Set a non-negative throughput limit. Zero is valid and means no reserved throughput.</span>
         </label>
-        <label>Partition IDs (comma-separated, empty for auto-assign)
+        <label>Assignment Strategy
+          <select name="assignment_strategy">
+            <option value="auto">Auto-assign from catalog</option>
+            <option value="manual">Set exact partition IDs</option>
+          </select>
+          <span class="field-help">Auto-assignment plans partitions from the catalog. Manual assignment validates the exact shard IDs you enter.</span>
+        </label>
+        <label>Partition Mode
+          <select name="partition_mode">
+            <option value="preserve">Keep current mode</option>
+            <option value="shared">Use shared partitions</option>
+            <option value="dedicated">Require dedicated partitions</option>
+          </select>
+          <span class="field-help">Dedicated mode reserves each assigned partition for this dataset only. Shared mode allows datasets to co-exist on the same partition.</span>
+        </label>
+        <label id="partition-ids-field">Partition IDs (comma-separated)
           <input type="text" name="partition_ids">
-          <span class="field-help">Comma-separated partition IDs such as <code>0,1,2</code>; leave empty for auto-assign.</span>
+          <span class="field-help">Use canonical numeric IDs such as <code>0,1,2</code>. Manual assignments must reference existing catalog partitions.</span>
         </label>
+        <p class="inline-callout inline-callout-warning" id="partition-capability-note" hidden></p>
         <div class="modal-actions">
           <button type="button" class="btn" data-dismiss="modal">Cancel</button>
           <button type="submit" class="btn btn-primary">Update</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Create Partition Modal -->
+  <div class="modal-overlay" id="modal-create-partition">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Create Partition</h3>
+        <button type="button" class="modal-close">&times;</button>
+      </div>
+      <form id="form-create-partition">
+        <label>Partition ID
+          <input type="text" name="partition_id" required>
+          <span class="field-help">Canonical numeric partition identifier, for example <code>7</code>.</span>
+        </label>
+        <label>Max Capacity (bytes)
+          <input type="number" name="max_capacity" min="1" required>
+          <span class="field-help">Hard per-partition capacity ceiling used by shard auto-assignment.</span>
+        </label>
+        <div class="modal-actions">
+          <button type="button" class="btn" data-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Create</button>
         </div>
       </form>
     </div>

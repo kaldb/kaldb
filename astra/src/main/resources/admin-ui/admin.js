@@ -2,6 +2,25 @@
   "use strict";
 
   var API_BASE = "/slack.proto.astra.ManagerApiService";
+  var MAX_TIME = "9223372036854775807"; // Long.MAX_VALUE as string
+
+  var datasetsGrid = null;
+  var datasetByName = {};
+  var datasetGridActionsBound = false;
+
+  var partitionsGrid = null;
+  var partitionById = {};
+  var partitionGridActionsBound = false;
+
+  var redactionsGrid = null;
+  var redactionByName = {};
+  var redactionGridActionsBound = false;
+
+  var partitionCatalogSupport = {
+    status: "unknown",
+    lastError: "",
+    probePromise: null,
+  };
 
   // ---- API helper ----
 
@@ -11,9 +30,19 @@
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body || {}),
     }).then(function (res) {
-      return res.json().then(function (data) {
+      return res.text().then(function (text) {
+        var data = {};
+
+        if (text) {
+          try {
+            data = JSON.parse(text);
+          } catch (e) {
+            data = { raw: text };
+          }
+        }
+
         if (!res.ok) {
-          throw new Error(data.message || data.error || JSON.stringify(data));
+          throw new Error(data.message || data.error || data.raw || res.statusText);
         }
         return data;
       });
@@ -52,6 +81,12 @@
 
   // ---- Tab switching ----
 
+  function loadTabData(target) {
+    if (target === "datasets") loadDatasets();
+    if (target === "partitions") loadPartitions();
+    if (target === "redactions") loadRedactions();
+  }
+
   function initTabs() {
     var tabs = document.querySelectorAll(".tab");
     for (var i = 0; i < tabs.length; i++) {
@@ -59,19 +94,25 @@
         var target = this.getAttribute("data-tab");
         var allTabs = document.querySelectorAll(".tab");
         var allContent = document.querySelectorAll(".tab-content");
-        for (var j = 0; j < allTabs.length; j++) {
+        var j;
+
+        for (j = 0; j < allTabs.length; j++) {
           allTabs[j].classList.remove("active");
         }
-        for (var k = 0; k < allContent.length; k++) {
-          allContent[k].classList.remove("active");
+        for (j = 0; j < allContent.length; j++) {
+          allContent[j].classList.remove("active");
         }
+
         this.classList.add("active");
         document.getElementById(target).classList.add("active");
-
-        if (target === "datasets") loadDatasets();
-        if (target === "redactions") loadRedactions();
+        loadTabData(target);
       });
     }
+  }
+
+  function isTabActive(tabId) {
+    var tab = document.getElementById(tabId);
+    return !!tab && tab.classList.contains("active");
   }
 
   // ---- Confirm dialog ----
@@ -112,7 +153,9 @@
     btn.disabled = true;
     hint.textContent = 'Type "' + expectedText + '" to enable the delete button.';
     openModal("modal-danger-confirm");
-    setTimeout(function () { input.focus(); }, 100);
+    setTimeout(function () {
+      input.focus();
+    }, 100);
   }
 
   function initDangerConfirmDialog() {
@@ -138,45 +181,204 @@
     });
   }
 
-  // ---- Datasets ----
+  // ---- Utilities ----
 
-  var datasetsGrid = null;
-  var datasetByName = {};
-  var datasetGridActionsBound = false;
+  function escapeHtml(value) {
+    return String(value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function formatTime(epochMs) {
+    if (!epochMs || epochMs === "0") return "-";
+    if (String(epochMs) === MAX_TIME) return "MAX";
+    try {
+      return new Date(Number(epochMs)).toISOString().replace("T", " ").replace(/\.000Z$/, " UTC");
+    } catch (e) {
+      return String(epochMs);
+    }
+  }
+
+  function toDisplayNumber(value) {
+    if (value == null || value === "") return "0";
+    var num = Number(value);
+    return Number.isFinite(num) ? String(num) : String(value);
+  }
+
+  function toNumericValue(value) {
+    var num = Number(value);
+    return Number.isFinite(num) ? num : 0;
+  }
+
+  function formatWithSeparators(value) {
+    var num = Number(value);
+    return Number.isFinite(num) ? num.toLocaleString() : String(value);
+  }
+
+  function isCanonicalNonNegativeIntegerString(value) {
+    return /^(0|[1-9]\d*)$/.test(String(value));
+  }
+
+  function splitPartitionIds(raw) {
+    if (!raw) return [];
+    return raw
+      .split(",")
+      .map(function (item) {
+        return item.trim();
+      })
+      .filter(function (item) {
+        return item.length > 0;
+      });
+  }
+
+  function duplicateValues(values) {
+    var seen = {};
+    var duplicates = {};
+    var i;
+
+    for (i = 0; i < values.length; i++) {
+      if (seen[values[i]]) {
+        duplicates[values[i]] = true;
+      }
+      seen[values[i]] = true;
+    }
+
+    return Object.keys(duplicates).sort();
+  }
+
+  function getActivePartitionConfig(partitionConfigs) {
+    if (!partitionConfigs || partitionConfigs.length === 0) return null;
+
+    var i;
+    var active = null;
+    var latestStart = -1;
+
+    for (i = 0; i < partitionConfigs.length; i++) {
+      if (String(partitionConfigs[i].endTimeEpochMs) === MAX_TIME) {
+        return partitionConfigs[i];
+      }
+      if (toNumericValue(partitionConfigs[i].startTimeEpochMs) >= latestStart) {
+        latestStart = toNumericValue(partitionConfigs[i].startTimeEpochMs);
+        active = partitionConfigs[i];
+      }
+    }
+
+    return active;
+  }
+
+  function getActivePartitionIds(partitionConfigs) {
+    var active = getActivePartitionConfig(partitionConfigs);
+    return active && active.partitions ? active.partitions.slice() : [];
+  }
+
+  function formatActivePartitionIds(partitionConfigs) {
+    var ids = getActivePartitionIds(partitionConfigs);
+    return ids.length ? ids.join(", ") : "(none)";
+  }
+
+  function formatCurrentWindow(partitionConfigs) {
+    var active = getActivePartitionConfig(partitionConfigs);
+    if (!active) return "-";
+    return formatTime(active.startTimeEpochMs) + " -> " + formatTime(active.endTimeEpochMs);
+  }
+
+  function currentDatasetModeLabel(dataset) {
+    return dataset && dataset.usingDedicatedPartitions ? "Dedicated" : "Shared";
+  }
+
+  function modeBadgeHtml(modeLabel) {
+    var cssClass = modeLabel === "Dedicated" ? "mode-dedicated" : "mode-shared";
+    return '<span class="mode-badge ' + cssClass + '">' + escapeHtml(modeLabel) + "</span>";
+  }
+
+  function summaryItemHtml(label, value) {
+    return (
+      '<div class="summary-item">' +
+      '<span class="summary-item-label">' +
+      escapeHtml(label) +
+      "</span>" +
+      '<span class="summary-item-value">' +
+      escapeHtml(value) +
+      "</span>" +
+      "</div>"
+    );
+  }
+
+  function buildPartitionSummaryCard(dataset) {
+    var activeIds = getActivePartitionIds(dataset.partitionConfigs || []);
+    return (
+      '<div class="summary-card-title">Current dataset state</div>' +
+      '<div class="summary-card-grid">' +
+      summaryItemHtml("Partition mode", currentDatasetModeLabel(dataset)) +
+      summaryItemHtml("Throughput", toDisplayNumber(dataset.throughputBytes || 0) + " bytes") +
+      summaryItemHtml("Active partitions", activeIds.length ? activeIds.join(", ") : "(none)") +
+      summaryItemHtml("Active window", formatCurrentWindow(dataset.partitionConfigs || [])) +
+      "</div>"
+    );
+  }
+
+  function refreshRelatedViews() {
+    loadDatasets();
+    if (partitionCatalogSupport.status === "available" || isTabActive("partitions")) {
+      loadPartitions();
+    }
+  }
+
+  // ---- Partition catalog capability ----
+
+  function setPartitionCatalogSupport(status, errorMessage) {
+    partitionCatalogSupport.status = status;
+    partitionCatalogSupport.lastError = errorMessage || "";
+    updatePartitionCapabilityNote();
+  }
+
+  function fetchPartitionMetadata() {
+    return apiCall("ListPartitionMetadata", {}).then(
+      function (data) {
+        setPartitionCatalogSupport("available", "");
+        return data.partitionMetadata || [];
+      },
+      function (err) {
+        setPartitionCatalogSupport("unavailable", err.message || "Unknown error");
+        throw err;
+      }
+    );
+  }
+
+  function probePartitionCatalogSupport(force) {
+    if (!force) {
+      if (partitionCatalogSupport.status === "available") return Promise.resolve(true);
+      if (partitionCatalogSupport.status === "unavailable") return Promise.resolve(false);
+      if (partitionCatalogSupport.probePromise) return partitionCatalogSupport.probePromise;
+    }
+
+    partitionCatalogSupport.probePromise = fetchPartitionMetadata().then(
+      function () {
+        partitionCatalogSupport.probePromise = null;
+        return true;
+      },
+      function () {
+        partitionCatalogSupport.probePromise = null;
+        return false;
+      }
+    );
+
+    return partitionCatalogSupport.probePromise;
+  }
+
+  // ---- Datasets ----
 
   function loadDatasets() {
     apiCall("ListDatasetMetadata", {})
       .then(function (data) {
-        var datasets = data.datasetMetadata || [];
-        renderDatasets(datasets);
+        renderDatasets(data.datasetMetadata || []);
       })
       .catch(function (err) {
         showToast("Failed to load datasets: " + err.message, "error");
       });
-  }
-
-  function getPartitionCount(partitionConfigs) {
-    var partCount = 0;
-    for (var i = 0; i < partitionConfigs.length; i++) {
-      partCount += (partitionConfigs[i].partitions || []).length;
-    }
-    return partCount;
-  }
-
-  function formatPartitionConfigs(partitionConfigs) {
-    if (!partitionConfigs || partitionConfigs.length === 0) return "-";
-
-    var details = [];
-    for (var i = 0; i < partitionConfigs.length; i++) {
-      var pc = partitionConfigs[i];
-      var ids = (pc.partitions || []).join(", ");
-      details.push(
-        "Start: " + formatTime(pc.startTimeEpochMs) +
-        " | End: " + formatTime(pc.endTimeEpochMs) +
-        " | IDs: [" + ids + "]"
-      );
-    }
-    return details.join(" || ");
   }
 
   function renderDatasetActions(datasetName) {
@@ -184,7 +386,7 @@
     return gridjs.html(
       '<div class="grid-actions">' +
       '<button class="btn btn-sm" data-action="edit" data-dataset="' + encodedName + '">Edit</button>' +
-      '<button class="btn btn-sm" data-action="partitions" data-dataset="' + encodedName + '">Capacity</button>' +
+      '<button class="btn btn-sm" data-action="assignment" data-dataset="' + encodedName + '">Assignment</button>' +
       '<button class="btn btn-sm btn-danger" data-action="delete" data-dataset="' + encodedName + '">Delete</button>' +
       "</div>"
     );
@@ -210,7 +412,7 @@
         return;
       }
 
-      if (action === "partitions") {
+      if (action === "assignment") {
         openPartitionModal(dataset);
         return;
       }
@@ -218,13 +420,13 @@
       if (action === "delete") {
         showDangerConfirm(
           'You are about to permanently delete the dataset "' + dataset.name +
-          '". This will remove all metadata, partition assignments, and throughput configuration. This action cannot be undone.',
+            '". This will remove all metadata, partition assignments, and throughput configuration. This action cannot be undone.',
           dataset.name,
           function () {
             apiCall("DeleteDatasetMetadata", { name: dataset.name })
               .then(function () {
                 showToast("Dataset deleted");
-                loadDatasets();
+                refreshRelatedViews();
               })
               .catch(function (err) {
                 showToast("Error: " + err.message, "error");
@@ -245,18 +447,24 @@
 
     datasetByName = {};
     var rows = [];
-    for (var i = 0; i < datasets.length; i++) {
-      var ds = datasets[i];
-      var partitions = ds.partitionConfigs || [];
-      datasetByName[ds.name] = ds;
+    var i;
 
+    for (i = 0; i < datasets.length; i++) {
+      var ds = datasets[i];
+      var partitionConfigs = ds.partitionConfigs || [];
+      var activeIds = getActivePartitionIds(partitionConfigs);
+
+      datasetByName[ds.name] = ds;
       rows.push([
         ds.name,
         ds.owner || "",
         ds.serviceNamePattern || "",
-        ds.throughputBytes || 0,
-        getPartitionCount(partitions),
-        formatPartitionConfigs(partitions),
+        toDisplayNumber(ds.throughputBytes || 0),
+        gridjs.html(modeBadgeHtml(currentDatasetModeLabel(ds))),
+        String(activeIds.length),
+        activeIds.length ? activeIds.join(", ") : "(none)",
+        formatCurrentWindow(partitionConfigs),
+        String(partitionConfigs.length),
         renderDatasetActions(ds.name),
       ]);
     }
@@ -272,8 +480,11 @@
         "Owner",
         "Service Pattern",
         "Throughput (bytes)",
-        "Partition Count",
-        "Partition Details",
+        "Partition Mode",
+        "Active Count",
+        "Active Partitions",
+        "Current Window",
+        "History Windows",
         { name: "Actions", sort: false },
       ],
       data: rows,
@@ -319,13 +530,86 @@
     }
   }
 
+  function updatePartitionCapabilityNote() {
+    var note = document.getElementById("partition-capability-note");
+    var form = document.getElementById("form-partition");
+    if (!note || !form) return;
+
+    var messages = [];
+    var strategy = form.elements.assignment_strategy.value;
+    var mode = form.elements.partition_mode.value;
+
+    if (partitionCatalogSupport.status === "unknown") {
+      if (strategy === "auto" || mode !== "preserve") {
+        messages.push("Checking partition catalog support for shard auto-assignment features.");
+      }
+    } else if (partitionCatalogSupport.status === "unavailable") {
+      if (strategy === "auto") {
+        messages.push("Auto-assignment requires a manager build with partition catalog support.");
+      }
+      if (mode !== "preserve") {
+        messages.push("Shared and dedicated mode overrides require shard auto-assignment support.");
+      }
+      if (partitionCatalogSupport.lastError) {
+        messages.push("Latest manager response: " + partitionCatalogSupport.lastError);
+      }
+    }
+
+    if (messages.length === 0) {
+      note.hidden = true;
+      note.textContent = "";
+      return;
+    }
+
+    note.hidden = false;
+    note.textContent = messages.join(" ");
+  }
+
+  function updatePartitionFormState() {
+    var form = document.getElementById("form-partition");
+    var idsField = document.getElementById("partition-ids-field");
+    if (!form || !idsField) return;
+
+    idsField.style.display = form.elements.assignment_strategy.value === "manual" ? "" : "none";
+    updatePartitionCapabilityNote();
+  }
+
   function openPartitionModal(dataset) {
     var form = document.getElementById("form-partition");
+    var activeIds = getActivePartitionIds(dataset.partitionConfigs || []);
+
     form.reset();
     form.elements.name.value = dataset.name;
     form.elements.throughput_bytes.value = dataset.throughputBytes == null ? 0 : dataset.throughputBytes;
-    form.elements.partition_ids.value = "";
+    form.elements.assignment_strategy.value = activeIds.length ? "manual" : "auto";
+    form.elements.partition_mode.value = "preserve";
+    form.elements.partition_ids.value = activeIds.join(", ");
+
+    document.getElementById("partition-current-summary").innerHTML = buildPartitionSummaryCard(dataset);
+    updatePartitionFormState();
     openModal("modal-partition");
+  }
+
+  function validateManualPartitionIds(partitionIds) {
+    var duplicates = duplicateValues(partitionIds);
+    if (duplicates.length) {
+      return "Partition IDs must be unique: " + duplicates.join(", ");
+    }
+
+    var invalid = [];
+    var i;
+    for (i = 0; i < partitionIds.length; i++) {
+      if (!isCanonicalNonNegativeIntegerString(partitionIds[i])) {
+        invalid.push(partitionIds[i]);
+      }
+    }
+
+    if (invalid.length) {
+      invalid.sort();
+      return "Partition IDs must be canonical non-negative integers: " + invalid.join(", ");
+    }
+
+    return null;
   }
 
   function initDatasets() {
@@ -336,65 +620,388 @@
     document.getElementById("btn-dataset-back").addEventListener("click", showDatasetList);
     document.getElementById("btn-dataset-cancel").addEventListener("click", showDatasetList);
 
-    document.getElementById("form-dataset").addEventListener("submit", function (e) {
-      e.preventDefault();
-      var form = this;
-      var isEdit = form.dataset.editing === "true";
-      var method = isEdit ? "UpdateDatasetMetadata" : "CreateDatasetMetadata";
-      var body = {
-        name: form.elements.name.value,
-        owner: form.elements.owner.value,
-        service_name_pattern: form.elements.service_name_pattern.value,
-      };
+    document
+      .getElementById("form-dataset")
+      .addEventListener("submit", function (e) {
+        e.preventDefault();
+        var form = this;
+        var isEdit = form.dataset.editing === "true";
+        var method = isEdit ? "UpdateDatasetMetadata" : "CreateDatasetMetadata";
+        var body = {
+          name: form.elements.name.value,
+          owner: form.elements.owner.value,
+          service_name_pattern: form.elements.service_name_pattern.value,
+        };
 
-      apiCall(method, body)
-        .then(function () {
-          showToast(isEdit ? "Dataset updated" : "Dataset created");
-          showDatasetList();
-        })
-        .catch(function (err) {
-          showToast("Error: " + err.message, "error");
+        apiCall(method, body)
+          .then(function () {
+            showToast(isEdit ? "Dataset updated" : "Dataset created");
+            showDatasetList();
+          })
+          .catch(function (err) {
+            showToast("Error: " + err.message, "error");
+          });
+      });
+
+    document
+      .getElementById("form-partition")
+      .elements.assignment_strategy.addEventListener("change", updatePartitionFormState);
+    document
+      .getElementById("form-partition")
+      .elements.partition_mode.addEventListener("change", updatePartitionCapabilityNote);
+
+    document
+      .getElementById("form-partition")
+      .addEventListener("submit", function (e) {
+        e.preventDefault();
+        var form = this;
+        var throughputInput = form.elements.throughput_bytes.value.trim();
+        var parsedThroughput = Number(throughputInput);
+        var assignmentStrategy = form.elements.assignment_strategy.value;
+        var partitionMode = form.elements.partition_mode.value;
+        var ids = assignmentStrategy === "manual"
+          ? splitPartitionIds(form.elements.partition_ids.value.trim())
+          : [];
+
+        if (throughputInput === "" || !Number.isInteger(parsedThroughput) || parsedThroughput < 0) {
+          showToast("Error: throughput must be a non-negative integer", "error");
+          return;
+        }
+
+        if (assignmentStrategy === "manual" && ids.length === 0) {
+          showToast("Error: manual assignment requires at least one partition ID", "error");
+          return;
+        }
+
+        if (assignmentStrategy === "manual") {
+          var manualValidationError = validateManualPartitionIds(ids);
+          if (manualValidationError) {
+            showToast("Error: " + manualValidationError, "error");
+            return;
+          }
+        }
+
+        probePartitionCatalogSupport().then(function (catalogSupported) {
+          if (!catalogSupported && assignmentStrategy === "auto") {
+            showToast("Error: auto-assignment requires partition catalog support", "error");
+            return;
+          }
+          if (!catalogSupported && partitionMode !== "preserve") {
+            showToast("Error: shared/dedicated mode overrides require partition catalog support", "error");
+            return;
+          }
+
+          var body = {
+            name: form.elements.name.value,
+            throughput_bytes: parsedThroughput,
+            partition_ids: ids,
+          };
+
+          if (partitionMode === "shared") {
+            body.require_dedicated_partition = false;
+          } else if (partitionMode === "dedicated") {
+            body.require_dedicated_partition = true;
+          }
+
+          apiCall("UpdatePartitionAssignment", body)
+            .then(function (resp) {
+              closeModal("modal-partition");
+              var assigned = (resp.assignedPartitionIds || []).join(", ");
+              showToast("Assignment updated: " + (assigned || "(none)"));
+              refreshRelatedViews();
+            })
+            .catch(function (err) {
+              showToast("Error: " + err.message, "error");
+            });
         });
+      });
+  }
+
+  // ---- Partitions ----
+
+  function getPartitionOccupancyType(partition) {
+    if (partition.dedicated) return "Dedicated";
+    if (partition.shared) return "Shared";
+    return "Empty";
+  }
+
+  function getPartitionDatasets(partition) {
+    if (partition.dedicated && partition.dedicated.dataset) {
+      return [partition.dedicated.dataset];
+    }
+    if (partition.shared && partition.shared.datasets) {
+      return partition.shared.datasets.slice();
+    }
+    return [];
+  }
+
+  function partitionOccupancyBadgeHtml(partition) {
+    var occupancyType = getPartitionOccupancyType(partition);
+    var cssClass = "occupancy-empty";
+    if (occupancyType === "Shared") cssClass = "occupancy-shared";
+    if (occupancyType === "Dedicated") cssClass = "occupancy-dedicated";
+    return (
+      '<span class="occupancy-badge ' +
+      cssClass +
+      '">' +
+      escapeHtml(occupancyType) +
+      "</span>"
+    );
+  }
+
+  function renderPartitionActions(partitionId) {
+    var encodedId = encodeURIComponent(partitionId);
+    return gridjs.html(
+      '<div class="grid-actions">' +
+      '<button class="btn btn-sm btn-danger" data-action="delete-partition" data-partition="' +
+      encodedId +
+      '">Delete</button>' +
+      "</div>"
+    );
+  }
+
+  function bindPartitionGridActions() {
+    if (partitionGridActionsBound) return;
+
+    var container = document.getElementById("partitions-grid");
+    if (!container) return;
+
+    container.addEventListener("click", function (e) {
+      var target = e.target.closest("[data-action='delete-partition'][data-partition]");
+      if (!target) return;
+
+      var partitionId = decodeURIComponent(target.getAttribute("data-partition") || "");
+      var partition = partitionById[partitionId];
+      if (!partition) return;
+
+      var datasets = getPartitionDatasets(partition);
+      var occupancy = getPartitionOccupancyType(partition);
+      var details = datasets.length ? " Current occupants: " + datasets.join(", ") + "." : "";
+
+      showConfirm(
+        'Delete partition "' + partitionId + '" from the catalog? Occupancy: ' + occupancy + "." + details,
+        function () {
+          apiCall("DeletePartition", { partition_id: partitionId })
+            .then(function (resp) {
+              showToast(resp.status || "Partition deleted");
+              loadPartitions();
+            })
+            .catch(function (err) {
+              showToast("Error: " + err.message, "error");
+            });
+        }
+      );
     });
 
-    document.getElementById("form-partition").addEventListener("submit", function (e) {
-      e.preventDefault();
-      var form = this;
-      var ids = form.elements.partition_ids.value.trim();
-      var throughputInput = form.elements.throughput_bytes.value.trim();
-      var parsedThroughput = Number(throughputInput);
-      if (throughputInput === "" || !Number.isInteger(parsedThroughput) || parsedThroughput < 0) {
-        showToast("Error: throughput must be a non-negative integer", "error");
-        return;
-      }
-      var body = {
-        name: form.elements.name.value,
-        throughput_bytes: parsedThroughput,
-        partition_ids: ids
-          ? ids
-              .split(",")
-              .map(function (s) { return s.trim(); })
-              .filter(function (s) { return s.length > 0; })
-          : [],
-      };
+    partitionGridActionsBound = true;
+  }
 
-      apiCall("UpdatePartitionAssignment", body)
-        .then(function (resp) {
-          closeModal("modal-partition");
-          var assigned = (resp.assignedPartitionIds || []).join(", ");
-          showToast("Partitions assigned: " + (assigned || "(none)"));
-          loadDatasets();
-        })
-        .catch(function (err) {
-          showToast("Error: " + err.message, "error");
-        });
+  function renderPartitionStats(partitions) {
+    var target = document.getElementById("partitions-stats");
+    if (!target) return;
+
+    var total = partitions.length;
+    var empty = 0;
+    var shared = 0;
+    var dedicated = 0;
+    var totalMaxCapacity = 0;
+    var totalProvisionedCapacity = 0;
+    var i;
+
+    for (i = 0; i < partitions.length; i++) {
+      var partition = partitions[i];
+      var occupancy = getPartitionOccupancyType(partition);
+      if (occupancy === "Empty") empty++;
+      if (occupancy === "Shared") shared++;
+      if (occupancy === "Dedicated") dedicated++;
+      totalMaxCapacity += toNumericValue(partition.maxCapacity);
+      totalProvisionedCapacity += toNumericValue(partition.provisionedCapacity);
+    }
+
+    target.innerHTML =
+      '<div class="stat-card"><span class="stat-card-label">Catalog Partitions</span><span class="stat-card-value">' +
+      escapeHtml(String(total)) +
+      '</span><span class="stat-card-subcopy">Total known partition entries</span></div>' +
+      '<div class="stat-card"><span class="stat-card-label">Empty</span><span class="stat-card-value">' +
+      escapeHtml(String(empty)) +
+      '</span><span class="stat-card-subcopy">Available for future assignments</span></div>' +
+      '<div class="stat-card"><span class="stat-card-label">Shared</span><span class="stat-card-value">' +
+      escapeHtml(String(shared)) +
+      '</span><span class="stat-card-subcopy">Partitions currently shared by datasets</span></div>' +
+      '<div class="stat-card"><span class="stat-card-label">Dedicated</span><span class="stat-card-value">' +
+      escapeHtml(String(dedicated)) +
+      '</span><span class="stat-card-subcopy">Partitions reserved by one dataset</span></div>' +
+      '<div class="stat-card"><span class="stat-card-label">Provisioned Capacity</span><span class="stat-card-value">' +
+      escapeHtml(formatWithSeparators(totalProvisionedCapacity)) +
+      '</span><span class="stat-card-subcopy">Of ' +
+      escapeHtml(formatWithSeparators(totalMaxCapacity)) +
+      " bytes total max capacity</span></div>";
+  }
+
+  function setPartitionsEmptyState(title, copy, visible) {
+    var emptyState = document.getElementById("partitions-empty-state");
+    if (!emptyState) return;
+
+    emptyState.hidden = !visible;
+    if (!visible) return;
+
+    var titleNode = emptyState.querySelector("h3");
+    var copyNode = document.getElementById("partitions-empty-copy");
+    titleNode.textContent = title;
+    copyNode.textContent = copy;
+  }
+
+  function renderPartitions(partitions) {
+    if (typeof gridjs === "undefined") {
+      showToast("gridjs is not available", "error");
+      return;
+    }
+
+    var container = document.getElementById("partitions-grid");
+    container.hidden = false;
+
+    partitionById = {};
+    var rows = [];
+    var i;
+
+    for (i = 0; i < partitions.length; i++) {
+      var partition = partitions[i];
+      var datasets = getPartitionDatasets(partition);
+      var maxCapacity = toNumericValue(partition.maxCapacity);
+      var provisionedCapacity = toNumericValue(partition.provisionedCapacity);
+      var availableCapacity = Math.max(maxCapacity - provisionedCapacity, 0);
+
+      partitionById[partition.partitionId] = partition;
+      rows.push([
+        partition.partitionId,
+        toDisplayNumber(partition.maxCapacity),
+        toDisplayNumber(partition.provisionedCapacity),
+        toDisplayNumber(availableCapacity),
+        gridjs.html(partitionOccupancyBadgeHtml(partition)),
+        datasets.length ? datasets.join(", ") : "-",
+        renderPartitionActions(partition.partitionId),
+      ]);
+    }
+
+    renderPartitionStats(partitions);
+
+    if (partitionsGrid) {
+      partitionsGrid.updateConfig({ data: rows }).forceRender();
+    } else {
+      partitionsGrid = new gridjs.Grid({
+        columns: [
+          "Partition ID",
+          "Max Capacity",
+          "Provisioned",
+          "Available",
+          "Occupancy",
+          "Datasets",
+          { name: "Actions", sort: false },
+        ],
+        data: rows,
+        search: true,
+        sort: true,
+        pagination: {
+          enabled: true,
+          limit: 20,
+        },
+      });
+
+      partitionsGrid.render(container);
+      bindPartitionGridActions();
+    }
+
+    setPartitionsEmptyState(
+      "No catalog partitions yet",
+      "Create at least one partition before using shard auto-assignment or manual catalog validation.",
+      partitions.length === 0
+    );
+  }
+
+  function renderUnavailablePartitions(errorMessage) {
+    var container = document.getElementById("partitions-grid");
+    if (container) container.hidden = true;
+    renderPartitionStats([]);
+    setPartitionsEmptyState(
+      "Partition catalog unavailable",
+      errorMessage || "This manager build does not expose partition catalog APIs yet.",
+      true
+    );
+  }
+
+  function loadPartitions() {
+    fetchPartitionMetadata()
+      .then(function (partitions) {
+        renderPartitions(partitions);
+      })
+      .catch(function (err) {
+        renderUnavailablePartitions(err.message);
+      });
+  }
+
+  function openCreatePartitionModal() {
+    var form = document.getElementById("form-create-partition");
+    form.reset();
+    openModal("modal-create-partition");
+  }
+
+  function initPartitions() {
+    document.getElementById("btn-refresh-partitions").addEventListener("click", function () {
+      loadPartitions();
     });
+
+    document.getElementById("btn-new-partition").addEventListener("click", function () {
+      probePartitionCatalogSupport(true).then(function (catalogSupported) {
+        if (!catalogSupported) {
+          showToast("Partition catalog is unavailable on this manager build", "error");
+          renderUnavailablePartitions(partitionCatalogSupport.lastError);
+          return;
+        }
+        openCreatePartitionModal();
+      });
+    });
+
+    document
+      .getElementById("form-create-partition")
+      .addEventListener("submit", function (e) {
+        e.preventDefault();
+        var form = this;
+        var partitionId = form.elements.partition_id.value.trim();
+        var maxCapacityInput = form.elements.max_capacity.value.trim();
+        var parsedMaxCapacity = Number(maxCapacityInput);
+
+        if (!isCanonicalNonNegativeIntegerString(partitionId)) {
+          showToast("Error: partition ID must be a canonical non-negative integer", "error");
+          return;
+        }
+        if (maxCapacityInput === "" || !Number.isInteger(parsedMaxCapacity) || parsedMaxCapacity <= 0) {
+          showToast("Error: max capacity must be a positive integer", "error");
+          return;
+        }
+
+        probePartitionCatalogSupport().then(function (catalogSupported) {
+          if (!catalogSupported) {
+            showToast("Error: partition catalog is unavailable on this manager build", "error");
+            return;
+          }
+
+          apiCall("CreatePartition", {
+            partition_id: partitionId,
+            max_capacity: parsedMaxCapacity,
+          })
+            .then(function () {
+              closeModal("modal-create-partition");
+              showToast("Partition created");
+              loadPartitions();
+            })
+            .catch(function (err) {
+              showToast("Error: " + err.message, "error");
+            });
+        });
+      });
   }
 
   // ---- Field Redactions ----
-  var redactionsGrid = null;
-  var redactionByName = {};
-  var redactionGridActionsBound = false;
 
   function renderRedactionActions(redactionName) {
     var encodedName = encodeURIComponent(redactionName);
@@ -421,19 +1028,16 @@
       var redaction = redactionByName[redactionName];
       if (!redaction) return;
 
-      showConfirm(
-        'Delete redaction "' + redaction.name + '"?',
-        function () {
-          apiCall("DeleteFieldRedaction", { name: redaction.name })
-            .then(function () {
-              showToast("Redaction deleted");
-              loadRedactions();
-            })
-            .catch(function (err) {
-              showToast("Error: " + err.message, "error");
-            });
-        }
-      );
+      showConfirm('Delete redaction "' + redaction.name + '"?', function () {
+        apiCall("DeleteFieldRedaction", { name: redaction.name })
+          .then(function () {
+            showToast("Redaction deleted");
+            loadRedactions();
+          })
+          .catch(function (err) {
+            showToast("Error: " + err.message, "error");
+          });
+      });
     });
 
     redactionGridActionsBound = true;
@@ -442,8 +1046,7 @@
   function loadRedactions() {
     apiCall("ListFieldRedactions", {})
       .then(function (data) {
-        var redactions = data.redactedFields || [];
-        renderRedactions(redactions);
+        renderRedactions(data.redactedFields || []);
       })
       .catch(function (err) {
         showToast("Failed to load redactions: " + err.message, "error");
@@ -458,15 +1061,17 @@
 
     redactionByName = {};
     var rows = [];
-    for (var i = 0; i < redactions.length; i++) {
-      var r = redactions[i];
-      redactionByName[r.name] = r;
+    var i;
+
+    for (i = 0; i < redactions.length; i++) {
+      var redaction = redactions[i];
+      redactionByName[redaction.name] = redaction;
       rows.push([
-        r.name,
-        r.fieldName || "",
-        formatTime(r.startTimeEpochMs),
-        formatTime(r.endTimeEpochMs),
-        renderRedactionActions(r.name),
+        redaction.name,
+        redaction.fieldName || "",
+        formatTime(redaction.startTimeEpochMs),
+        formatTime(redaction.endTimeEpochMs),
+        renderRedactionActions(redaction.name),
       ]);
     }
 
@@ -501,26 +1106,28 @@
       openModal("modal-redaction");
     });
 
-    document.getElementById("form-redaction").addEventListener("submit", function (e) {
-      e.preventDefault();
-      var form = this;
-      var body = {
-        name: form.elements.name.value,
-        field_name: form.elements.field_name.value,
-        start_time_epoch_ms: parseInt(form.elements.start_time_epoch_ms.value, 10),
-        end_time_epoch_ms: parseInt(form.elements.end_time_epoch_ms.value, 10),
-      };
+    document
+      .getElementById("form-redaction")
+      .addEventListener("submit", function (e) {
+        e.preventDefault();
+        var form = this;
+        var body = {
+          name: form.elements.name.value,
+          field_name: form.elements.field_name.value,
+          start_time_epoch_ms: parseInt(form.elements.start_time_epoch_ms.value, 10),
+          end_time_epoch_ms: parseInt(form.elements.end_time_epoch_ms.value, 10),
+        };
 
-      apiCall("CreateFieldRedaction", body)
-        .then(function () {
-          closeModal("modal-redaction");
-          showToast("Redaction created");
-          loadRedactions();
-        })
-        .catch(function (err) {
-          showToast("Error: " + err.message, "error");
-        });
-    });
+        apiCall("CreateFieldRedaction", body)
+          .then(function () {
+            closeModal("modal-redaction");
+            showToast("Redaction created");
+            loadRedactions();
+          })
+          .catch(function (err) {
+            showToast("Error: " + err.message, "error");
+          });
+      });
   }
 
   // ---- Operations ----
@@ -560,8 +1167,12 @@
         var raw = form.elements.ids_to_restore.value.trim();
         var ids = raw
           .split("\n")
-          .map(function (s) { return s.trim(); })
-          .filter(function (s) { return s.length > 0; });
+          .map(function (item) {
+            return item.trim();
+          })
+          .filter(function (item) {
+            return item.length > 0;
+          });
 
         apiCall("RestoreReplicaIds", { ids_to_restore: ids })
           .then(function (data) {
@@ -601,39 +1212,25 @@
       });
   }
 
-  // ---- Utilities ----
-
-
-  var MAX_TIME = "9223372036854775807"; // Long.MAX_VALUE as string
-
-  function formatTime(epochMs) {
-    if (!epochMs || epochMs === "0") return "-";
-    if (String(epochMs) === MAX_TIME) return "MAX";
-    try {
-      return new Date(Number(epochMs)).toISOString().replace("T", " ").replace(/\.000Z$/, " UTC");
-    } catch (e) {
-      return String(epochMs);
-    }
-  }
-
   // ---- Modal close handlers ----
 
   function initModals() {
-    // Close buttons
     var closeBtns = document.querySelectorAll(".modal-close, [data-dismiss='modal']");
-    for (var i = 0; i < closeBtns.length; i++) {
+    var overlays = document.querySelectorAll(".modal-overlay");
+    var i;
+
+    for (i = 0; i < closeBtns.length; i++) {
       closeBtns[i].addEventListener("click", function () {
         closeAllModals();
       });
     }
-    // Click outside modal
-    var overlays = document.querySelectorAll(".modal-overlay");
-    for (var j = 0; j < overlays.length; j++) {
-      overlays[j].addEventListener("click", function (e) {
+
+    for (i = 0; i < overlays.length; i++) {
+      overlays[i].addEventListener("click", function (e) {
         if (e.target === this) closeAllModals();
       });
     }
-    // Escape key
+
     document.addEventListener("keydown", function (e) {
       if (e.key === "Escape") closeAllModals();
     });
@@ -647,8 +1244,10 @@
     initConfirmDialog();
     initDangerConfirmDialog();
     initDatasets();
+    initPartitions();
     initRedactions();
     initOperations();
+    probePartitionCatalogSupport();
     loadDatasets();
   }
 
