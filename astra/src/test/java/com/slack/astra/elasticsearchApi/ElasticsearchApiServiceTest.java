@@ -561,6 +561,46 @@ public class ElasticsearchApiServiceTest {
   }
 
   @Test
+  public void testSingleSearchReturnsSiblingMetricAggregationsOnSameField() throws Exception {
+    addMessagesToChunkManager(SpanUtil.makeSpansWithTimeDifference(1, 100, 1, Instant.now()));
+
+    String postBody =
+        """
+        {
+          "size": 0,
+          "query": {
+            "match_all": {}
+          },
+          "aggs": {
+            "avg_longproperty": {
+              "avg": {
+                "field": "longproperty"
+              }
+            },
+            "max_longproperty": {
+              "max": {
+                "field": "longproperty"
+              }
+            }
+          }
+        }
+        """;
+    HttpResponse response = elasticsearchApiService.search(TEST_DATASET_NAME, postBody);
+
+    AggregatedHttpResponse aggregatedRes = response.aggregate().join();
+    String body = aggregatedRes.content(StandardCharsets.UTF_8);
+    JsonNode jsonNode = OBJECT_MAPPER.readTree(body);
+
+    assertThat(aggregatedRes.status().code()).isEqualTo(200);
+    assertThat(jsonNode.get("aggregations").get("avg_longproperty").get("value").asDouble())
+        .isCloseTo(50.5, Offset.offset(0.001));
+    assertThat(jsonNode.get("aggregations").get("max_longproperty").get("value").asDouble())
+        .isCloseTo(100.0, Offset.offset(0.001));
+    assertThat(jsonNode.get("_shards").get("total").asInt()).isEqualTo(1);
+    assertThat(jsonNode.get("_shards").get("failed").asInt()).isEqualTo(0);
+  }
+
+  @Test
   public void testSingleSearchReturnsNestedAndSiblingAggregations() throws Exception {
     addMessagesToChunkManager(SpanUtil.makeSpansWithTimeDifference(1, 100, 1, Instant.now()));
 
