@@ -31,8 +31,12 @@ import org.apache.lucene.search.SimpleCollector;
 import org.apache.lucene.store.ByteBuffersDirectory;
 import org.apache.lucene.store.Directory;
 import org.junit.jupiter.api.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class LuceneSegmentSearchConcurrencyTest {
+  private static final Logger LOG =
+      LoggerFactory.getLogger(LuceneSegmentSearchConcurrencyTest.class);
   private static final int SEGMENT_COUNT = 12;
 
   @Test
@@ -47,6 +51,7 @@ public class LuceneSegmentSearchConcurrencyTest {
       SearchObservation observation =
           searcher.search(new MatchAllDocsQuery(), new ThreadRecordingCollectorManager(null));
 
+      LOG.info("CollectorManager without executor observation: {}", observation);
       assertThat(observation.documentCount()).isEqualTo(SEGMENT_COUNT);
       assertThat(observation.leafOrds()).hasSize(SEGMENT_COUNT);
       assertThat(observation.collectorCount()).isEqualTo(1);
@@ -69,6 +74,7 @@ public class LuceneSegmentSearchConcurrencyTest {
       searcher.search(new MatchAllDocsQuery(), collector);
 
       SearchObservation observation = collector.toObservation();
+      LOG.info("Direct Collector with executor observation: {}", observation);
       assertThat(observation.documentCount()).isEqualTo(SEGMENT_COUNT);
       assertThat(observation.leafOrds()).hasSize(SEGMENT_COUNT);
       assertThat(observation.collectorCount()).isEqualTo(1);
@@ -94,6 +100,7 @@ public class LuceneSegmentSearchConcurrencyTest {
               new MatchAllDocsQuery(),
               new ThreadRecordingCollectorManager(new CyclicBarrier(sliceCount)));
 
+      LOG.info("CollectorManager with executor observation: {}", observation);
       assertThat(observation.documentCount()).isEqualTo(SEGMENT_COUNT);
       assertThat(observation.leafOrds()).hasSize(SEGMENT_COUNT);
       assertThat(observation.collectorCount()).isEqualTo(sliceCount);
@@ -127,6 +134,7 @@ public class LuceneSegmentSearchConcurrencyTest {
   private static class ThreadRecordingCollectorManager
       implements CollectorManager<ThreadRecordingCollector, SearchObservation> {
     private final CyclicBarrier firstLeafBarrier;
+    private final AtomicInteger collectorIdGenerator = new AtomicInteger();
 
     private ThreadRecordingCollectorManager(CyclicBarrier firstLeafBarrier) {
       this.firstLeafBarrier = firstLeafBarrier;
@@ -134,7 +142,9 @@ public class LuceneSegmentSearchConcurrencyTest {
 
     @Override
     public ThreadRecordingCollector newCollector() {
-      return new ThreadRecordingCollector(firstLeafBarrier);
+      int collectorId = collectorIdGenerator.incrementAndGet();
+      LOG.info("Creating collector {}", collectorId);
+      return new ThreadRecordingCollector(collectorId, firstLeafBarrier);
     }
 
     @Override
@@ -153,6 +163,7 @@ public class LuceneSegmentSearchConcurrencyTest {
   }
 
   private static class ThreadRecordingCollector extends SimpleCollector {
+    private final int collectorId;
     private final Set<Long> threadIds = ConcurrentHashMap.newKeySet();
     private final Set<Integer> leafOrds = ConcurrentHashMap.newKeySet();
     private final AtomicInteger documentCount = new AtomicInteger();
@@ -160,6 +171,11 @@ public class LuceneSegmentSearchConcurrencyTest {
     private final CyclicBarrier firstLeafBarrier;
 
     private ThreadRecordingCollector(CyclicBarrier firstLeafBarrier) {
+      this(1, firstLeafBarrier);
+    }
+
+    private ThreadRecordingCollector(int collectorId, CyclicBarrier firstLeafBarrier) {
+      this.collectorId = collectorId;
       this.firstLeafBarrier = firstLeafBarrier;
     }
 
@@ -167,6 +183,12 @@ public class LuceneSegmentSearchConcurrencyTest {
     protected void doSetNextReader(LeafReaderContext context) throws IOException {
       recordThread();
       leafOrds.add(context.ord);
+      LOG.info(
+          "Collector {} entering leaf ord={} maxDoc={} thread={}",
+          collectorId,
+          context.ord,
+          context.reader().maxDoc(),
+          Thread.currentThread().getName());
       if (firstLeafBarrier != null && waitedOnFirstLeaf.compareAndSet(false, true)) {
         awaitFirstLeafBarrier();
       }
@@ -176,6 +198,11 @@ public class LuceneSegmentSearchConcurrencyTest {
     public void collect(int doc) {
       recordThread();
       documentCount.incrementAndGet();
+      LOG.info(
+          "Collector {} collected doc={} thread={}",
+          collectorId,
+          doc,
+          Thread.currentThread().getName());
     }
 
     @Override
@@ -194,7 +221,15 @@ public class LuceneSegmentSearchConcurrencyTest {
 
     private void awaitFirstLeafBarrier() throws IOException {
       try {
+        LOG.info(
+            "Collector {} waiting at first-leaf barrier on thread={}",
+            collectorId,
+            Thread.currentThread().getName());
         firstLeafBarrier.await(5, TimeUnit.SECONDS);
+        LOG.info(
+            "Collector {} passed first-leaf barrier on thread={}",
+            collectorId,
+            Thread.currentThread().getName());
       } catch (InterruptedException e) {
         Thread.currentThread().interrupt();
         throw new IOException(e);
