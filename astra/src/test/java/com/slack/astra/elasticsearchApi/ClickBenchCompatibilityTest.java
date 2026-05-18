@@ -38,7 +38,8 @@ import org.junit.jupiter.api.extension.RegisterExtension;
 /**
  * Readable direct-API compatibility specs for ClickBench queries.
  *
- * <p>Query numbers follow ClickHouse/ClickBench's {@code clickhouse/queries.sql} ordering.
+ * <p>Query numbers match benchmark.clickhouse.com labels, which are zero-based over ClickBench's
+ * {@code clickhouse/queries.sql} ordering.
  *
  * <p>These tests intentionally duplicate lower-level feature tests. Deleting this file should not
  * delete the only coverage for sorting, filtering, aggregations, or pagination.
@@ -552,9 +553,9 @@ class ClickBenchCompatibilityTest {
   }
 
   @Test
-  public void q1CountAllRows() throws Exception {
+  public void q0CountAllRows() throws Exception {
     verify(
-        clickBench("Q1")
+        clickBench("Q0")
             .expects("count all rows")
             .givenRows(benchmarkRows())
             .whenAstraReceivesEquivalentOpenSearch(
@@ -574,9 +575,9 @@ class ClickBenchCompatibilityTest {
   }
 
   @Test
-  public void q2CountRowsWhereAdvEngineIdIsNotZero() throws Exception {
+  public void q1CountRowsWhereAdvEngineIdIsNotZero() throws Exception {
     verify(
-        clickBench("Q2")
+        clickBench("Q1")
             .expects("count rows where AdvEngineID is non-zero")
             .givenRows(benchmarkRows())
             .whenAstraReceivesEquivalentOpenSearch(
@@ -607,9 +608,9 @@ class ClickBenchCompatibilityTest {
   }
 
   @Test
-  public void q3SumCountAndAverage() throws Exception {
+  public void q2SumCountAndAverage() throws Exception {
     verify(
-        clickBench("Q3")
+        clickBench("Q2")
             .expects("sum AdvEngineID, count rows, and average ResolutionWidth")
             .givenRows(benchmarkRows())
             .whenAstraReceivesEquivalentOpenSearch(
@@ -642,9 +643,9 @@ class ClickBenchCompatibilityTest {
   }
 
   @Test
-  public void q4AverageUserId() throws Exception {
+  public void q3AverageUserId() throws Exception {
     verify(
-        clickBench("Q4")
+        clickBench("Q3")
             .expects("average UserID")
             .givenRows(
                 List.of(
@@ -668,9 +669,9 @@ class ClickBenchCompatibilityTest {
   }
 
   @Test
-  public void q7MinAndMaxEventDate() throws Exception {
+  public void q6MinAndMaxEventDate() throws Exception {
     verify(
-        clickBench("Q7")
+        clickBench("Q6")
             .expects("minimum and maximum EventDate")
             .givenRows(benchmarkRows())
             .whenAstraReceivesEquivalentOpenSearch(
@@ -701,9 +702,9 @@ class ClickBenchCompatibilityTest {
   }
 
   @Test
-  public void q8AdvEngineIdCountsOrderedByCount() throws Exception {
+  public void q7AdvEngineIdCountsOrderedByCount() throws Exception {
     verify(
-        clickBench("Q8")
+        clickBench("Q7")
             .expects("AdvEngineID buckets for non-zero values, ordered by count descending")
             .givenRows(advEngineRows())
             .whenAstraReceivesEquivalentOpenSearch(
@@ -739,9 +740,9 @@ class ClickBenchCompatibilityTest {
   }
 
   @Test
-  public void q9RegionIdOrderedByDistinctUsers() throws Exception {
+  public void q8RegionIdOrderedByDistinctUsers() throws Exception {
     verify(
-        clickBench("Q9")
+        clickBench("Q8")
             .expects("RegionID buckets ordered by distinct UserID count")
             .givenRows(benchmarkRows())
             .whenAstraReceivesEquivalentOpenSearch(
@@ -777,9 +778,9 @@ class ClickBenchCompatibilityTest {
   }
 
   @Test
-  public void q10RegionIdWithSiblingMetricsOrderedByCount() throws Exception {
+  public void q9RegionIdWithSiblingMetricsOrderedByCount() throws Exception {
     verify(
-        clickBench("Q10")
+        clickBench("Q9")
             .expects("RegionID buckets with sum, count, average, and distinct-user metrics")
             .givenRows(benchmarkRows())
             .whenAstraReceivesEquivalentOpenSearch(
@@ -852,9 +853,9 @@ class ClickBenchCompatibilityTest {
   }
 
   @Test
-  public void q11MobilePhoneModelOrderedByDistinctUsers() throws Exception {
+  public void q10MobilePhoneModelOrderedByDistinctUsers() throws Exception {
     verify(
-        clickBench("Q11")
+        clickBench("Q10")
             .expects("non-empty MobilePhoneModel buckets ordered by distinct UserID count")
             .givenRows(benchmarkRows())
             .whenAstraReceivesEquivalentOpenSearch(
@@ -901,9 +902,9 @@ class ClickBenchCompatibilityTest {
   }
 
   @Test
-  public void q12MobilePhoneAndModelOrderedByDistinctUsers() throws Exception {
+  public void q11MobilePhoneAndModelOrderedByDistinctUsers() throws Exception {
     verify(
-        clickBench("Q12")
+        clickBench("Q11")
             .expects("MobilePhone plus MobilePhoneModel buckets ordered by distinct UserID count")
             .givenRows(benchmarkRows())
             .whenAstraReceivesEquivalentOpenSearch(
@@ -957,9 +958,9 @@ class ClickBenchCompatibilityTest {
   }
 
   @Test
-  public void q13SearchPhraseCountsOrderedByCount() throws Exception {
+  public void q12SearchPhraseCountsOrderedByCount() throws Exception {
     verify(
-        clickBench("Q13")
+        clickBench("Q12")
             .expects("non-empty SearchPhrase buckets ordered by count")
             .givenRows(benchmarkRows())
             .whenAstraReceivesEquivalentOpenSearch(
@@ -996,9 +997,9 @@ class ClickBenchCompatibilityTest {
   }
 
   @Test
-  public void q14SearchPhraseOrderedByDistinctUsers() throws Exception {
+  public void q13SearchPhraseOrderedByDistinctUsers() throws Exception {
     verify(
-        clickBench("Q14")
+        clickBench("Q13")
             .expects("non-empty SearchPhrase buckets ordered by distinct UserID count")
             .givenRows(benchmarkRows())
             .whenAstraReceivesEquivalentOpenSearch(
@@ -1045,9 +1046,9 @@ class ClickBenchCompatibilityTest {
   }
 
   @Test
-  public void q15SearchEngineAndPhraseCountsOrderedByCount() throws Exception {
+  public void q14SearchEngineAndPhraseCountsOrderedByCount() throws Exception {
     verify(
-        clickBench("Q15")
+        clickBench("Q14")
             .expects("SearchEngineID plus SearchPhrase buckets ordered by count")
             .givenRows(
                 List.of(
@@ -1101,9 +1102,9 @@ class ClickBenchCompatibilityTest {
   }
 
   @Test
-  public void q16UserIdCountsOrderedByCount() throws Exception {
+  public void q15UserIdCountsOrderedByCount() throws Exception {
     verify(
-        clickBench("Q16")
+        clickBench("Q15")
             .expects("UserID buckets ordered by count")
             .givenRows(benchmarkRows())
             .whenAstraReceivesEquivalentOpenSearch(
@@ -1127,9 +1128,9 @@ class ClickBenchCompatibilityTest {
   }
 
   @Test
-  public void q20FindSpecificUserId() throws Exception {
+  public void q19FindSpecificUserId() throws Exception {
     verify(
-        clickBench("Q20")
+        clickBench("Q19")
             .expects("return hits for a specific UserID")
             .givenRows(benchmarkRows())
             .whenAstraReceivesEquivalentOpenSearch(
@@ -1147,9 +1148,9 @@ class ClickBenchCompatibilityTest {
   }
 
   @Test
-  public void q22GoogleUrlSearchPhrasesOrderedByCount() throws Exception {
+  public void q21GoogleUrlSearchPhrasesOrderedByCount() throws Exception {
     verify(
-        clickBench("Q22")
+        clickBench("Q21")
             .expects("SearchPhrase buckets for google URLs, ordered by count")
             .givenRows(benchmarkRows())
             .whenAstraReceivesEquivalentOpenSearch(
@@ -1195,9 +1196,9 @@ class ClickBenchCompatibilityTest {
   }
 
   @Test
-  public void q23GoogleTitleWithoutGoogleSubdomainSearchPhrasesOrderedByCount() throws Exception {
+  public void q22GoogleTitleWithoutGoogleSubdomainSearchPhrasesOrderedByCount() throws Exception {
     verify(
-        clickBench("Q23")
+        clickBench("Q22")
             .expects("SearchPhrase buckets for Google titles outside google subdomains")
             .givenRows(benchmarkRows())
             .whenAstraReceivesEquivalentOpenSearch(
@@ -1249,9 +1250,9 @@ class ClickBenchCompatibilityTest {
   }
 
   @Test
-  public void q24UrlContainsGoogleOrderByEventTimeLimit10() throws Exception {
+  public void q23UrlContainsGoogleOrderByEventTimeLimit10() throws Exception {
     verify(
-        clickBench("Q24")
+        clickBench("Q23")
             .expects("URL contains google, ordered by EventTime ascending, limited to 10 hits")
             .givenRows(hitRows())
             .whenAstraReceivesEquivalentOpenSearch(
@@ -1283,9 +1284,9 @@ class ClickBenchCompatibilityTest {
   }
 
   @Test
-  public void q25SearchPhraseNotEmptyOrderByEventTimeLimit10() throws Exception {
+  public void q24SearchPhraseNotEmptyOrderByEventTimeLimit10() throws Exception {
     verify(
-        clickBench("Q25")
+        clickBench("Q24")
             .expects(
                 "non-empty SearchPhrase values, ordered by EventTime ascending, limited to 10 hits")
             .givenRows(hitRows())
@@ -1317,9 +1318,9 @@ class ClickBenchCompatibilityTest {
   }
 
   @Test
-  public void q26SearchPhraseNotEmptyOrderBySearchPhraseLimit10() throws Exception {
+  public void q25SearchPhraseNotEmptyOrderBySearchPhraseLimit10() throws Exception {
     verify(
-        clickBench("Q26")
+        clickBench("Q25")
             .expects(
                 "non-empty SearchPhrase values, ordered by SearchPhrase ascending, limited to 10"
                     + " hits")
@@ -1352,9 +1353,9 @@ class ClickBenchCompatibilityTest {
   }
 
   @Test
-  public void q27SearchPhraseNotEmptyOrderByEventTimeThenSearchPhraseLimit10() throws Exception {
+  public void q26SearchPhraseNotEmptyOrderByEventTimeThenSearchPhraseLimit10() throws Exception {
     verify(
-        clickBench("Q27")
+        clickBench("Q26")
             .expects(
                 "non-empty SearchPhrase values, ordered by EventTime ascending and SearchPhrase"
                     + " ascending, limited to 10 hits")
@@ -1392,9 +1393,9 @@ class ClickBenchCompatibilityTest {
   }
 
   @Test
-  public void q30ManySiblingResolutionWidthSums() throws Exception {
+  public void q29ManySiblingResolutionWidthSums() throws Exception {
     verify(
-        clickBench("Q30")
+        clickBench("Q29")
             .expects("many sibling SUM expressions over ResolutionWidth")
             .givenRows(
                 List.of(row(1).resolutionWidth(10).build(), row(2).resolutionWidth(20).build()))
@@ -1434,9 +1435,9 @@ class ClickBenchCompatibilityTest {
   }
 
   @Test
-  public void q34UrlCountsOrderedByCount() throws Exception {
+  public void q33UrlCountsOrderedByCount() throws Exception {
     verify(
-        clickBench("Q34")
+        clickBench("Q33")
             .expects("URL buckets ordered by count")
             .givenRows(urlRows())
             .whenAstraReceivesEquivalentOpenSearch(
@@ -1465,9 +1466,9 @@ class ClickBenchCompatibilityTest {
   }
 
   @Test
-  public void q35ConstantAndUrlCountsOrderedByCount() throws Exception {
+  public void q34ConstantAndUrlCountsOrderedByCount() throws Exception {
     verify(
-        clickBench("Q35")
+        clickBench("Q34")
             .expects("constant-one plus URL buckets ordered by count")
             .givenRows(urlRows())
             .whenAstraReceivesEquivalentOpenSearch(
@@ -1503,9 +1504,9 @@ class ClickBenchCompatibilityTest {
   }
 
   @Test
-  public void q37PageViewUrlsForCounterAndDateRange() throws Exception {
+  public void q36PageViewUrlsForCounterAndDateRange() throws Exception {
     verify(
-        clickBench("Q37")
+        clickBench("Q36")
             .expects(
                 "URL page-view buckets after counter, date, refresh, hit-count, and URL filters")
             .givenRows(urlRowsForPageViews())
@@ -1570,9 +1571,9 @@ class ClickBenchCompatibilityTest {
   }
 
   @Test
-  public void q38PageViewTitlesForCounterAndDateRange() throws Exception {
+  public void q37PageViewTitlesForCounterAndDateRange() throws Exception {
     verify(
-        clickBench("Q38")
+        clickBench("Q37")
             .expects(
                 "Title page-view buckets after counter, date, refresh, hit-count, and Title filters")
             .givenRows(urlRowsForPageViews())
@@ -1633,9 +1634,9 @@ class ClickBenchCompatibilityTest {
   }
 
   @Test
-  public void q43MinuteBucketsForCounterAndDateRange() throws Exception {
+  public void q42MinuteBucketsForCounterAndDateRange() throws Exception {
     verify(
-        clickBench("Q43")
+        clickBench("Q42")
             .expects("minute buckets for counter, date, refresh, and hit-count filters")
             .givenRows(urlRowsForPageViews())
             .whenAstraReceivesEquivalentOpenSearch(

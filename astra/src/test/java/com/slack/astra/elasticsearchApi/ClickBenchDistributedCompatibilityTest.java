@@ -68,8 +68,9 @@ import org.junit.jupiter.api.Test;
  * Readable query-node compatibility specs for ClickBench queries that require distributed final
  * reduction.
  *
- * <p>Query numbers follow ClickHouse/ClickBench's {@code clickhouse/queries.sql} ordering. These
- * tests intentionally keep benchmark coverage separate from lower-level distributed service tests.
+ * <p>Query numbers match benchmark.clickhouse.com labels, which are zero-based over ClickBench's
+ * {@code clickhouse/queries.sql} ordering. These tests intentionally keep benchmark coverage
+ * separate from lower-level distributed service tests.
  */
 class ClickBenchDistributedCompatibilityTest {
   private static final String DEFAULT_CLUSTER_NAME = "astra";
@@ -130,7 +131,7 @@ class ClickBenchDistributedCompatibilityTest {
     return List.of(key.asText());
   }
 
-  private static List<ClickBenchRow> q39Rows() {
+  private static List<ClickBenchRow> q38Rows() {
     List<ClickBenchRow> rows = new ArrayList<>();
     addUrlRows(rows, 1, 1, "https://offset.example/a", 3);
     addUrlRows(rows, 4, 1, "https://offset.example/b", 1);
@@ -149,7 +150,7 @@ class ClickBenchDistributedCompatibilityTest {
     return rows;
   }
 
-  private static List<ClickBenchRow> q41Rows() {
+  private static List<ClickBenchRow> q40Rows() {
     List<ClickBenchRow> rows = new ArrayList<>();
     addUrlHashDateRows(rows, 1, 1, 1001L, "2013-07-14T00:00:00Z", 3);
     addUrlHashDateRows(rows, 4, 1, 2002L, "2013-07-14T00:00:00Z", 1);
@@ -167,7 +168,7 @@ class ClickBenchDistributedCompatibilityTest {
     return rows;
   }
 
-  private static List<ClickBenchRow> q42Rows() {
+  private static List<ClickBenchRow> q41Rows() {
     List<ClickBenchRow> rows = new ArrayList<>();
     addWindowRows(rows, 1, 1, 1024, 768, 3);
     addWindowRows(rows, 4, 1, 1440, 900, 1);
@@ -386,13 +387,13 @@ class ClickBenchDistributedCompatibilityTest {
   }
 
   @Test
-  public void q39PageViewUrlsWithBucketOffset() throws Exception {
+  public void q38PageViewUrlsWithBucketOffset() throws Exception {
     verify(
-        clickBench("Q39")
+        clickBench("Q38")
             .expects(
-                "URL page-view buckets after Q39 filters, count ordering, and scaled bucket"
+                "URL page-view buckets after Q38 filters, count ordering, and scaled bucket"
                     + " offset")
-            .givenRows(q39Rows())
+            .givenRows(q38Rows())
             .whenAstraReceivesEquivalentOpenSearch(
                 """
                 {
@@ -469,13 +470,13 @@ class ClickBenchDistributedCompatibilityTest {
   }
 
   @Test
-  public void q41UrlHashDatesWithBucketOffset() throws Exception {
+  public void q40UrlHashDatesWithBucketOffset() throws Exception {
     verify(
-        clickBench("Q41")
+        clickBench("Q40")
             .expects(
-                "URL-hash date buckets after Q41 filters, count ordering, and scaled bucket"
+                "URL-hash date buckets after Q40 filters, count ordering, and scaled bucket"
                     + " offset")
-            .givenRows(q41Rows())
+            .givenRows(q40Rows())
             .whenAstraReceivesEquivalentOpenSearch(
                 """
                 {
@@ -559,13 +560,13 @@ class ClickBenchDistributedCompatibilityTest {
   }
 
   @Test
-  public void q42WindowSizesWithBucketOffset() throws Exception {
+  public void q41WindowSizesWithBucketOffset() throws Exception {
     verify(
-        clickBench("Q42")
+        clickBench("Q41")
             .expects(
-                "window-size page-view buckets after Q42 filters, count ordering, and scaled"
+                "window-size page-view buckets after Q41 filters, count ordering, and scaled"
                     + " bucket offset")
-            .givenRows(q42Rows())
+            .givenRows(q41Rows())
             .whenAstraReceivesEquivalentOpenSearch(
                 """
                 {
