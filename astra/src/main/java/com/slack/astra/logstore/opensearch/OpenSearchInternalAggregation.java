@@ -24,7 +24,9 @@ import org.opensearch.search.aggregations.bucket.histogram.InternalAutoDateHisto
 import org.opensearch.search.aggregations.bucket.histogram.InternalDateHistogram;
 import org.opensearch.search.aggregations.bucket.histogram.InternalHistogram;
 import org.opensearch.search.aggregations.bucket.terms.DoubleTerms;
+import org.opensearch.search.aggregations.bucket.terms.InternalMultiTerms;
 import org.opensearch.search.aggregations.bucket.terms.LongTerms;
+import org.opensearch.search.aggregations.bucket.terms.MultiTermsAggregationBuilder;
 import org.opensearch.search.aggregations.bucket.terms.StringTerms;
 import org.opensearch.search.aggregations.bucket.terms.TermsAggregationBuilder;
 import org.opensearch.search.aggregations.bucket.terms.UnmappedTerms;
@@ -106,6 +108,10 @@ public class OpenSearchInternalAggregation {
                   TermsAggregationBuilder.NAME,
                   TermsAggregationBuilder::new),
               new NamedWriteableRegistry.Entry(
+                  AggregationBuilder.class,
+                  MultiTermsAggregationBuilder.NAME,
+                  MultiTermsAggregationBuilder::new),
+              new NamedWriteableRegistry.Entry(
                   InternalAggregation.class, StringTerms.NAME, StringTerms::new),
               new NamedWriteableRegistry.Entry(
                   InternalAggregation.class, UnmappedTerms.NAME, UnmappedTerms::new),
@@ -113,6 +119,10 @@ public class OpenSearchInternalAggregation {
                   InternalAggregation.class, LongTerms.NAME, LongTerms::new),
               new NamedWriteableRegistry.Entry(
                   InternalAggregation.class, DoubleTerms.NAME, DoubleTerms::new),
+              new NamedWriteableRegistry.Entry(
+                  InternalAggregation.class,
+                  MultiTermsAggregationBuilder.NAME,
+                  InternalMultiTerms::new),
               new NamedWriteableRegistry.Entry(
                   AggregationBuilder.class, AvgAggregationBuilder.NAME, AvgAggregationBuilder::new),
               new NamedWriteableRegistry.Entry(

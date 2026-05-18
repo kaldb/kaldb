@@ -761,6 +761,91 @@ public class ElasticsearchApiServiceTest {
   }
 
   @Test
+  public void testSingleSearchReturnsMultiTermsAggregation() throws Exception {
+    Instant start = Instant.parse("2026-05-18T03:00:00Z");
+    addMessagesToChunkManager(
+        List.of(
+            makeWindowSpan(1, start.plusSeconds(1), 62, 1024, 768, false, false),
+            makeWindowSpan(2, start.plusSeconds(2), 62, 1024, 768, false, false),
+            makeWindowSpan(3, start.plusSeconds(3), 62, 1440, 900, false, false),
+            makeWindowSpan(4, start.plusSeconds(4), 62, 800, 600, false, false),
+            makeWindowSpan(5, start.plusSeconds(5), 62, 1600, 900, false, true),
+            makeWindowSpan(6, start.plusSeconds(6), 61, 2560, 1440, false, false),
+            makeWindowSpan(7, start.plusSeconds(7), 62, 1024, 768, false, false),
+            makeWindowSpan(8, start.plusSeconds(8), 62, 1024, 768, false, false),
+            makeWindowSpan(9, start.plusSeconds(9), 62, 1440, 900, false, false),
+            makeWindowSpan(10, start.plusSeconds(10), 62, 1440, 900, false, false),
+            makeWindowSpan(11, start.plusSeconds(11), 62, 800, 600, false, false),
+            makeWindowSpan(12, start.plusSeconds(12), 62, 1920, 1080, true, false)));
+
+    String postBody =
+        """
+        {
+          "size": 0,
+          "query": {
+            "bool": {
+              "filter": [
+                {
+                  "term": {
+                    "CounterID": 62
+                  }
+                }
+              ],
+              "must_not": [
+                {
+                  "term": {
+                    "DontCountHits": true
+                  }
+                },
+                {
+                  "term": {
+                    "IsRefresh": true
+                  }
+                }
+              ]
+            }
+          },
+          "aggs": {
+            "window_sizes": {
+              "multi_terms": {
+                "terms": [
+                  {
+                    "field": "WindowClientWidth"
+                  },
+                  {
+                    "field": "WindowClientHeight"
+                  }
+                ],
+                "size": 4,
+                "order": {
+                  "_count": "desc"
+                }
+              }
+            }
+          }
+        }
+        """;
+    HttpResponse response = elasticsearchApiService.search(TEST_DATASET_NAME, postBody);
+
+    AggregatedHttpResponse aggregatedRes = response.aggregate().join();
+    String body = aggregatedRes.content(StandardCharsets.UTF_8);
+    JsonNode jsonNode = OBJECT_MAPPER.readTree(body);
+    Map<List<Integer>, Integer> bucketCounts = new java.util.HashMap<>();
+    for (JsonNode bucket : jsonNode.get("aggregations").get("window_sizes").get("buckets")) {
+      bucketCounts.put(
+          List.of(bucket.get("key").get(0).asInt(), bucket.get("key").get(1).asInt()),
+          bucket.get("doc_count").asInt());
+    }
+
+    assertThat(aggregatedRes.status().code()).isEqualTo(200);
+    assertThat(jsonNode.get("aggregations").get("window_sizes").get("buckets").size()).isEqualTo(3);
+    assertThat(bucketCounts)
+        .containsEntry(List.of(1024, 768), 4)
+        .containsEntry(List.of(1440, 900), 3)
+        .containsEntry(List.of(800, 600), 2);
+  }
+
+  @Test
   public void testLargeSetOfQueries() throws Exception {
     addMessagesToChunkManager(SpanUtil.makeSpansWithTimeDifference(1, 100, 1, Instant.now()));
     String postBody = readResource("elasticsearchApi/multisearch_query_10results.ndjson");
@@ -1100,6 +1185,46 @@ public class ElasticsearchApiServiceTest {
 
   private static DatasetMetadata datasetMetadata(String name) {
     return new DatasetMetadata(name, "test-owner", 0, List.of(), name);
+  }
+
+  private Trace.Span makeWindowSpan(
+      int id,
+      Instant timestamp,
+      int counterId,
+      int windowClientWidth,
+      int windowClientHeight,
+      boolean dontCountHits,
+      boolean isRefresh) {
+    return SpanUtil.makeSpan(
+        id,
+        "window-message-" + id,
+        timestamp,
+        List.of(
+            Trace.KeyValue.newBuilder()
+                .setKey("CounterID")
+                .setFieldType(Schema.SchemaFieldType.INTEGER)
+                .setVInt32(counterId)
+                .build(),
+            Trace.KeyValue.newBuilder()
+                .setKey("WindowClientWidth")
+                .setFieldType(Schema.SchemaFieldType.INTEGER)
+                .setVInt32(windowClientWidth)
+                .build(),
+            Trace.KeyValue.newBuilder()
+                .setKey("WindowClientHeight")
+                .setFieldType(Schema.SchemaFieldType.INTEGER)
+                .setVInt32(windowClientHeight)
+                .build(),
+            Trace.KeyValue.newBuilder()
+                .setKey("DontCountHits")
+                .setFieldType(Schema.SchemaFieldType.BOOLEAN)
+                .setVBool(dontCountHits)
+                .build(),
+            Trace.KeyValue.newBuilder()
+                .setKey("IsRefresh")
+                .setFieldType(Schema.SchemaFieldType.BOOLEAN)
+                .setVBool(isRefresh)
+                .build()));
   }
 
   private static final class CompatibilityServer implements AutoCloseable {

@@ -65,6 +65,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.opensearch.search.aggregations.InternalAggregations;
+import org.opensearch.search.aggregations.bucket.terms.InternalMultiTerms;
 import org.opensearch.search.aggregations.bucket.terms.StringTerms;
 import org.opensearch.search.aggregations.metrics.InternalValueCount;
 
@@ -1379,6 +1380,131 @@ public class AstraDistributedQueryServiceTest {
     distributedQueryService.close();
   }
 
+  @Test
+  public void testDistributedSearchSupportsMultiTermsAggregationWithBucketSort() throws Exception {
+    Instant start = Instant.parse("2026-05-18T03:00:00Z");
+    Instant node1End = start.plusSeconds(10);
+    Instant node2Start = node1End.plusMillis(1);
+    Instant end = node2Start.plusSeconds(10);
+
+    datasetMetadataStore.createSync(
+        new DatasetMetadata(
+            MessageUtil.TEST_DATASET_NAME,
+            "testOwner",
+            1,
+            List.of(
+                new DatasetPartitionMetadata(
+                    start.toEpochMilli(), end.toEpochMilli(), List.of("1", "2"))),
+            MessageUtil.TEST_DATASET_NAME));
+    await().until(() -> AstraMetadataTestUtils.listSyncUncached(datasetMetadataStore).size() == 1);
+
+    createIndexerZKMetadata(start, node1End, "1", indexer1SearchContext);
+    createIndexerZKMetadata(node2Start, end, "2", indexer2SearchContext);
+    await().until(() -> AstraMetadataTestUtils.listSyncUncached(snapshotMetadataStore).size() == 4);
+    await().until(() -> AstraMetadataTestUtils.listSyncUncached(searchMetadataStore).size() == 2);
+
+    List<Trace.Span> node1Spans =
+        List.of(
+            makeWindowSpan(1, start.plusMillis(1), 62, 1024, 768, false, false),
+            makeWindowSpan(2, start.plusMillis(2), 62, 1024, 768, false, false),
+            makeWindowSpan(3, start.plusMillis(3), 62, 1440, 900, false, false),
+            makeWindowSpan(4, start.plusMillis(4), 62, 800, 600, false, false),
+            makeWindowSpan(5, start.plusMillis(5), 62, 1600, 900, false, true),
+            makeWindowSpan(6, start.plusMillis(6), 61, 2560, 1440, false, false));
+    List<Trace.Span> node2Spans =
+        List.of(
+            makeWindowSpan(7, node2Start.plusMillis(1), 62, 1024, 768, false, false),
+            makeWindowSpan(8, node2Start.plusMillis(2), 62, 1024, 768, false, false),
+            makeWindowSpan(9, node2Start.plusMillis(3), 62, 1440, 900, false, false),
+            makeWindowSpan(10, node2Start.plusMillis(4), 62, 1440, 900, false, false),
+            makeWindowSpan(11, node2Start.plusMillis(5), 62, 800, 600, false, false),
+            makeWindowSpan(12, node2Start.plusMillis(6), 62, 1920, 1080, true, false));
+
+    AstraDistributedQueryService distributedQueryService = createDistributedQueryService();
+    distributedQueryService.stubs.put(
+        indexer1SearchContext.toString(), mockSearchFutureStub(node1Spans));
+    distributedQueryService.stubs.put(
+        indexer2SearchContext.toString(), mockSearchFutureStub(node2Spans));
+
+    AstraSearch.SearchRequest request =
+        new OpenSearchRequest()
+            .parseSingleSearchRequest(
+                MessageUtil.TEST_DATASET_NAME,
+                """
+                {
+                  "size": 0,
+                  "query": {
+                    "bool": {
+                      "filter": [
+                        {
+                          "term": {
+                            "CounterID": 62
+                          }
+                        }
+                      ],
+                      "must_not": [
+                        {
+                          "term": {
+                            "DontCountHits": true
+                          }
+                        },
+                        {
+                          "term": {
+                            "IsRefresh": true
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "aggs": {
+                    "window_sizes": {
+                      "multi_terms": {
+                        "terms": [
+                          {
+                            "field": "WindowClientWidth"
+                          },
+                          {
+                            "field": "WindowClientHeight"
+                          }
+                        ],
+                        "size": 4,
+                        "order": {
+                          "_count": "desc"
+                        }
+                      },
+                      "aggs": {
+                        "page": {
+                          "bucket_sort": {
+                            "sort": [
+                              {
+                                "_count": {
+                                  "order": "desc"
+                                }
+                              }
+                            ],
+                            "from": 1,
+                            "size": 2
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+                """);
+
+    InternalAggregations aggregations =
+        SearchResultUtils.fromSearchResultProto(distributedQueryService.doSearch(request))
+            .internalAggregations;
+    InternalMultiTerms windowSizes = (InternalMultiTerms) aggregations.get("window_sizes");
+
+    assertThat(windowSizes.getBuckets()).hasSize(2);
+    assertThat(windowSizes.getBuckets().get(0).getKey()).containsExactly(1440L, 900L);
+    assertThat(windowSizes.getBuckets().get(0).getDocCount()).isEqualTo(3);
+    assertThat(windowSizes.getBuckets().get(1).getKey()).containsExactly(800L, 600L);
+    assertThat(windowSizes.getBuckets().get(1).getDocCount()).isEqualTo(2);
+    distributedQueryService.close();
+  }
+
   private String createIndexerZKMetadata(
       Instant chunkCreationTime,
       Instant chunkEndTime,
@@ -1521,6 +1647,46 @@ public class AstraDistributedQueryServiceTest {
                 .setKey(key)
                 .setFieldType(Schema.SchemaFieldType.KEYWORD)
                 .setVStr(value)
+                .build()));
+  }
+
+  private Trace.Span makeWindowSpan(
+      int id,
+      Instant timestamp,
+      int counterId,
+      int windowClientWidth,
+      int windowClientHeight,
+      boolean dontCountHits,
+      boolean isRefresh) {
+    return SpanUtil.makeSpan(
+        id,
+        "window-message-" + id,
+        timestamp,
+        List.of(
+            Trace.KeyValue.newBuilder()
+                .setKey("CounterID")
+                .setFieldType(Schema.SchemaFieldType.INTEGER)
+                .setVInt32(counterId)
+                .build(),
+            Trace.KeyValue.newBuilder()
+                .setKey("WindowClientWidth")
+                .setFieldType(Schema.SchemaFieldType.INTEGER)
+                .setVInt32(windowClientWidth)
+                .build(),
+            Trace.KeyValue.newBuilder()
+                .setKey("WindowClientHeight")
+                .setFieldType(Schema.SchemaFieldType.INTEGER)
+                .setVInt32(windowClientHeight)
+                .build(),
+            Trace.KeyValue.newBuilder()
+                .setKey("DontCountHits")
+                .setFieldType(Schema.SchemaFieldType.BOOLEAN)
+                .setVBool(dontCountHits)
+                .build(),
+            Trace.KeyValue.newBuilder()
+                .setKey("IsRefresh")
+                .setFieldType(Schema.SchemaFieldType.BOOLEAN)
+                .setVBool(isRefresh)
                 .build()));
   }
 
