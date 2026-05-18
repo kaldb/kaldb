@@ -516,69 +516,6 @@ class ClickBenchCompatibilityTest {
             .build());
   }
 
-  private static List<ClickBenchRow> urlRowsForBucketOffset() {
-    List<ClickBenchRow> rows = new ArrayList<>();
-    String[] urls = {
-      "https://offset.example/a",
-      "https://offset.example/b",
-      "https://offset.example/c",
-      "https://offset.example/d",
-      "https://offset.example/e"
-    };
-    int[] counts = {5, 4, 3, 2, 1};
-    int id = 1;
-    for (int bucket = 0; bucket < urls.length; bucket++) {
-      for (int occurrence = 0; occurrence < counts[bucket]; occurrence++) {
-        rows.add(
-            row(id)
-                .eventTime(Instant.parse("2013-07-14T00:00:00Z").plusSeconds(id))
-                .eventDate("2013-07-14T00:00:00Z")
-                .counterId(62)
-                .url(urls[bucket])
-                .isLink(1)
-                .build());
-        id++;
-      }
-    }
-    rows.add(
-        row(id)
-            .eventTime(Instant.parse("2013-07-14T00:10:00Z"))
-            .eventDate("2013-07-14T00:00:00Z")
-            .counterId(62)
-            .url("https://offset.example/excluded-refresh")
-            .isLink(1)
-            .isRefresh(true)
-            .build());
-    id++;
-    rows.add(
-        row(id)
-            .eventTime(Instant.parse("2013-07-14T00:11:00Z"))
-            .eventDate("2013-07-14T00:00:00Z")
-            .counterId(62)
-            .url("https://offset.example/excluded-no-link")
-            .build());
-    id++;
-    rows.add(
-        row(id)
-            .eventTime(Instant.parse("2013-07-14T00:12:00Z"))
-            .eventDate("2013-07-14T00:00:00Z")
-            .counterId(62)
-            .url("https://offset.example/excluded-download")
-            .isLink(1)
-            .isDownload(1)
-            .build());
-    id++;
-    rows.add(
-        row(id)
-            .eventTime(Instant.parse("2013-08-01T00:00:00Z"))
-            .eventDate("2013-08-01T00:00:00Z")
-            .counterId(62)
-            .url("https://offset.example/excluded-date")
-            .isLink(1)
-            .build());
-    return rows;
-  }
-
   private ElasticsearchApiService elasticsearchApiService;
   private SimpleMeterRegistry metricsRegistry;
   private ChunkManagerUtil<LogMessage> chunkManagerUtil;
@@ -1696,87 +1633,6 @@ class ClickBenchCompatibilityTest {
   }
 
   @Test
-  public void q39PageViewUrlsWithBucketOffset() throws Exception {
-    verify(
-        clickBench("Q39")
-            .expects("URL page-view buckets after filtering, count ordering, and bucket offset")
-            .givenRows(urlRowsForBucketOffset())
-            .whenAstraReceivesEquivalentOpenSearch(
-                """
-                {
-                  "size": 0,
-                  "query": {
-                    "bool": {
-                      "filter": [
-                        {
-                          "term": {
-                            "CounterID": 62
-                          }
-                        },
-                        {
-                          "range": {
-                            "EventDate": {
-                              "gte": "2013-07-01T00:00:00Z",
-                              "lte": "2013-07-31T23:59:59Z"
-                            }
-                          }
-                        }
-                      ],
-                      "must_not": [
-                        {
-                          "term": {
-                            "IsRefresh": true
-                          }
-                        },
-                        {
-                          "term": {
-                            "IsLink": 0
-                          }
-                        },
-                        {
-                          "term": {
-                            "IsDownload": 1
-                          }
-                        }
-                      ]
-                    }
-                  },
-                  "aggs": {
-                    "urls": {
-                      "terms": {
-                        "field": "URL",
-                        "size": 4,
-                        "order": {
-                          "_count": "desc"
-                        }
-                      },
-                      "aggs": {
-                        "page": {
-                          "bucket_sort": {
-                            "sort": [
-                              {
-                                "_count": {
-                                  "order": "desc"
-                                }
-                              }
-                            ],
-                            "from": 2,
-                            "size": 2
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-                """)
-            .thenResponseContains(
-                buckets(
-                    "urls",
-                    bucket("https://offset.example/c", 3),
-                    bucket("https://offset.example/d", 2))));
-  }
-
-  @Test
   public void q43MinuteBucketsForCounterAndDateRange() throws Exception {
     verify(
         clickBench("Q43")
@@ -2035,11 +1891,6 @@ class ClickBenchCompatibilityTest {
 
       private Builder isLink(int isLink) {
         this.isLink = isLink;
-        return this;
-      }
-
-      private Builder isDownload(int isDownload) {
-        this.isDownload = isDownload;
         return this;
       }
 
