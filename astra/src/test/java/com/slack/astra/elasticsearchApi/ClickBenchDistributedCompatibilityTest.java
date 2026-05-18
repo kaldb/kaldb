@@ -186,10 +186,47 @@ class ClickBenchDistributedCompatibilityTest {
     return rows;
   }
 
+  private static List<ClickBenchRow> q42Rows() {
+    List<ClickBenchRow> rows = new ArrayList<>();
+    addMinuteRows(rows, 1, 1, "2013-07-14T00:00:00Z", 3);
+    addMinuteRows(rows, 4, 1, "2013-07-14T00:01:00Z", 2);
+    addMinuteRows(rows, 6, 1, "2013-07-14T00:02:00Z", 1);
+    addMinuteRows(rows, 7, 1, "2013-07-14T00:03:00Z", 1);
+    addMinuteRows(rows, 8, 2, "2013-07-14T00:00:00Z", 2);
+    addMinuteRows(rows, 10, 2, "2013-07-14T00:01:00Z", 2);
+    addMinuteRows(rows, 12, 2, "2013-07-14T00:02:00Z", 2);
+    addMinuteRows(rows, 14, 2, "2013-07-14T00:03:00Z", 1);
+    rows.add(
+        row(15).node(1).eventTime(Instant.parse("2013-07-14T00:04:00Z")).isRefresh(true).build());
+    rows.add(
+        row(16)
+            .node(1)
+            .eventTime(Instant.parse("2013-07-14T00:04:00Z"))
+            .dontCountHits(true)
+            .build());
+    rows.add(
+        row(17).node(2).eventTime(Instant.parse("2013-07-14T00:04:00Z")).counterId(61).build());
+    rows.add(
+        row(18)
+            .node(2)
+            .eventTime(Instant.parse("2013-07-14T00:04:00Z"))
+            .eventDate("2013-08-01T00:00:00Z")
+            .build());
+    return rows;
+  }
+
   private static void addUrlRows(
       List<ClickBenchRow> rows, int firstId, int node, String url, int count) {
     for (int i = 0; i < count; i++) {
       rows.add(row(firstId + i).node(node).url(url).build());
+    }
+  }
+
+  private static void addMinuteRows(
+      List<ClickBenchRow> rows, int firstId, int node, String eventTime, int count) {
+    Instant minute = Instant.parse(eventTime);
+    for (int i = 0; i < count; i++) {
+      rows.add(row(firstId + i).node(node).eventTime(minute.plusSeconds(i)).build());
     }
   }
 
@@ -647,6 +684,85 @@ class ClickBenchDistributedCompatibilityTest {
                     "window_sizes", bucket(List.of(800, 600), 3), bucket(List.of(1920, 1080), 2))));
   }
 
+  @Test
+  public void q42MinuteBucketsWithBucketOffset() throws Exception {
+    verify(
+        clickBench("Q42")
+            .expects(
+                "minute page-view buckets after Q42 filters, key ordering, and scaled bucket"
+                    + " offset")
+            .givenRows(q42Rows())
+            .whenAstraReceivesEquivalentOpenSearch(
+                """
+                {
+                  "size": 0,
+                  "query": {
+                    "bool": {
+                      "filter": [
+                        {
+                          "term": {
+                            "CounterID": 62
+                          }
+                        },
+                        {
+                          "range": {
+                            "EventDate": {
+                              "gte": "2013-07-14T00:00:00Z",
+                              "lte": "2013-07-15T23:59:59Z"
+                            }
+                          }
+                        }
+                      ],
+                      "must_not": [
+                        {
+                          "term": {
+                            "IsRefresh": true
+                          }
+                        },
+                        {
+                          "term": {
+                            "DontCountHits": true
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "aggs": {
+                    "minutes": {
+                      "date_histogram": {
+                        "field": "@timestamp",
+                        "interval": "1m",
+                        "min_doc_count": 1,
+                        "order": {
+                          "_key": "asc"
+                        }
+                      },
+                      "aggs": {
+                        "page": {
+                          "bucket_sort": {
+                            "sort": [
+                              {
+                                "_key": {
+                                  "order": "asc"
+                                }
+                              }
+                            ],
+                            "from": 2,
+                            "size": 2
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+                """)
+            .thenResponseContains(
+                buckets(
+                    "minutes",
+                    bucket(Instant.parse("2013-07-14T00:02:00Z").toEpochMilli(), 3),
+                    bucket(Instant.parse("2013-07-14T00:03:00Z").toEpochMilli(), 2))));
+  }
+
   private void verify(ClickBenchSpec spec) throws Exception {
     registerRows(spec.rows());
     AstraServiceGrpc.AstraServiceFutureStub node1Stub = mockSearchFutureStub(spans(spec.rows(), 1));
@@ -834,6 +950,11 @@ class ClickBenchDistributedCompatibilityTest {
 
       private Builder node(int node) {
         this.node = node;
+        return this;
+      }
+
+      private Builder eventTime(Instant eventTime) {
+        this.eventTime = eventTime;
         return this;
       }
 
