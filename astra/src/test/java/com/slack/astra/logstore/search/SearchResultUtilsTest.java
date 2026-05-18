@@ -55,6 +55,39 @@ public class SearchResultUtilsTest {
   }
 
   @Test
+  public void shouldParseHitSortSpecs() {
+    List<SearchQuery.SortFieldSpec> sortFieldSpecs =
+        SearchResultUtils.parseSortFieldSpecs(
+            """
+            [
+              {
+                "@timestamp": {
+                  "order": "desc",
+                  "unmapped_type": "boolean"
+                }
+              },
+              {
+                "SearchPhrase": {}
+              },
+              {
+                "WindowClientWidth": "desc"
+              },
+              {
+                "_doc": {
+                  "order": "desc"
+                }
+              }
+            ]
+            """);
+
+    assertThat(sortFieldSpecs)
+        .containsExactly(
+            new SearchQuery.SortFieldSpec("_timesinceepoch", SearchQuery.SortDirection.DESC),
+            new SearchQuery.SortFieldSpec("SearchPhrase", SearchQuery.SortDirection.ASC),
+            new SearchQuery.SortFieldSpec("WindowClientWidth", SearchQuery.SortDirection.DESC));
+  }
+
+  @Test
   public void shouldParseAggIntoAggregationFactoriesBuilder() {
     AstraSearch.SearchRequest searchRequest =
         AstraSearch.SearchRequest.newBuilder()

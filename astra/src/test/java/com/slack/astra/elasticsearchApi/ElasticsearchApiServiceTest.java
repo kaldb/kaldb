@@ -846,6 +846,149 @@ public class ElasticsearchApiServiceTest {
   }
 
   @Test
+  public void testSingleSearchReturnsHitsSortedByRequestedField() throws Exception {
+    Instant start = Instant.parse("2026-05-18T04:00:00Z");
+    addMessagesToChunkManager(
+        List.of(
+            makeWindowSpan(1, start.plusSeconds(1), 62, 1024, 768, false, false, "bravo"),
+            makeWindowSpan(2, start.plusSeconds(2), 62, 800, 600, false, false, "charlie"),
+            makeWindowSpan(3, start.plusSeconds(3), 62, 1440, 900, false, false, "alpha")));
+
+    String postBody =
+        """
+        {
+          "size": 3,
+          "query": {
+            "term": {
+              "CounterID": 62
+            }
+          },
+          "sort": [
+            {
+              "WindowClientWidth": {
+                "order": "asc"
+              }
+            }
+          ]
+        }
+        """;
+    JsonNode jsonNode = searchJson(postBody);
+
+    assertThat(jsonNode.findValue("hits").get("hits").size()).isEqualTo(3);
+    assertThat(
+            jsonNode
+                .findValue("hits")
+                .get("hits")
+                .get(0)
+                .get("_source")
+                .get("WindowClientWidth")
+                .asInt())
+        .isEqualTo(800);
+    assertThat(jsonNode.findValue("hits").get("hits").get(0).get("sort").get(0).asInt())
+        .isEqualTo(800);
+    assertThat(
+            jsonNode
+                .findValue("hits")
+                .get("hits")
+                .get(1)
+                .get("_source")
+                .get("WindowClientWidth")
+                .asInt())
+        .isEqualTo(1024);
+    assertThat(
+            jsonNode
+                .findValue("hits")
+                .get("hits")
+                .get(2)
+                .get("_source")
+                .get("WindowClientWidth")
+                .asInt())
+        .isEqualTo(1440);
+
+    String stringSortPostBody =
+        """
+        {
+          "size": 3,
+          "query": {
+            "term": {
+              "CounterID": 62
+            }
+          },
+          "sort": [
+            {
+              "SearchPhrase": {
+                "order": "asc"
+              }
+            }
+          ]
+        }
+        """;
+    JsonNode stringSortJsonNode = searchJson(stringSortPostBody);
+
+    assertThat(
+            stringSortJsonNode
+                .findValue("hits")
+                .get("hits")
+                .get(0)
+                .get("_source")
+                .get("SearchPhrase")
+                .asText())
+        .isEqualTo("alpha");
+    assertThat(stringSortJsonNode.findValue("hits").get("hits").get(0).get("sort").get(0).asText())
+        .isEqualTo("alpha");
+    assertThat(
+            stringSortJsonNode
+                .findValue("hits")
+                .get("hits")
+                .get(1)
+                .get("_source")
+                .get("SearchPhrase")
+                .asText())
+        .isEqualTo("bravo");
+    assertThat(
+            stringSortJsonNode
+                .findValue("hits")
+                .get("hits")
+                .get(2)
+                .get("_source")
+                .get("SearchPhrase")
+                .asText())
+        .isEqualTo("charlie");
+
+    String pagedStringSortPostBody =
+        """
+        {
+          "from": 1,
+          "size": 1,
+          "query": {
+            "term": {
+              "CounterID": 62
+            }
+          },
+          "sort": [
+            {
+              "SearchPhrase": {
+                "order": "asc"
+              }
+            }
+          ]
+        }
+        """;
+    JsonNode pagedStringSortJsonNode = searchJson(pagedStringSortPostBody);
+
+    assertThat(pagedStringSortJsonNode.findValue("hits").get("hits").size()).isEqualTo(1);
+    assertThat(
+            pagedStringSortJsonNode
+                .findValue("hits")
+                .get("hits")
+                .get(0)
+                .get("_source")
+                .get("SearchPhrase")
+                .asText())
+        .isEqualTo("bravo");
+  }
+
+  @Test
   public void testLargeSetOfQueries() throws Exception {
     addMessagesToChunkManager(SpanUtil.makeSpansWithTimeDifference(1, 100, 1, Instant.now()));
     String postBody = readResource("elasticsearchApi/multisearch_query_10results.ndjson");
@@ -1183,6 +1326,14 @@ public class ElasticsearchApiServiceTest {
     return Resources.toString(Resources.getResource(resourcePath), StandardCharsets.UTF_8);
   }
 
+  private JsonNode searchJson(String postBody) throws Exception {
+    HttpResponse response = elasticsearchApiService.search(TEST_DATASET_NAME, postBody);
+    AggregatedHttpResponse aggregatedRes = response.aggregate().join();
+
+    assertThat(aggregatedRes.status().code()).isEqualTo(200);
+    return OBJECT_MAPPER.readTree(aggregatedRes.content(StandardCharsets.UTF_8));
+  }
+
   private static DatasetMetadata datasetMetadata(String name) {
     return new DatasetMetadata(name, "test-owner", 0, List.of(), name);
   }
@@ -1195,6 +1346,26 @@ public class ElasticsearchApiServiceTest {
       int windowClientHeight,
       boolean dontCountHits,
       boolean isRefresh) {
+    return makeWindowSpan(
+        id,
+        timestamp,
+        counterId,
+        windowClientWidth,
+        windowClientHeight,
+        dontCountHits,
+        isRefresh,
+        "search-phrase-" + id);
+  }
+
+  private Trace.Span makeWindowSpan(
+      int id,
+      Instant timestamp,
+      int counterId,
+      int windowClientWidth,
+      int windowClientHeight,
+      boolean dontCountHits,
+      boolean isRefresh,
+      String searchPhrase) {
     return SpanUtil.makeSpan(
         id,
         "window-message-" + id,
@@ -1224,6 +1395,11 @@ public class ElasticsearchApiServiceTest {
                 .setKey("IsRefresh")
                 .setFieldType(Schema.SchemaFieldType.BOOLEAN)
                 .setVBool(isRefresh)
+                .build(),
+            Trace.KeyValue.newBuilder()
+                .setKey("SearchPhrase")
+                .setFieldType(Schema.SchemaFieldType.KEYWORD)
+                .setVStr(searchPhrase)
                 .build()));
   }
 

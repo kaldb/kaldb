@@ -193,6 +193,37 @@ public class OpenSearchRequestTest {
   }
 
   @Test
+  public void testGetSortJson() throws Exception {
+    String searchBody =
+        """
+        {
+          "size": 5,
+          "from": 2,
+          "sort": [
+            {
+              "WindowClientWidth": {
+                "order": "asc"
+              }
+            },
+            {
+              "_doc": {
+                "order": "desc"
+              }
+            }
+          ]
+        }
+        """;
+
+    OpenSearchRequest openSearchRequest = new OpenSearchRequest();
+    AstraSearch.SearchRequest request =
+        openSearchRequest.parseSingleSearchRequest("test", searchBody);
+
+    JsonNode parsedRequest = OBJECT_MAPPER.readTree(searchBody);
+    assertThat(request.getSortJson()).isEqualTo(parsedRequest.get("sort").toString());
+    assertThat(request.getStartFrom()).isEqualTo(2);
+  }
+
+  @Test
   public void testExplicitEmptyAggsTakesPrecedenceOverAggregations() throws Exception {
     String searchBody =
         """

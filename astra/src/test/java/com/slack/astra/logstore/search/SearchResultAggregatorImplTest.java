@@ -27,6 +27,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.BeforeEach;
@@ -189,6 +190,88 @@ public class SearchResultAggregatorImplTest {
                 .getSum())
         .isEqualTo(messages1.size() + messages2.size());
     assertThat(internalDateHistogram.getBuckets().size()).isEqualTo(bucketCount);
+  }
+
+  @Test
+  public void testSearchResultAggregatorHonorsRequestedHitSort() {
+    Instant baseTime = Instant.parse("2026-05-18T05:00:00Z");
+    SearchResult<LogMessage> searchResult1 =
+        new SearchResult<>(
+            List.of(
+                new LogMessage(
+                    MessageUtil.TEST_DATASET_NAME,
+                    "_doc",
+                    "message-1",
+                    baseTime.plusSeconds(1),
+                    Map.of("WindowClientWidth", 1024)),
+                new LogMessage(
+                    MessageUtil.TEST_DATASET_NAME,
+                    "_doc",
+                    "message-2",
+                    baseTime.plusSeconds(2),
+                    Map.of("WindowClientWidth", 1440))),
+            10,
+            0,
+            1,
+            1,
+            0,
+            null);
+    SearchResult<LogMessage> searchResult2 =
+        new SearchResult<>(
+            List.of(
+                new LogMessage(
+                    MessageUtil.TEST_DATASET_NAME,
+                    "_doc",
+                    "message-3",
+                    baseTime.plusSeconds(3),
+                    Map.of("WindowClientWidth", 800))),
+            11,
+            0,
+            1,
+            1,
+            0,
+            null);
+
+    SearchQuery searchQuery =
+        new SearchQuery(
+            MessageUtil.TEST_DATASET_NAME,
+            baseTime.toEpochMilli(),
+            baseTime.plusSeconds(10).toEpochMilli(),
+            3,
+            0,
+            List.of(
+                new SearchQuery.SortFieldSpec("WindowClientWidth", SearchQuery.SortDirection.ASC)),
+            Collections.emptyList(),
+            null,
+            null,
+            null);
+
+    SearchResult<LogMessage> aggregatedResult =
+        new SearchResultAggregatorImpl<>(searchQuery)
+            .aggregate(List.of(searchResult1, searchResult2), true);
+
+    assertThat(aggregatedResult.hits.stream().map(LogMessage::getId).toList())
+        .containsExactly("message-3", "message-1", "message-2");
+
+    SearchQuery pagedSearchQuery =
+        new SearchQuery(
+            MessageUtil.TEST_DATASET_NAME,
+            baseTime.toEpochMilli(),
+            baseTime.plusSeconds(10).toEpochMilli(),
+            1,
+            1,
+            List.of(
+                new SearchQuery.SortFieldSpec("WindowClientWidth", SearchQuery.SortDirection.ASC)),
+            Collections.emptyList(),
+            null,
+            null,
+            null);
+    SearchResult<LogMessage> pagedAggregatedResult =
+        new SearchResultAggregatorImpl<>(pagedSearchQuery)
+            .aggregate(List.of(searchResult1, searchResult2), true);
+
+    assertThat(pagedAggregatedResult.hits.stream().map(LogMessage::getId).toList())
+        .containsExactly("message-1");
   }
 
   @Test

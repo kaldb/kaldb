@@ -149,9 +149,11 @@ public class OpenSearchRequest {
     return AstraSearch.SearchRequest.newBuilder()
         .setDataset(dataset)
         .setHowMany(getHowMany(body))
+        .setStartFrom(getStartFrom(body))
         .setQuery(query)
         .setSourceFieldFilter(getSourceFieldFilter(body))
         .setAggregationJson(getAggregationJson(body))
+        .setSortJson(getSortJson(body))
         .setStartTimeEpochMs(startTimeEpochMs)
         .setEndTimeEpochMs(endTimeEpochMs)
         .build();
@@ -352,12 +354,24 @@ public class OpenSearchRequest {
     return body.path("size").asInt(10);
   }
 
+  private static int getStartFrom(JsonNode body) {
+    return body.path("from").asInt(0);
+  }
+
   private static String getAggregationJson(JsonNode body) {
     JsonNode aggsNode = body.has("aggs") ? body.get("aggs") : body.get("aggregations");
     if (aggsNode == null || aggsNode.isEmpty()) {
       return "";
     }
     return aggsNode.toString();
+  }
+
+  private static String getSortJson(JsonNode body) {
+    JsonNode sortNode = body.get("sort");
+    if (sortNode == null || sortNode.isNull() || sortNode.isEmpty()) {
+      return "";
+    }
+    return sortNode.toString();
   }
 
   private static Long toEpochMillis(Object value, String format, String timeZone, boolean roundUp) {

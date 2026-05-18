@@ -6,7 +6,6 @@ import com.slack.astra.logstore.LogMessage;
 import com.slack.astra.logstore.opensearch.AstraBigArrays;
 import com.slack.astra.logstore.opensearch.ScriptServiceProvider;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Collectors;
 import org.opensearch.search.aggregations.InternalAggregation;
@@ -80,9 +79,8 @@ public class SearchResultAggregatorImpl<T extends LogMessage> implements SearchR
     List<T> resultHits =
         searchResults.stream()
             .flatMap(r -> r.hits.stream())
-            .sorted(
-                Comparator.comparing(
-                    (T m) -> m.getTimestamp().toEpochMilli(), Comparator.reverseOrder()))
+            .sorted(searchQuery.hitComparator())
+            .skip(searchQuery.startFrom)
             .limit(searchQuery.howMany)
             .collect(Collectors.toList());
 
