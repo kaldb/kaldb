@@ -149,6 +149,24 @@ class ClickBenchDistributedCompatibilityTest {
     return rows;
   }
 
+  private static List<ClickBenchRow> q41Rows() {
+    List<ClickBenchRow> rows = new ArrayList<>();
+    addUrlHashDateRows(rows, 1, 1, 1001L, "2013-07-14T00:00:00Z", 3);
+    addUrlHashDateRows(rows, 4, 1, 2002L, "2013-07-14T00:00:00Z", 1);
+    addUrlHashDateRows(rows, 5, 1, 3003L, "2013-07-14T00:00:00Z", 2);
+    addUrlHashDateRows(rows, 7, 1, 4004L, "2013-07-14T00:00:00Z", 1);
+    addUrlHashDateRows(rows, 8, 2, 1001L, "2013-07-14T00:00:00Z", 2);
+    addUrlHashDateRows(rows, 10, 2, 2002L, "2013-07-14T00:00:00Z", 3);
+    addUrlHashDateRows(rows, 13, 2, 3003L, "2013-07-14T00:00:00Z", 1);
+    addUrlHashDateRows(rows, 14, 2, 4004L, "2013-07-14T00:00:00Z", 1);
+    rows.add(row(15).node(1).urlHash(9009L).isRefresh(true).build());
+    rows.add(row(16).node(1).urlHash(9009L).traficSourceId(2).build());
+    rows.add(row(17).node(2).urlHash(9009L).refererHash(1L).build());
+    rows.add(row(18).node(2).urlHash(9009L).eventDate("2013-08-01T00:00:00Z").build());
+    rows.add(row(19).node(2).urlHash(9009L).counterId(61).build());
+    return rows;
+  }
+
   private static List<ClickBenchRow> q42Rows() {
     List<ClickBenchRow> rows = new ArrayList<>();
     addWindowRows(rows, 1, 1, 1024, 768, 3);
@@ -171,6 +189,13 @@ class ClickBenchDistributedCompatibilityTest {
       List<ClickBenchRow> rows, int firstId, int node, String url, int count) {
     for (int i = 0; i < count; i++) {
       rows.add(row(firstId + i).node(node).url(url).build());
+    }
+  }
+
+  private static void addUrlHashDateRows(
+      List<ClickBenchRow> rows, int firstId, int node, long urlHash, String eventDate, int count) {
+    for (int i = 0; i < count; i++) {
+      rows.add(row(firstId + i).node(node).urlHash(urlHash).eventDate(eventDate).build());
     }
   }
 
@@ -444,6 +469,96 @@ class ClickBenchDistributedCompatibilityTest {
   }
 
   @Test
+  public void q41UrlHashDatesWithBucketOffset() throws Exception {
+    verify(
+        clickBench("Q41")
+            .expects(
+                "URL-hash date buckets after Q41 filters, count ordering, and scaled bucket"
+                    + " offset")
+            .givenRows(q41Rows())
+            .whenAstraReceivesEquivalentOpenSearch(
+                """
+                {
+                  "size": 0,
+                  "query": {
+                    "bool": {
+                      "filter": [
+                        {
+                          "term": {
+                            "CounterID": 62
+                          }
+                        },
+                        {
+                          "range": {
+                            "EventDate": {
+                              "gte": "2013-07-01T00:00:00Z",
+                              "lte": "2013-07-31T23:59:59Z"
+                            }
+                          }
+                        },
+                        {
+                          "terms": {
+                            "TraficSourceID": [-1, 6]
+                          }
+                        },
+                        {
+                          "term": {
+                            "RefererHash": 3594120000172545465
+                          }
+                        }
+                      ],
+                      "must_not": [
+                        {
+                          "term": {
+                            "IsRefresh": true
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "aggs": {
+                    "url_hash_dates": {
+                      "multi_terms": {
+                        "terms": [
+                          {
+                            "field": "URLHash"
+                          },
+                          {
+                            "field": "EventDate"
+                          }
+                        ],
+                        "size": 4,
+                        "order": {
+                          "_count": "desc"
+                        }
+                      },
+                      "aggs": {
+                        "page": {
+                          "bucket_sort": {
+                            "sort": [
+                              {
+                                "_count": {
+                                  "order": "desc"
+                                }
+                              }
+                            ],
+                            "from": 2,
+                            "size": 2
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+                """)
+            .thenResponseContains(
+                buckets(
+                    "url_hash_dates",
+                    bucket(List.of(3003L, "2013-07-14T00:00:00.000Z"), 3),
+                    bucket(List.of(4004L, "2013-07-14T00:00:00.000Z"), 2))));
+  }
+
+  @Test
   public void q42WindowSizesWithBucketOffset() throws Exception {
     verify(
         clickBench("Q42")
@@ -659,6 +774,8 @@ class ClickBenchDistributedCompatibilityTest {
             integerField("IsDownload", row.isDownload()),
             booleanField("DontCountHits", row.dontCountHits()),
             longField("URLHash", row.urlHash()),
+            integerField("TraficSourceID", row.traficSourceId()),
+            longField("RefererHash", row.refererHash()),
             integerField("WindowClientWidth", row.windowClientWidth()),
             integerField("WindowClientHeight", row.windowClientHeight())));
   }
@@ -689,6 +806,8 @@ class ClickBenchDistributedCompatibilityTest {
       int isDownload,
       boolean dontCountHits,
       long urlHash,
+      int traficSourceId,
+      long refererHash,
       int windowClientWidth,
       int windowClientHeight) {
     private static final class Builder {
@@ -703,6 +822,8 @@ class ClickBenchDistributedCompatibilityTest {
       private int isDownload;
       private boolean dontCountHits;
       private long urlHash = 2868770270353813622L;
+      private int traficSourceId = 6;
+      private long refererHash = 3594120000172545465L;
       private int windowClientWidth = 1024;
       private int windowClientHeight = 768;
 
@@ -755,6 +876,16 @@ class ClickBenchDistributedCompatibilityTest {
         return this;
       }
 
+      private Builder traficSourceId(int traficSourceId) {
+        this.traficSourceId = traficSourceId;
+        return this;
+      }
+
+      private Builder refererHash(long refererHash) {
+        this.refererHash = refererHash;
+        return this;
+      }
+
       private Builder windowSize(int windowClientWidth, int windowClientHeight) {
         this.windowClientWidth = windowClientWidth;
         this.windowClientHeight = windowClientHeight;
@@ -775,6 +906,8 @@ class ClickBenchDistributedCompatibilityTest {
             isDownload,
             dontCountHits,
             urlHash,
+            traficSourceId,
+            refererHash,
             windowClientWidth,
             windowClientHeight);
       }
