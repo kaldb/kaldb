@@ -156,9 +156,16 @@
           <input type="text" name="name" readonly>
         </label>
         <div class="summary-card" id="partition-current-summary"></div>
-        <label>Throughput (bytes)
+        <label>Throughput (bytes/sec)
           <input type="number" name="throughput_bytes" value="0" min="0">
-          <span class="field-help">Set a non-negative throughput limit. Zero is valid and means no reserved throughput.</span>
+          <span class="field-help">Set a non-negative throughput limit in bytes/sec. Zero is valid and means no reserved throughput.</span>
+        </label>
+        <label>Partition Mode
+          <select name="partition_mode">
+            <option value="shared">Use shared partitions</option>
+            <option value="dedicated">Require dedicated partitions</option>
+          </select>
+          <span class="field-help">Dedicated mode reserves each assigned partition for this dataset only. Shared mode allows datasets to co-exist on the same partition.</span>
         </label>
         <label>Assignment Strategy
           <select name="assignment_strategy">
@@ -166,14 +173,6 @@
             <option value="manual">Set exact partition IDs</option>
           </select>
           <span class="field-help">Auto-assignment plans partitions from the catalog. Manual assignment validates the exact shard IDs you enter.</span>
-        </label>
-        <label>Partition Mode
-          <select name="partition_mode">
-            <option value="preserve">Keep current mode</option>
-            <option value="shared">Use shared partitions</option>
-            <option value="dedicated">Require dedicated partitions</option>
-          </select>
-          <span class="field-help">Dedicated mode reserves each assigned partition for this dataset only. Shared mode allows datasets to co-exist on the same partition.</span>
         </label>
         <label id="partition-ids-field">Partition IDs (comma-separated)
           <input type="text" name="partition_ids">
@@ -200,9 +199,9 @@
           <input type="text" name="partition_id" required>
           <span class="field-help">Canonical numeric partition identifier, for example <code>7</code>.</span>
         </label>
-        <label>Max Capacity (bytes)
-          <input type="number" name="max_capacity" min="1" required>
-          <span class="field-help">Hard per-partition capacity ceiling used by shard auto-assignment.</span>
+        <label>Max Capacity (bytes/sec)
+          <input type="number" name="max_capacity" min="1" placeholder="4000000" required>
+          <span class="field-help">Hard per-partition capacity ceiling in bytes/sec used by shard auto-assignment. Example: 4000000 bytes/sec.</span>
         </label>
         <div class="modal-actions">
           <button type="button" class="btn" data-dismiss="modal">Cancel</button>
