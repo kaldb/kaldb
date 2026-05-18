@@ -1,5 +1,6 @@
 package com.slack.astra.logstore.opensearch;
 
+import static com.slack.astra.testlib.TemporaryLogStoreAndSearcherExtension.search;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -214,11 +215,11 @@ public class OpenSearchAdapterTest {
     logStoreAndSearcherRule.logStore.refresh();
 
     SearchResult<LogMessage> searchResult =
-        logStoreAndSearcherRule.logSearcher.search("foo", 10, null, null, null);
+        search(logStoreAndSearcherRule.logSearcher, "foo", 10, null, null, null);
 
     assertThat(searchResult.hits).hasSize(1);
-    assertThat(searchResult.hits.get(0).getIndex()).isEqualTo("foo");
-    assertThat(searchResult.hits.get(0).getSource())
+    assertThat(searchResult.hits.get(0).message().getIndex()).isEqualTo("foo");
+    assertThat(searchResult.hits.get(0).message().getSource())
         .containsEntry(LogMessage.ReservedField.SERVICE_NAME.fieldName, "foo");
   }
 

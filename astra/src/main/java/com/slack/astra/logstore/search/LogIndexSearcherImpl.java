@@ -6,10 +6,12 @@ import static com.slack.astra.util.ArgValidationUtils.ensureTrue;
 import brave.ScopedSpan;
 import brave.Tracing;
 import com.google.common.base.Stopwatch;
+import com.google.protobuf.ByteString;
 import com.slack.astra.logstore.LogMessage;
 import com.slack.astra.logstore.LogMessage.SystemField;
 import com.slack.astra.logstore.LogWireMessage;
 import com.slack.astra.logstore.opensearch.OpenSearchAdapter;
+import com.slack.astra.metadata.schema.FieldType;
 import com.slack.astra.metadata.schema.LuceneFieldDef;
 import com.slack.astra.util.JsonUtil;
 import java.io.IOException;
@@ -21,6 +23,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import org.apache.lucene.search.Collector;
+import org.apache.lucene.search.FieldDoc;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.MultiCollector;
 import org.apache.lucene.search.Query;
@@ -31,8 +34,8 @@ import org.apache.lucene.search.Sort;
 import org.apache.lucene.search.SortField;
 import org.apache.lucene.search.SortField.Type;
 import org.apache.lucene.search.TopFieldCollector;
-import org.opensearch.index.query.QueryBuilder;
-import org.opensearch.search.aggregations.AggregatorFactories;
+import org.apache.lucene.search.TopFieldDocs;
+import org.apache.lucene.util.BytesRef;
 import org.opensearch.search.aggregations.InternalAggregations;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -46,6 +49,7 @@ public class LogIndexSearcherImpl implements LogIndexSearcher<LogMessage> {
 
   private final SearcherManager searcherManager;
 
+  private final ConcurrentHashMap<String, LuceneFieldDef> chunkSchema;
   private final OpenSearchAdapter openSearchAdapter;
 
   private final ReferenceManager.RefreshListener refreshListener;
@@ -55,6 +59,7 @@ public class LogIndexSearcherImpl implements LogIndexSearcher<LogMessage> {
   public LogIndexSearcherImpl(
       AstraSearcherManager astraSearcherManager,
       ConcurrentHashMap<String, LuceneFieldDef> chunkSchema) {
+    this.chunkSchema = chunkSchema;
     this.openSearchAdapter = new OpenSearchAdapter(chunkSchema);
     this.refreshListener =
         new ReferenceManager.RefreshListener() {
@@ -84,42 +89,42 @@ public class LogIndexSearcherImpl implements LogIndexSearcher<LogMessage> {
   }
 
   @Override
-  public SearchResult<LogMessage> search(
-      String dataset,
-      int howMany,
-      QueryBuilder queryBuilder,
-      SourceFieldFilter sourceFieldFilter,
-      AggregatorFactories.Builder aggregatorFactoriesBuilder) {
+  public SearchResult<LogMessage> search(SearchQuery searchQuery) {
+    int howMany = searchQuery.leafHowMany();
 
-    ensureNonEmptyString(dataset, "dataset should be a non-empty string");
+    ensureNonEmptyString(searchQuery.dataset, "dataset should be a non-empty string");
     ensureTrue(howMany >= 0, "hits requested should not be negative.");
     ensureTrue(
-        howMany > 0 || aggregatorFactoriesBuilder != null,
+        howMany > 0 || searchQuery.aggregatorFactoriesBuilder != null,
         "Hits or aggregation should be requested.");
 
     ScopedSpan span = Tracing.currentTracer().startScopedSpan("LogIndexSearcherImpl.search");
-    span.tag("dataset", dataset);
+    span.tag("dataset", searchQuery.dataset);
     span.tag("howMany", String.valueOf(howMany));
 
     Stopwatch elapsedTime = Stopwatch.createStarted();
+    SearchQuery.HitSortPlan hitSortPlan = searchQuery.hitSortPlan;
     try {
       // Acquire an index searcher from searcher manager.
       // This is a useful optimization for indexes that are static.
       IndexSearcher searcher = searcherManager.acquire();
 
       try {
-        List<LogMessage> results;
+        List<SearchResultHit<LogMessage>> results;
         InternalAggregations internalAggregations = null;
-        Query query = openSearchAdapter.buildQuery(searcher, dataset, queryBuilder);
+        Query query =
+            openSearchAdapter.buildQuery(searcher, searchQuery.dataset, searchQuery.queryBuilder);
         OpenSearchAdapter.AggregationExecution aggregationExecution =
-            aggregatorFactoriesBuilder == null
+            searchQuery.aggregatorFactoriesBuilder == null
                 ? null
                 : openSearchAdapter.createAggregationExecution(
-                    aggregatorFactoriesBuilder, searcher, query);
+                    searchQuery.aggregatorFactoriesBuilder, searcher, query);
         TopFieldCollector topFieldCollector =
             howMany > 0
                 ? buildTopFieldCollector(
-                    howMany, aggregationExecution != null ? Integer.MAX_VALUE : howMany)
+                    howMany,
+                    aggregationExecution != null ? Integer.MAX_VALUE : howMany,
+                    hitSortPlan)
                 : null;
 
         Collector collector =
@@ -129,10 +134,16 @@ public class LogIndexSearcherImpl implements LogIndexSearcher<LogMessage> {
         searcher.search(query, collector);
 
         if (topFieldCollector != null) {
-          ScoreDoc[] hits = topFieldCollector.topDocs().scoreDocs;
+          TopFieldDocs topDocs = topFieldCollector.topDocs();
+          ScoreDoc[] hits = topDocs.scoreDocs;
           results = new ArrayList<>(hits.length);
           for (ScoreDoc hit : hits) {
-            results.add(buildLogMessage(searcher, hit, sourceFieldFilter));
+            FieldDoc fieldDoc = (FieldDoc) hit;
+            LogWireMessage wireMessage = buildLogWireMessage(searcher, fieldDoc);
+            results.add(
+                new SearchResultHit<>(
+                    buildLogMessage(wireMessage, searchQuery.sourceFieldFilter),
+                    sortValues(fieldDoc, hitSortPlan)));
           }
         } else {
           results = Collections.emptyList();
@@ -155,37 +166,63 @@ public class LogIndexSearcherImpl implements LogIndexSearcher<LogMessage> {
     }
   }
 
-  private LogMessage buildLogMessage(
-      IndexSearcher searcher, ScoreDoc hit, SourceFieldFilter sourceFieldFilter) {
+  private List<HitSortValue> sortValues(FieldDoc hit, SearchQuery.HitSortPlan hitSortPlan) {
+    List<SearchQuery.SortFieldSpec> sortFieldSpecs = hitSortPlan.effectiveSortFields();
+    List<HitSortValue> values = new ArrayList<>(sortFieldSpecs.size());
+    for (int i = 0; i < sortFieldSpecs.size(); i++) {
+      SearchQuery.SortFieldSpec sortFieldSpec = sortFieldSpecs.get(i);
+      values.add(sortValue(hit.fields[i], sortFieldSpec));
+    }
+    return values;
+  }
+
+  private HitSortValue sortValue(Object value, SearchQuery.SortFieldSpec sortFieldSpec) {
+    if (value instanceof BytesRef bytesRef) {
+      LuceneFieldDef fieldDef = chunkSchema.get(sortFieldSpec.field());
+      ByteString bytes = ByteString.copyFrom(bytesRef.bytes, bytesRef.offset, bytesRef.length);
+      if (SystemField.ID.fieldName.equals(sortFieldSpec.field())) {
+        return HitSortValue.bytes(bytes);
+      }
+      if (fieldDef != null && fieldDef.fieldType == FieldType.IP) {
+        return HitSortValue.ipAddress(bytes);
+      }
+      return HitSortValue.stringValue(bytesRef.utf8ToString());
+    }
+    return HitSortValue.of(value);
+  }
+
+  private LogWireMessage buildLogWireMessage(IndexSearcher searcher, ScoreDoc hit) {
     String s = "";
     try {
       s = searcher.doc(hit.doc).get(SystemField.SOURCE.fieldName);
-      LogWireMessage wireMessage = JsonUtil.read(s, LogWireMessage.class);
-      Map<String, Object> source = wireMessage.getSource();
-
-      if (sourceFieldFilter != null
-          && sourceFieldFilter.getFilterType() == SourceFieldFilter.FilterType.INCLUDE) {
-        source =
-            wireMessage.getSource().keySet().stream()
-                .filter(sourceFieldFilter::appliesToField)
-                .collect(Collectors.toMap((key) -> key, (key) -> wireMessage.getSource().get(key)));
-      } else if (sourceFieldFilter != null
-          && sourceFieldFilter.getFilterType() == SourceFieldFilter.FilterType.EXCLUDE) {
-        source =
-            wireMessage.getSource().keySet().stream()
-                .filter((key) -> !sourceFieldFilter.appliesToField(key))
-                .collect(Collectors.toMap((key) -> key, (key) -> wireMessage.getSource().get(key)));
-      }
-
-      return new LogMessage(
-          wireMessage.getIndex(),
-          wireMessage.getType(),
-          wireMessage.getId(),
-          wireMessage.getTimestamp(),
-          source);
+      return JsonUtil.read(s, LogWireMessage.class);
     } catch (Exception e) {
       throw new IllegalStateException("Error fetching and parsing a result from index: " + s, e);
     }
+  }
+
+  private LogMessage buildLogMessage(
+      LogWireMessage wireMessage, SourceFieldFilter sourceFieldFilter) {
+    Map<String, Object> source = wireMessage.getSource();
+
+    SourceFieldFilter.FilterType filterType =
+        sourceFieldFilter == null ? null : sourceFieldFilter.getFilterType();
+    if (filterType == SourceFieldFilter.FilterType.INCLUDE
+        || filterType == SourceFieldFilter.FilterType.EXCLUDE) {
+      boolean keepMatchingFields = filterType == SourceFieldFilter.FilterType.INCLUDE;
+      source =
+          source.entrySet().stream()
+              .filter(
+                  entry -> sourceFieldFilter.appliesToField(entry.getKey()) == keepMatchingFields)
+              .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+    }
+
+    return new LogMessage(
+        wireMessage.getIndex(),
+        wireMessage.getType(),
+        wireMessage.getId(),
+        wireMessage.getTimestamp(),
+        source);
   }
 
   /**
@@ -195,10 +232,65 @@ public class LogIndexSearcherImpl implements LogIndexSearcher<LogMessage> {
    * value can be set to equal howMany to allow early exiting (ScoreMode.TOP_SCORES), but should
    * only be done when all collectors are tolerant of an early exit.
    */
-  private TopFieldCollector buildTopFieldCollector(int howMany, int totalHitsThreshold)
-      throws IOException {
-    SortField sortField = new SortField(SystemField.TIME_SINCE_EPOCH.fieldName, Type.LONG, true);
-    return TopFieldCollector.create(new Sort(sortField), howMany, null, totalHitsThreshold);
+  private TopFieldCollector buildTopFieldCollector(
+      int howMany, int totalHitsThreshold, SearchQuery.HitSortPlan hitSortPlan) {
+    return TopFieldCollector.create(
+        new Sort(buildSortFields(hitSortPlan)), howMany, null, totalHitsThreshold);
+  }
+
+  private SortField[] buildSortFields(SearchQuery.HitSortPlan hitSortPlan) {
+    return hitSortPlan.effectiveSortFields().stream()
+        .map(this::buildSortField)
+        .toArray(SortField[]::new);
+  }
+
+  private SortField buildSortField(SearchQuery.SortFieldSpec sortFieldSpec) {
+    String fieldName = sortFieldSpec.field();
+    if (SystemField.TIME_SINCE_EPOCH.fieldName.equals(fieldName)) {
+      return setMissingSortValue(new SortField(fieldName, Type.LONG, sortFieldSpec.descending()));
+    }
+
+    LuceneFieldDef fieldDef = chunkSchema.get(fieldName);
+    if (fieldDef == null) {
+      return setMissingSortValue(new SortField(fieldName, Type.STRING, sortFieldSpec.descending()));
+    }
+    ensureTrue(fieldDef.storeDocValue, "Sort field must have doc values: " + fieldName);
+    return setMissingSortValue(
+        new SortField(
+            fieldName, toLuceneSortFieldType(fieldDef.fieldType), sortFieldSpec.descending()));
+  }
+
+  private SortField setMissingSortValue(SortField sortField) {
+    boolean useMinimumValue = sortField.getReverse();
+    switch (sortField.getType()) {
+      case STRING ->
+          sortField.setMissingValue(
+              useMinimumValue ? SortField.STRING_FIRST : SortField.STRING_LAST);
+      case INT ->
+          sortField.setMissingValue(useMinimumValue ? Integer.MIN_VALUE : Integer.MAX_VALUE);
+      case LONG -> sortField.setMissingValue(useMinimumValue ? Long.MIN_VALUE : Long.MAX_VALUE);
+      case FLOAT ->
+          sortField.setMissingValue(
+              useMinimumValue ? Float.NEGATIVE_INFINITY : Float.POSITIVE_INFINITY);
+      case DOUBLE ->
+          sortField.setMissingValue(
+              useMinimumValue ? Double.NEGATIVE_INFINITY : Double.POSITIVE_INFINITY);
+      default -> {
+        // No missing-value policy is available for this Lucene sort type.
+      }
+    }
+    return sortField;
+  }
+
+  private Type toLuceneSortFieldType(FieldType fieldType) {
+    return switch (fieldType) {
+      case DATE, LONG, SCALED_LONG -> Type.LONG;
+      case BOOLEAN, INTEGER, SHORT, BYTE -> Type.INT;
+      case FLOAT -> Type.FLOAT;
+      case DOUBLE -> Type.DOUBLE;
+      case KEYWORD, STRING, ID, IP -> Type.STRING;
+      default -> throw new IllegalArgumentException("Unsupported sort field type: " + fieldType);
+    };
   }
 
   @Override

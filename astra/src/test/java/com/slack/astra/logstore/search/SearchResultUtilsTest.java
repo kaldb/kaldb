@@ -5,6 +5,8 @@ import static com.slack.astra.logstore.search.SearchResultUtils.toValueProto;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 
+import com.google.protobuf.ByteString;
+import com.slack.astra.logstore.LogMessage;
 import com.slack.astra.metadata.schema.FieldType;
 import com.slack.astra.proto.schema.Schema;
 import com.slack.astra.proto.service.AstraSearch;
@@ -53,6 +55,220 @@ public class SearchResultUtilsTest {
     assertThatIllegalArgumentException()
         .isThrownBy(() -> SearchResultUtils.fromSearchRequest(searchRequest))
         .withMessage("hits requested should not be negative.");
+  }
+
+  @Test
+  void shouldRejectNegativeFrom() {
+    AstraSearch.SearchRequest searchRequest =
+        AstraSearch.SearchRequest.newBuilder()
+            .setDataset("test-data")
+            .setStartTimeEpochMs(0)
+            .setEndTimeEpochMs(1)
+            .setHowMany(1)
+            .setStartFrom(-1)
+            .build();
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> SearchResultUtils.fromSearchRequest(searchRequest))
+        .withMessage("from should not be negative.");
+  }
+
+  @Test
+  void shouldRejectFromPlusSizeOverflow() {
+    AstraSearch.SearchRequest searchRequest =
+        AstraSearch.SearchRequest.newBuilder()
+            .setDataset("test-data")
+            .setStartTimeEpochMs(0)
+            .setEndTimeEpochMs(1)
+            .setHowMany(2)
+            .setStartFrom(Integer.MAX_VALUE)
+            .build();
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> SearchResultUtils.fromSearchRequest(searchRequest))
+        .withMessage("from plus size is too large.");
+  }
+
+  @Test
+  void shouldParseHitSortSpecs() {
+    List<SearchQuery.SortFieldSpec> sortFieldSpecs =
+        SearchResultUtils.parseSortFieldSpecs(
+            """
+            [
+              {
+                "@timestamp": {
+                  "order": "desc",
+                  "unmapped_type": "boolean"
+                }
+              },
+              {
+                "SearchPhrase": {}
+              },
+              {
+                "WindowClientWidth": "desc"
+              },
+              {
+                "_doc": {
+                  "order": "desc"
+                }
+              }
+            ]
+            """);
+
+    assertThat(sortFieldSpecs)
+        .containsExactly(
+            new SearchQuery.SortFieldSpec("@timestamp", SearchQuery.SortDirection.DESC),
+            new SearchQuery.SortFieldSpec("SearchPhrase", SearchQuery.SortDirection.ASC),
+            new SearchQuery.SortFieldSpec("WindowClientWidth", SearchQuery.SortDirection.DESC));
+  }
+
+  @Test
+  void shouldReturnEmptyHitSortSpecsForMissingSortJson() {
+    assertThat(SearchResultUtils.parseSortFieldSpecs(null)).isEmpty();
+    assertThat(SearchResultUtils.parseSortFieldSpecs("")).isEmpty();
+    assertThat(SearchResultUtils.parseSortFieldSpecs("   ")).isEmpty();
+    assertThat(SearchResultUtils.parseSortFieldSpecs("[]")).isEmpty();
+  }
+
+  @Test
+  void shouldUseStableInternalSortFieldsWhenRequestOmitsSort() {
+    SearchQuery.HitSortPlan hitSortPlan = SearchQuery.HitSortPlan.fromRequested(List.of());
+
+    assertThat(hitSortPlan.requestedSortFields()).isEmpty();
+    assertThat(hitSortPlan.effectiveSortFields())
+        .containsExactly(
+            new SearchQuery.SortFieldSpec(
+                LogMessage.SystemField.TIME_SINCE_EPOCH.fieldName, SearchQuery.SortDirection.DESC),
+            new SearchQuery.SortFieldSpec(
+                LogMessage.SystemField.ID.fieldName, SearchQuery.SortDirection.ASC));
+  }
+
+  @Test
+  void shouldNotDuplicateStableInternalSortFieldsAlreadyRequested() {
+    SearchQuery.SortFieldSpec requestedTimestampSort =
+        new SearchQuery.SortFieldSpec(
+            LogMessage.SystemField.TIME_SINCE_EPOCH.fieldName, SearchQuery.SortDirection.ASC);
+
+    SearchQuery.HitSortPlan hitSortPlan =
+        SearchQuery.HitSortPlan.fromRequested(List.of(requestedTimestampSort));
+
+    assertThat(hitSortPlan.requestedSortFields()).containsExactly(requestedTimestampSort);
+    assertThat(hitSortPlan.effectiveSortFields())
+        .containsExactly(
+            requestedTimestampSort,
+            new SearchQuery.SortFieldSpec(
+                LogMessage.SystemField.ID.fieldName, SearchQuery.SortDirection.ASC));
+  }
+
+  @Test
+  void shouldParseSingleHitSortSpecForms() {
+    assertThat(SearchResultUtils.parseSortFieldSpecs("\"SearchPhrase\""))
+        .containsExactly(
+            new SearchQuery.SortFieldSpec("SearchPhrase", SearchQuery.SortDirection.ASC));
+    assertThat(
+            SearchResultUtils.parseSortFieldSpecs(
+                """
+                {
+                  "SearchPhrase": {
+                    "order": "asc"
+                  }
+                }
+                """))
+        .containsExactly(
+            new SearchQuery.SortFieldSpec("SearchPhrase", SearchQuery.SortDirection.ASC));
+  }
+
+  @Test
+  void shouldParseMixedHitSortSpecForms() {
+    assertThat(
+            SearchResultUtils.parseSortFieldSpecs(
+                """
+                [
+                  "SearchPhrase",
+                  {
+                    "WindowClientWidth": {
+                      "order": "asc"
+                    }
+                  },
+                  {
+                    "CounterID": "desc"
+                  }
+                ]
+                """))
+        .containsExactly(
+            new SearchQuery.SortFieldSpec("SearchPhrase", SearchQuery.SortDirection.ASC),
+            new SearchQuery.SortFieldSpec("WindowClientWidth", SearchQuery.SortDirection.ASC),
+            new SearchQuery.SortFieldSpec("CounterID", SearchQuery.SortDirection.DESC));
+  }
+
+  @Test
+  void shouldIgnoreDocOnlyHitSortSpec() {
+    assertThat(
+            SearchResultUtils.parseSortFieldSpecs(
+                """
+                [
+                  {
+                    "_doc": {
+                      "order": "desc"
+                    }
+                  }
+                ]
+                """))
+        .isEmpty();
+  }
+
+  @Test
+  void shouldRejectUserRequestedIdHitSortSpec() {
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> SearchResultUtils.parseSortFieldSpecs("[\"_id\"]"))
+        .withMessage("Sorting by _id is not supported.");
+  }
+
+  @Test
+  void shouldRejectInvalidHitSortJson() {
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> SearchResultUtils.parseSortFieldSpecs("{invalid-json"));
+  }
+
+  @Test
+  void shouldRejectUnsupportedHitSortClauseShape() {
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> SearchResultUtils.parseSortFieldSpecs("[123]"))
+        .withMessage("Unsupported sort clause: 123");
+  }
+
+  @Test
+  void shouldRejectInvalidHitSortDirections() {
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> SearchResultUtils.parseSortFieldSpecs("[{\"SearchPhrase\":\"down\"}]"))
+        .withMessage("Unsupported sort direction for field SearchPhrase: down");
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> SearchResultUtils.parseSortFieldSpecs("[{\"SearchPhrase\":123}]"))
+        .withMessage("Unsupported sort direction for field SearchPhrase: 123");
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                SearchResultUtils.parseSortFieldSpecs(
+                    "[{\"SearchPhrase\":{\"order\":\"descending\"}}]"))
+        .withMessage("Unsupported sort direction for field SearchPhrase: descending");
+  }
+
+  @Test
+  void shouldUsePrimitiveComparisonForSameKindDoubleSortValues() {
+    assertThat(HitSortValue.compareAscending(HitSortValue.of(-0.0D), HitSortValue.of(0.0D)))
+        .isNegative();
+  }
+
+  @Test
+  void shouldPreserveFloatSortValueForResponseRendering() {
+    HitSortValue floatSortValue = HitSortValue.of(0.1f);
+
+    assertThat(floatSortValue.responseValue()).isEqualTo(0.1f);
+    assertThat(
+            SearchResultUtils.fromHitSortValueProto(
+                    SearchResultUtils.toHitSortValueProto(floatSortValue))
+                .responseValue())
+        .isEqualTo(0.1f);
   }
 
   @Test
@@ -483,9 +699,12 @@ public class SearchResultUtilsTest {
     assertThat(fromValueProto(toValueProto(null))).isEqualTo(null);
     assertThat(fromValueProto(toValueProto(1))).isEqualTo(1);
     assertThat(fromValueProto(toValueProto(2L))).isEqualTo(2L);
+    assertThat(fromValueProto(toValueProto(3F))).isEqualTo(3D);
     assertThat(fromValueProto(toValueProto(3D))).isEqualTo(3D);
     assertThat(fromValueProto(toValueProto("4"))).isEqualTo("4");
     assertThat(fromValueProto(toValueProto(false))).isEqualTo(false);
+    assertThat(fromValueProto(toValueProto(ByteString.copyFrom(new byte[] {0, 1, -1}))))
+        .isEqualTo(ByteString.copyFrom(new byte[] {0, 1, -1}));
     assertThat(fromValueProto(toValueProto(Map.of("1", 2, "3", false))))
         .isEqualTo(Map.of("1", 2, "3", false));
     assertThat(fromValueProto(toValueProto(List.of("1", 2, 3D, false))))

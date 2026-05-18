@@ -624,13 +624,7 @@ public class ReadOnlyChunkImpl<T> implements Chunk<T> {
   @Override
   public SearchResult<T> query(SearchQuery query) {
     if (logSearcher != null) {
-
-      return logSearcher.search(
-          query.dataset,
-          query.howMany,
-          query.queryBuilder,
-          query.sourceFieldFilter,
-          query.aggregatorFactoriesBuilder);
+      return logSearcher.search(query);
     } else {
       return (SearchResult<T>) SearchResult.empty();
     }

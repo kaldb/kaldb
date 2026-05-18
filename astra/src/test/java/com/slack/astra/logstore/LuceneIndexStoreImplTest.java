@@ -9,6 +9,7 @@ import static com.slack.astra.testlib.MetricsUtil.getTimerCount;
 import static com.slack.astra.testlib.TemporaryLogStoreAndSearcherExtension.MAX_TIME;
 import static com.slack.astra.testlib.TemporaryLogStoreAndSearcherExtension.addMessages;
 import static com.slack.astra.testlib.TemporaryLogStoreAndSearcherExtension.findAllMessages;
+import static com.slack.astra.testlib.TemporaryLogStoreAndSearcherExtension.search;
 import static com.slack.astra.util.AggregatorFactoriesUtil.createGenericDateHistogramAggregatorFactoriesBuilder;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
@@ -134,7 +135,8 @@ public class LuceneIndexStoreImplTest {
       logStore.logStore.refresh();
 
       SearchResult<LogMessage> result1 =
-          logStore.logSearcher.search(
+          search(
+              logStore.logSearcher,
               MessageUtil.TEST_DATASET_NAME,
               100,
               QueryBuilderUtil.generateQueryBuilder("nested.key1:value1", 0L, MAX_TIME),
@@ -143,7 +145,8 @@ public class LuceneIndexStoreImplTest {
       assertThat(result1.hits.size()).isEqualTo(1);
 
       SearchResult<LogMessage> result2 =
-          logStore.logSearcher.search(
+          search(
+              logStore.logSearcher,
               MessageUtil.TEST_DATASET_NAME,
               100,
               QueryBuilderUtil.generateQueryBuilder("duplicateproperty:duplicate1", 0L, MAX_TIME),
@@ -152,7 +155,8 @@ public class LuceneIndexStoreImplTest {
       assertThat(result2.hits.size()).isEqualTo(1);
 
       SearchResult<LogMessage> result3 =
-          logStore.logSearcher.search(
+          search(
+              logStore.logSearcher,
               MessageUtil.TEST_DATASET_NAME,
               100,
               QueryBuilderUtil.generateQueryBuilder("nested.duplicateproperty:2", 0L, MAX_TIME),
@@ -208,7 +212,8 @@ public class LuceneIndexStoreImplTest {
               .fixedInterval(DateHistogramInterval.SECOND));
 
       SearchResult<LogMessage> result1 =
-          logStore.logSearcher.search(
+          search(
+              logStore.logSearcher,
               MessageUtil.TEST_DATASET_NAME,
               100,
               QueryBuilderUtil.generateQueryBuilder("nested.key1:value1", 0L, MAX_TIME),

@@ -8,7 +8,9 @@ import com.slack.astra.logstore.LuceneIndexStoreConfig;
 import com.slack.astra.logstore.LuceneIndexStoreImpl;
 import com.slack.astra.logstore.schema.SchemaAwareLogDocumentBuilderImpl;
 import com.slack.astra.logstore.search.LogIndexSearcherImpl;
+import com.slack.astra.logstore.search.SearchQuery;
 import com.slack.astra.logstore.search.SearchResult;
+import com.slack.astra.logstore.search.SourceFieldFilter;
 import com.slack.astra.metadata.schema.FieldType;
 import com.slack.astra.metadata.schema.LuceneFieldDef;
 import com.slack.service.murron.trace.Trace;
@@ -59,13 +61,35 @@ public class TemporaryLogStoreAndSearcherExtension implements AfterEachCallback 
         .fixedInterval(new DateHistogramInterval("1s"));
 
     SearchResult<LogMessage> results =
-        searcher.search(
+        search(
+            searcher,
             dataset,
             howMany,
             queryBuilder,
             null,
             new AggregatorFactories.Builder().addAggregator(dateHistogramAggregationBuilder));
-    return results.hits;
+    return results.messages();
+  }
+
+  /** Runs a local test search using KalDB's default hit ordering. */
+  public static SearchResult<LogMessage> search(
+      LogIndexSearcherImpl searcher,
+      String dataset,
+      int howMany,
+      QueryBuilder queryBuilder,
+      SourceFieldFilter sourceFieldFilter,
+      AggregatorFactories.Builder aggregatorFactoriesBuilder) {
+    return searcher.search(
+        new SearchQuery(
+            dataset,
+            0L,
+            MAX_TIME,
+            howMany,
+            0,
+            List.of(),
+            queryBuilder,
+            sourceFieldFilter,
+            aggregatorFactoriesBuilder));
   }
 
   public final SimpleMeterRegistry metricsRegistry;

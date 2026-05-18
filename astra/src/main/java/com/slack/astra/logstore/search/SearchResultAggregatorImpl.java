@@ -2,13 +2,13 @@ package com.slack.astra.logstore.search;
 
 import brave.ScopedSpan;
 import brave.Tracing;
+import com.google.common.collect.Iterables;
+import com.google.common.collect.Streams;
 import com.slack.astra.logstore.LogMessage;
 import com.slack.astra.logstore.opensearch.AstraBigArrays;
 import com.slack.astra.logstore.opensearch.ScriptServiceProvider;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
-import java.util.stream.Collectors;
 import org.opensearch.search.aggregations.InternalAggregation;
 import org.opensearch.search.aggregations.InternalAggregations;
 import org.opensearch.search.aggregations.pipeline.PipelineAggregator;
@@ -76,15 +76,13 @@ public class SearchResultAggregatorImpl<T extends LogMessage> implements SearchR
           InternalAggregations.topLevelReduce(internalAggregationList, reduceContext);
     }
 
-    // TODO: Instead of sorting all hits using a bounded priority queue of size k is more efficient.
-    List<T> resultHits =
-        searchResults.stream()
-            .flatMap(r -> r.hits.stream())
-            .sorted(
-                Comparator.comparing(
-                    (T m) -> m.getTimestamp().toEpochMilli(), Comparator.reverseOrder()))
+    List<List<SearchResultHit<T>>> sortedHitLists =
+        searchResults.stream().map(searchResult -> searchResult.hits).toList();
+    List<SearchResultHit<T>> resultHits =
+        Streams.stream(Iterables.mergeSorted(sortedHitLists, this::compareHits))
+            .skip(searchQuery.startFrom)
             .limit(searchQuery.howMany)
-            .collect(Collectors.toList());
+            .toList();
 
     span.tag("resultHits", String.valueOf(resultHits.size()));
     span.tag("finalAggregation", String.valueOf(finalAggregation));
@@ -98,5 +96,29 @@ public class SearchResultAggregatorImpl<T extends LogMessage> implements SearchR
         requestedSnapshots,
         fulfilledSnapshots,
         internalAggregations);
+  }
+
+  private int compareHits(SearchResultHit<T> left, SearchResultHit<T> right) {
+    List<SearchQuery.SortFieldSpec> sortFieldSpecs = searchQuery.hitSortPlan.effectiveSortFields();
+    for (int i = 0; i < sortFieldSpecs.size(); i++) {
+      int comparison =
+          compareSortValues(
+              left.sortValues().get(i), right.sortValues().get(i), sortFieldSpecs.get(i));
+      if (comparison != 0) {
+        return comparison;
+      }
+    }
+    return 0;
+  }
+
+  private static int compareSortValues(
+      HitSortValue left, HitSortValue right, SearchQuery.SortFieldSpec sortFieldSpec) {
+    int comparison = HitSortValue.compareAscending(left, right);
+    if (comparison == 0
+        || left.kind() == HitSortValue.Kind.NULL
+        || right.kind() == HitSortValue.Kind.NULL) {
+      return comparison;
+    }
+    return sortFieldSpec.descending() ? -comparison : comparison;
   }
 }

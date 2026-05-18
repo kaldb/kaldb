@@ -95,6 +95,7 @@ public class LogMessageWriterImplTest {
             0L,
             MAX_TIME,
             10,
+            0,
             Collections.emptyList(),
             QueryBuilderUtil.generateQueryBuilder(queryString, 0L, MAX_TIME),
             null,
@@ -177,6 +178,7 @@ public class LogMessageWriterImplTest {
                         0L,
                         MAX_TIME,
                         100,
+                        0,
                         Collections.emptyList(),
                         QueryBuilderUtil.generateQueryBuilder("", 0L, MAX_TIME),
                         null,
@@ -273,23 +275,23 @@ public class LogMessageWriterImplTest {
 
     SearchResult<LogMessage> results = searchChunkManager("test", "_id:1");
     assertThat(results.hits.size()).isEqualTo(1);
-    Object value = results.hits.get(0).getSource().get("tags");
+    Object value = results.hits.get(0).message().getSource().get("tags");
     assertThat(value).isEqualTo("[]");
 
     results = searchChunkManager("test", "_id:2");
     assertThat(results.hits.size()).isEqualTo(1);
-    value = results.hits.get(0).getSource().get("tags");
+    value = results.hits.get(0).message().getSource().get("tags");
     // ArrayList#toString in SpanFormatter#convertKVtoProto for the binary field type case
     assertThat(value).isEqualTo("[tagValue1, tagValue2]");
 
     results = searchChunkManager("test", "_id:3");
     assertThat(results.hits.size()).isEqualTo(1);
-    value = results.hits.get(0).getSource().get("message");
+    value = results.hits.get(0).message().getSource().get("message");
     assertThat(value).isEqualTo("{}");
 
     results = searchChunkManager("test", "_id:4");
     assertThat(results.hits.size()).isEqualTo(1);
-    value = results.hits.get(0).getSource().get("message");
+    value = results.hits.get(0).message().getSource().get("message");
     // HashMap#toString in SpanFormatter#convertKVtoProto for the binary field type case
     assertThat(value).isEqualTo("{nestedField2=nestedValue2, nestedField1=nestedValue1}");
   }

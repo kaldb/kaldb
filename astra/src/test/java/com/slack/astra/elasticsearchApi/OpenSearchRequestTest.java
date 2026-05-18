@@ -2,6 +2,7 @@ package com.slack.astra.elasticsearchApi;
 
 import static com.slack.astra.server.ManagerApiGrpc.MAX_TIME;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -190,6 +191,79 @@ public class OpenSearchRequestTest {
 
     JsonNode parsedRequest = OBJECT_MAPPER.readTree(searchBody);
     assertThat(request.getAggregationJson()).isEqualTo(parsedRequest.get("aggs").toString());
+  }
+
+  @Test
+  public void testGetSortJson() throws Exception {
+    String searchBody =
+        """
+        {
+          "size": 5,
+          "from": 2,
+          "sort": [
+            {
+              "WindowClientWidth": {
+                "order": "asc"
+              }
+            },
+            {
+              "_doc": {
+                "order": "desc"
+              }
+            }
+          ]
+        }
+        """;
+
+    OpenSearchRequest openSearchRequest = new OpenSearchRequest();
+    AstraSearch.SearchRequest request =
+        openSearchRequest.parseSingleSearchRequest("test", searchBody);
+
+    JsonNode parsedRequest = OBJECT_MAPPER.readTree(searchBody);
+    assertThat(request.getSortJson()).isEqualTo(parsedRequest.get("sort").toString());
+    assertThat(request.getStartFrom()).isEqualTo(2);
+  }
+
+  @Test
+  public void testGetSortJsonPreservesScalarSortClause() throws Exception {
+    String searchBody =
+        """
+        {
+          "size": 5,
+          "sort": "SearchPhrase"
+        }
+        """;
+
+    OpenSearchRequest openSearchRequest = new OpenSearchRequest();
+    AstraSearch.SearchRequest request =
+        openSearchRequest.parseSingleSearchRequest("test", searchBody);
+
+    JsonNode parsedRequest = OBJECT_MAPPER.readTree(searchBody);
+    assertThat(request.getSortJson()).isEqualTo(parsedRequest.get("sort").toString());
+  }
+
+  @Test
+  public void shouldRejectSearchAfterPagination() {
+    String searchBody =
+        """
+        {
+          "size": 5,
+          "search_after": [12345],
+          "sort": [
+            {
+              "@timestamp": {
+                "order": "desc"
+              }
+            }
+          ]
+        }
+        """;
+
+    OpenSearchRequest openSearchRequest = new OpenSearchRequest();
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> openSearchRequest.parseSingleSearchRequest("test", searchBody))
+        .withMessage("search_after is not supported");
   }
 
   @Test

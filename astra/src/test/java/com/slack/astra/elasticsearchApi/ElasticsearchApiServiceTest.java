@@ -9,9 +9,11 @@ import static com.slack.astra.testlib.MessageUtil.TEST_DATASET_NAME;
 import static com.slack.astra.testlib.MetricsUtil.getCount;
 import static com.slack.astra.writer.LogMessageWriterImplTest.consumerRecordWithValue;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -1270,6 +1272,490 @@ public class ElasticsearchApiServiceTest {
   }
 
   @Test
+  void testSingleSearchReturnsHitsSortedByRequestedField() throws Exception {
+    Instant start = Instant.now().minus(1, ChronoUnit.HOURS);
+    addMessagesToChunkManager(
+        List.of(
+            makeWindowSpan(1, start.plusSeconds(1), 62, 1024, 768, false, false, "bravo"),
+            makeWindowSpan(2, start.plusSeconds(2), 62, 800, 600, false, false, "charlie"),
+            makeWindowSpan(3, start.plusSeconds(3), 62, 1440, 900, false, false, "alpha")));
+
+    String postBody =
+        """
+        {
+          "size": 3,
+          "query": {
+            "term": {
+              "CounterID": 62
+            }
+          },
+          "sort": [
+            {
+              "WindowClientWidth": {
+                "order": "asc"
+              }
+            }
+          ]
+        }
+        """;
+    JsonNode jsonNode = searchJson(postBody);
+
+    JsonNode hits = jsonNode.findValue("hits").get("hits");
+    assertThat(hits.size()).isEqualTo(3);
+    assertThat(
+            jsonNode
+                .findValue("hits")
+                .get("hits")
+                .get(0)
+                .get("_source")
+                .get("WindowClientWidth")
+                .asInt())
+        .isEqualTo(800);
+    assertThat(hits.get(0).get("sort").size()).isEqualTo(1);
+    assertThat(hits.get(0).get("sort").get(0).asInt()).isEqualTo(800);
+    assertThat(
+            jsonNode
+                .findValue("hits")
+                .get("hits")
+                .get(1)
+                .get("_source")
+                .get("WindowClientWidth")
+                .asInt())
+        .isEqualTo(1024);
+    assertThat(
+            jsonNode
+                .findValue("hits")
+                .get("hits")
+                .get(2)
+                .get("_source")
+                .get("WindowClientWidth")
+                .asInt())
+        .isEqualTo(1440);
+
+    String stringSortPostBody =
+        """
+        {
+          "size": 3,
+          "query": {
+            "term": {
+              "CounterID": 62
+            }
+          },
+          "sort": [
+            {
+              "SearchPhrase": {
+                "order": "asc"
+              }
+            }
+          ]
+        }
+        """;
+    JsonNode stringSortJsonNode = searchJson(stringSortPostBody);
+    JsonNode stringSortHits = stringSortJsonNode.findValue("hits").get("hits");
+
+    assertThat(
+            stringSortJsonNode
+                .findValue("hits")
+                .get("hits")
+                .get(0)
+                .get("_source")
+                .get("SearchPhrase")
+                .asText())
+        .isEqualTo("alpha");
+    assertThat(stringSortHits.get(0).get("sort").size()).isEqualTo(1);
+    assertThat(stringSortHits.get(0).get("sort").get(0).asText()).isEqualTo("alpha");
+    assertThat(
+            stringSortJsonNode
+                .findValue("hits")
+                .get("hits")
+                .get(1)
+                .get("_source")
+                .get("SearchPhrase")
+                .asText())
+        .isEqualTo("bravo");
+    assertThat(
+            stringSortJsonNode
+                .findValue("hits")
+                .get("hits")
+                .get(2)
+                .get("_source")
+                .get("SearchPhrase")
+                .asText())
+        .isEqualTo("charlie");
+
+    String pagedStringSortPostBody =
+        """
+        {
+          "from": 1,
+          "size": 1,
+          "query": {
+            "term": {
+              "CounterID": 62
+            }
+          },
+          "sort": [
+            {
+              "SearchPhrase": {
+                "order": "asc"
+              }
+            }
+          ]
+        }
+        """;
+    JsonNode pagedStringSortJsonNode = searchJson(pagedStringSortPostBody);
+
+    assertThat(pagedStringSortJsonNode.findValue("hits").get("hits").size()).isEqualTo(1);
+    assertThat(
+            pagedStringSortJsonNode
+                .findValue("hits")
+                .get("hits")
+                .get(0)
+                .get("_source")
+                .get("SearchPhrase")
+                .asText())
+        .isEqualTo("bravo");
+  }
+
+  @Test
+  void testSingleSearchReturnsIpSortValuesAsStrings() throws Exception {
+    Instant start = Instant.now().minus(1, ChronoUnit.HOURS);
+    addMessagesToChunkManager(
+        List.of(
+            makeIpSortSpan(1, start.plusSeconds(1), 62, "192.168.0.1"),
+            makeIpSortSpan(2, start.plusSeconds(2), 62, "10.0.0.2"),
+            makeIpSortSpan(3, start.plusSeconds(3), 62, "10.0.0.1")));
+
+    JsonNode jsonNode =
+        searchJson(
+            """
+            {
+              "size": 3,
+              "query": {
+                "term": {
+                  "CounterID": 62
+                }
+              },
+              "sort": [
+                {
+                  "ClientIp": {
+                    "order": "asc"
+                  }
+                }
+              ]
+            }
+            """);
+
+    JsonNode hits = jsonNode.findValue("hits").get("hits");
+    assertThat(sourceValues(jsonNode, "ClientIp"))
+        .containsExactly("10.0.0.1", "10.0.0.2", "192.168.0.1");
+    assertThat(hits.get(0).get("sort").get(0).asText()).isEqualTo("10.0.0.1");
+    assertThat(hits.get(1).get("sort").get(0).asText()).isEqualTo("10.0.0.2");
+    assertThat(hits.get(2).get("sort").get(0).asText()).isEqualTo("192.168.0.1");
+  }
+
+  @Test
+  void testSingleSearchOmitsSortValuesWhenRequestDoesNotSpecifySort() throws Exception {
+    Instant start = Instant.now().minus(1, ChronoUnit.HOURS);
+    addMessagesToChunkManager(
+        List.of(
+            makeWindowSpan(1, start.plusSeconds(1), 62, 1024, 768, false, false, "first"),
+            makeWindowSpan(2, start.plusSeconds(2), 62, 800, 600, false, false, "second")));
+
+    JsonNode jsonNode =
+        searchJson(
+            """
+            {
+              "size": 2,
+              "query": {
+                "term": {
+                  "CounterID": 62
+                }
+              }
+            }
+            """);
+
+    JsonNode hits = jsonNode.findValue("hits").get("hits");
+    assertThat(sourceValues(jsonNode, "SearchPhrase")).containsExactly("second", "first");
+    assertThat(hits.get(0).has("sort")).isFalse();
+    assertThat(hits.get(1).has("sort")).isFalse();
+  }
+
+  @Test
+  void testSingleSearchReturnsSortValuesWhenSourceFilteringOmitsSortField() throws Exception {
+    Instant start = Instant.now().minus(1, ChronoUnit.HOURS);
+    addMessagesToChunkManager(
+        List.of(
+            makeWindowSpan(1, start.plusSeconds(1), 62, 1024, 768, false, false, "bravo"),
+            makeWindowSpan(2, start.plusSeconds(2), 62, 800, 600, false, false, "charlie"),
+            makeWindowSpan(3, start.plusSeconds(3), 62, 1440, 900, false, false, "alpha")));
+
+    JsonNode jsonNode =
+        searchJson(
+            """
+            {
+              "_source": ["SearchPhrase"],
+              "size": 3,
+              "query": {
+                "term": {
+                  "CounterID": 62
+                }
+              },
+              "sort": [
+                {
+                  "WindowClientWidth": {
+                    "order": "asc"
+                  }
+                }
+              ]
+            }
+            """);
+
+    JsonNode hits = jsonNode.findValue("hits").get("hits");
+    assertThat(hits.findValuesAsText("SearchPhrase")).containsExactly("charlie", "bravo", "alpha");
+    assertThat(hits.get(0).get("_source").has("WindowClientWidth")).isFalse();
+    assertThat(hits.get(0).get("sort").get(0).asInt()).isEqualTo(800);
+    assertThat(hits.get(1).get("sort").get(0).asInt()).isEqualTo(1024);
+    assertThat(hits.get(2).get("sort").get(0).asInt()).isEqualTo(1440);
+  }
+
+  @Test
+  void testSingleSearchUsesMergeTieBreakersAtLeaf() throws Exception {
+    Instant start = Instant.now().minus(1, ChronoUnit.HOURS);
+    addMessagesToChunkManager(
+        List.of(
+            makeWindowSpan(3, start, 62, 800, 768, false, false, "id-3"),
+            makeWindowSpan(2, start, 62, 800, 768, false, false, "id-2"),
+            makeWindowSpan(1, start, 62, 800, 768, false, false, "id-1")));
+
+    JsonNode jsonNode =
+        searchJson(
+            """
+            {
+              "size": 2,
+              "query": {
+                "term": {
+                  "CounterID": 62
+                }
+              },
+              "sort": [
+                {
+                  "WindowClientWidth": {
+                    "order": "asc"
+                  }
+                }
+              ]
+            }
+            """);
+
+    assertThat(sourceValues(jsonNode, "SearchPhrase")).containsExactly("id-1", "id-2");
+  }
+
+  @Test
+  void testSingleSearchSortsMissingValuesConsistently() throws Exception {
+    Instant start = Instant.now().minus(1, ChronoUnit.HOURS);
+    addMessagesToChunkManager(
+        List.of(
+            makeWindowSpan(1, start.plusSeconds(1), 62, 800, 768, false, false, "narrow"),
+            makeSpanWithoutWindowWidth(2, start.plusSeconds(2), 62, "missing"),
+            makeWindowSpan(3, start.plusSeconds(3), 62, 1440, 768, false, false, "wide")));
+
+    JsonNode jsonNode =
+        searchJson(
+            """
+            {
+              "size": 3,
+              "query": {
+                "term": {
+                  "CounterID": 62
+                }
+              },
+              "sort": [
+                {
+                  "WindowClientWidth": {
+                    "order": "asc"
+                  }
+                }
+              ]
+            }
+            """);
+
+    JsonNode hits = jsonNode.findValue("hits").get("hits");
+    assertThat(sourceValues(jsonNode, "SearchPhrase")).containsExactly("narrow", "wide", "missing");
+    assertThat(hits.get(0).get("sort").get(0).asInt()).isEqualTo(800);
+    assertThat(hits.get(1).get("sort").get(0).asInt()).isEqualTo(1440);
+    assertThat(hits.get(2).get("sort").get(0).asInt()).isEqualTo(Integer.MAX_VALUE);
+  }
+
+  @Test
+  void testSingleSearchTreatsUnmappedSortFieldAsMissing() throws Exception {
+    Instant start = Instant.now().minus(1, ChronoUnit.HOURS);
+    addMessagesToChunkManager(
+        List.of(
+            makeSpanWithoutWindowWidth(1, start.plusSeconds(1), 62, "first"),
+            makeSpanWithoutWindowWidth(2, start.plusSeconds(2), 62, "second")));
+
+    JsonNode jsonNode =
+        searchJson(
+            """
+            {
+              "size": 2,
+              "query": {
+                "term": {
+                  "CounterID": 62
+                }
+              },
+              "sort": [
+                {
+                  "WindowClientWidth": {
+                    "order": "asc",
+                    "unmapped_type": "integer"
+                  }
+                }
+              ]
+            }
+            """);
+
+    JsonNode hits = jsonNode.findValue("hits").get("hits");
+    assertThat(sourceValues(jsonNode, "SearchPhrase")).containsExactly("second", "first");
+    assertThat(hits.get(0).get("sort").get(0).isNull()).isTrue();
+    assertThat(hits.get(1).get("sort").get(0).isNull()).isTrue();
+  }
+
+  @Test
+  void testSingleSearchSupportsCustomHitSortQueries() throws Exception {
+    Instant start = Instant.now().minus(1, ChronoUnit.HOURS);
+    addMessagesToChunkManager(
+        List.of(
+            makeCustomSortHitSpan(1, start.plusSeconds(3), "https://mail.google.example", "zulu"),
+            makeCustomSortHitSpan(2, start.plusSeconds(1), "https://slack.example", ""),
+            makeCustomSortHitSpan(
+                3, start.plusSeconds(2), "https://google.example/search", "delta"),
+            makeCustomSortHitSpan(4, start.plusSeconds(4), "https://astra.example", "bravo"),
+            makeCustomSortHitSpan(5, start.plusSeconds(5), "https://google.example/maps", ""),
+            makeCustomSortHitSpan(6, start.plusSeconds(2), "https://astra.example/docs", "alpha")));
+
+    JsonNode googleTimestampSort =
+        searchJson(
+            """
+            {
+              "size": 10,
+              "query": {
+                "wildcard": {
+                  "URL": {
+                    "value": "*google*"
+                  }
+                }
+              },
+              "sort": [
+                {
+                  "@timestamp": {
+                    "order": "asc"
+                  }
+                }
+              ]
+            }
+            """);
+    assertThat(sourceValues(googleTimestampSort, "URL"))
+        .containsExactly(
+            "https://google.example/search",
+            "https://mail.google.example",
+            "https://google.example/maps");
+
+    JsonNode nonEmptyPhraseTimestampSort =
+        searchJson(
+            """
+            {
+              "size": 10,
+              "query": {
+                "bool": {
+                  "must_not": [
+                    {
+                      "term": {
+                        "SearchPhrase": ""
+                      }
+                    }
+                  ]
+                }
+              },
+              "sort": [
+                {
+                  "@timestamp": {
+                    "order": "asc"
+                  }
+                }
+              ]
+            }
+            """);
+    List<String> nonEmptyPhraseTimestampSortValues =
+        sourceValues(nonEmptyPhraseTimestampSort, "SearchPhrase");
+    assertThat(nonEmptyPhraseTimestampSortValues.subList(0, 2)).containsExactly("delta", "alpha");
+    assertThat(nonEmptyPhraseTimestampSortValues.subList(2, 4)).containsExactly("zulu", "bravo");
+
+    JsonNode phraseSort =
+        searchJson(
+            """
+            {
+              "size": 10,
+              "query": {
+                "bool": {
+                  "must_not": [
+                    {
+                      "term": {
+                        "SearchPhrase": ""
+                      }
+                    }
+                  ]
+                }
+              },
+              "sort": [
+                {
+                  "SearchPhrase": {
+                    "order": "asc"
+                  }
+                }
+              ]
+            }
+            """);
+    assertThat(sourceValues(phraseSort, "SearchPhrase"))
+        .containsExactly("alpha", "bravo", "delta", "zulu");
+
+    JsonNode timestampThenPhraseSort =
+        searchJson(
+            """
+            {
+              "size": 10,
+              "query": {
+                "bool": {
+                  "must_not": [
+                    {
+                      "term": {
+                        "SearchPhrase": ""
+                      }
+                    }
+                  ]
+                }
+              },
+              "sort": [
+                {
+                  "@timestamp": {
+                    "order": "asc"
+                  }
+                },
+                {
+                  "SearchPhrase": {
+                    "order": "asc"
+                  }
+                }
+              ]
+            }
+            """);
+    JsonNode timestampThenPhraseHits = timestampThenPhraseSort.findValue("hits").get("hits");
+    assertThat(timestampThenPhraseHits.get(0).get("sort").size()).isEqualTo(2);
+    assertThat(sourceValues(timestampThenPhraseSort, "SearchPhrase"))
+        .containsExactly("alpha", "delta", "zulu", "bravo");
+  }
+
+  @Test
   public void testLargeSetOfQueries() throws Exception {
     addMessagesToChunkManager(SpanUtil.makeSpansWithTimeDifference(1, 100, 1, Instant.now()));
     String postBody = readResource("elasticsearchApi/multisearch_query_10results.ndjson");
@@ -1632,6 +2118,23 @@ public class ElasticsearchApiServiceTest {
     assertThat(responseNode.get("_shards").get("total").asInt()).isEqualTo(7);
   }
 
+  @Test
+  void testInvalidSortIsRejectedBeforeBackendSearch() {
+    AstraQueryServiceBase searcher = mock(AstraQueryServiceBase.class);
+    ElasticsearchApiService serviceUnderTest =
+        new ElasticsearchApiService(
+            searcher,
+            DEFAULT_CLUSTER_NAME,
+            DEFAULT_HOST,
+            DEFAULT_PORT,
+            mock(DatasetMetadataStore.class));
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> serviceUnderTest.search("foo", "{\"size\":1,\"sort\":[\"_id\"]}"))
+        .withMessage("Sorting by _id is not supported.");
+    verify(searcher, never()).doSearch(any());
+  }
+
   private void addMessagesToChunkManager(List<Trace.Span> messages) throws IOException {
     IndexingChunkManager<LogMessage> chunkManager = chunkManagerUtil.chunkManager;
     int offset = 1;
@@ -1646,8 +2149,122 @@ public class ElasticsearchApiServiceTest {
     return Resources.toString(Resources.getResource(resourcePath), StandardCharsets.UTF_8);
   }
 
+  private JsonNode searchJson(String postBody) throws Exception {
+    HttpResponse response = elasticsearchApiService.search(TEST_DATASET_NAME, postBody);
+    AggregatedHttpResponse aggregatedRes = response.aggregate().join();
+
+    assertThat(aggregatedRes.status().code()).isEqualTo(200);
+    return OBJECT_MAPPER.readTree(aggregatedRes.content(StandardCharsets.UTF_8));
+  }
+
+  private List<String> sourceValues(JsonNode searchResponse, String field) {
+    return searchResponse.findValue("hits").get("hits").findValuesAsText(field);
+  }
+
   private static DatasetMetadata datasetMetadata(String name) {
     return new DatasetMetadata(name, "test-owner", 0, List.of(), name);
+  }
+
+  private Trace.Span makeWindowSpan(
+      int id,
+      Instant timestamp,
+      int counterId,
+      int windowClientWidth,
+      int windowClientHeight,
+      boolean dontCountHits,
+      boolean isRefresh,
+      String searchPhrase) {
+    return SpanUtil.makeSpan(
+        id,
+        "window-message-" + id,
+        timestamp,
+        List.of(
+            Trace.KeyValue.newBuilder()
+                .setKey("CounterID")
+                .setFieldType(Schema.SchemaFieldType.INTEGER)
+                .setVInt32(counterId)
+                .build(),
+            Trace.KeyValue.newBuilder()
+                .setKey("WindowClientWidth")
+                .setFieldType(Schema.SchemaFieldType.INTEGER)
+                .setVInt32(windowClientWidth)
+                .build(),
+            Trace.KeyValue.newBuilder()
+                .setKey("WindowClientHeight")
+                .setFieldType(Schema.SchemaFieldType.INTEGER)
+                .setVInt32(windowClientHeight)
+                .build(),
+            Trace.KeyValue.newBuilder()
+                .setKey("DontCountHits")
+                .setFieldType(Schema.SchemaFieldType.BOOLEAN)
+                .setVBool(dontCountHits)
+                .build(),
+            Trace.KeyValue.newBuilder()
+                .setKey("IsRefresh")
+                .setFieldType(Schema.SchemaFieldType.BOOLEAN)
+                .setVBool(isRefresh)
+                .build(),
+            Trace.KeyValue.newBuilder()
+                .setKey("SearchPhrase")
+                .setFieldType(Schema.SchemaFieldType.KEYWORD)
+                .setVStr(searchPhrase)
+                .build()));
+  }
+
+  private Trace.Span makeSpanWithoutWindowWidth(
+      int id, Instant timestamp, int counterId, String searchPhrase) {
+    return SpanUtil.makeSpan(
+        id,
+        "window-message-" + id,
+        timestamp,
+        List.of(
+            Trace.KeyValue.newBuilder()
+                .setKey("CounterID")
+                .setFieldType(Schema.SchemaFieldType.INTEGER)
+                .setVInt32(counterId)
+                .build(),
+            Trace.KeyValue.newBuilder()
+                .setKey("SearchPhrase")
+                .setFieldType(Schema.SchemaFieldType.KEYWORD)
+                .setVStr(searchPhrase)
+                .build()));
+  }
+
+  private Trace.Span makeIpSortSpan(int id, Instant timestamp, int counterId, String clientIp) {
+    return SpanUtil.makeSpan(
+        id,
+        "ip-sort-message-" + id,
+        timestamp,
+        List.of(
+            Trace.KeyValue.newBuilder()
+                .setKey("CounterID")
+                .setFieldType(Schema.SchemaFieldType.INTEGER)
+                .setVInt32(counterId)
+                .build(),
+            Trace.KeyValue.newBuilder()
+                .setKey("ClientIp")
+                .setFieldType(Schema.SchemaFieldType.IP)
+                .setVStr(clientIp)
+                .build()));
+  }
+
+  private Trace.Span makeCustomSortHitSpan(
+      int id, Instant timestamp, String url, String searchPhrase) {
+    return SpanUtil.makeSpan(
+        id,
+        "custom-sort-message-" + id,
+        timestamp,
+        List.of(
+            Trace.KeyValue.newBuilder()
+                .setKey("URL")
+                .setFieldType(Schema.SchemaFieldType.KEYWORD)
+                .setVStr(url)
+                .build(),
+            Trace.KeyValue.newBuilder()
+                .setKey("SearchPhrase")
+                .setFieldType(Schema.SchemaFieldType.KEYWORD)
+                .setVStr(searchPhrase)
+                .build()));
   }
 
   private static final class CompatibilityServer implements AutoCloseable {

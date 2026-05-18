@@ -19,6 +19,9 @@ message SearchRequest {
   int64 end_time_epoch_ms = 5;
   int32 how_many = 6;
 
+  // The zero-based result offset for top-level hits.
+  int32 start_from = 12;
+
   // The fully query JSON object, to be used in the leaf nodes and parsed by OpenSearch
   string query = 8;
 
@@ -27,6 +30,10 @@ message SearchRequest {
 
   // The full agg JSON object, to be used in the leaf and query nodes and parsed by OpenSearch
   string aggregation_json = 10;
+
+  // The full hit sort JSON object/array, to be used in the leaf and query nodes and parsed by
+  // Astra's OpenSearch compatibility layer.
+  string sort_json = 11;
 
   message SourceFieldFilter {
     // Whether or not to include/exclude _all_ fields
@@ -224,7 +231,17 @@ message SearchRequest {
 }
 
 message SearchResult {
-  repeated string hits = 3;
+  // Returned search hit.
+  message Hit {
+    // Serialized LogWireMessage JSON payload for the hit.
+    string message = 1;
+
+    // Sort values produced with this hit during Lucene collection.
+    repeated HitSortValue sort_values = 2;
+  }
+
+  // Returned search hits and their per-hit metadata.
+  repeated Hit hits = 3;
   bytes internal_aggregations = 4;
   int64 took_micros = 5;
 
@@ -239,6 +256,30 @@ message SearchResult {
   int32 fulfilled_snapshots = 9;
 }
 
+// Typed scalar value carried with a hit for distributed hit sorting.
+message HitSortValue {
+  oneof kind {
+    // Null or missing sort value.
+    NullValue null_value = 1;
+    // 32-bit integer sort value.
+    int32 int_value = 2;
+    // 64-bit integer sort value.
+    int64 long_value = 3;
+    // 32-bit floating-point sort value.
+    float float_value = 9;
+    // 64-bit floating-point sort value.
+    double double_value = 4;
+    // Text sort value.
+    string string_value = 5;
+    // Boolean sort value.
+    bool bool_value = 6;
+    // Raw byte-backed sort value for internal stable ordering fields.
+    bytes bytes_value = 7;
+    // Lucene-encoded IP address sort value.
+    bytes ip_value = 8;
+  }
+}
+
 // Based off of https://github.com/protocolbuffers/protobuf/blob/main/src/google/protobuf/struct.proto
 // This allows for better support for a Map<String, Object> in Java
 message Value {
@@ -251,6 +292,9 @@ message Value {
     Struct struct_value = 6;
     ListValue list_value = 7;
     NullValue null_value = 8;
+    // Binary scalar value for generic map/list round trips.
+    // Hit sort values use HitSortValue.bytes_value instead.
+    bytes bytes_value = 9;
   }
 }
 

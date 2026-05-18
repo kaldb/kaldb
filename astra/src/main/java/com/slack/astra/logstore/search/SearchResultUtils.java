@@ -3,6 +3,7 @@ package com.slack.astra.logstore.search;
 import brave.ScopedSpan;
 import brave.Tracing;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.protobuf.ByteString;
 import com.slack.astra.logstore.LogMessage;
@@ -14,6 +15,7 @@ import com.slack.astra.util.JsonUtil;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -57,6 +59,8 @@ public class SearchResultUtils {
       return value.getStringValue();
     } else if (value.hasBoolValue()) {
       return value.getBoolValue();
+    } else if (value.hasBytesValue()) {
+      return value.getBytesValue();
     } else if (value.hasStructValue()) {
       return fromValueStruct(value.getStructValue());
     } else if (value.hasListValue()) {
@@ -77,12 +81,16 @@ public class SearchResultUtils {
       valueBuilder.setIntValue((Integer) object);
     } else if (object instanceof Long) {
       valueBuilder.setLongValue((Long) object);
+    } else if (object instanceof Float) {
+      valueBuilder.setDoubleValue(((Float) object).doubleValue());
     } else if (object instanceof Double) {
       valueBuilder.setDoubleValue((Double) object);
     } else if (object instanceof String) {
       valueBuilder.setStringValue((String) object);
     } else if (object instanceof Boolean) {
       valueBuilder.setBoolValue((Boolean) object);
+    } else if (object instanceof ByteString) {
+      valueBuilder.setBytesValue((ByteString) object);
     } else if (object instanceof Map) {
       valueBuilder.setStructValue(toStructProto((Map<String, Object>) object));
     } else if (object instanceof List) {
@@ -136,10 +144,103 @@ public class SearchResultUtils {
         searchRequest.getStartTimeEpochMs(),
         searchRequest.getEndTimeEpochMs(),
         searchRequest.getHowMany(),
+        searchRequest.getStartFrom(),
+        parseSortFieldSpecs(searchRequest.getSortJson()),
         searchRequest.getChunkIdsList(),
         queryBuilder,
         SourceFieldFilter.fromProto(searchRequest.getSourceFieldFilter()),
         aggregatorFactoriesBuilder);
+  }
+
+  /** Returns the number of user-requested sort values to render in each response hit. */
+  public static int responseSortValueCount(String sortJson) {
+    return parseSortFieldSpecs(sortJson).size();
+  }
+
+  /** Parses OpenSearch hit sort clauses into the internal sort representation. */
+  static List<SearchQuery.SortFieldSpec> parseSortFieldSpecs(String sortJson) {
+    if (sortJson == null || sortJson.isBlank()) {
+      return List.of();
+    }
+
+    try {
+      JsonNode sortNode = objectMapper.readTree(sortJson);
+      List<SearchQuery.SortFieldSpec> sortFieldSpecs = new ArrayList<>();
+
+      if (sortNode.isArray()) {
+        for (JsonNode sortClause : sortNode) {
+          addSortFieldSpec(sortFieldSpecs, sortClause);
+        }
+      } else {
+        addSortFieldSpec(sortFieldSpecs, sortNode);
+      }
+
+      return sortFieldSpecs;
+    } catch (IOException e) {
+      throw new IllegalArgumentException(e);
+    }
+  }
+
+  private static void addSortFieldSpec(
+      List<SearchQuery.SortFieldSpec> sortFieldSpecs, JsonNode sortClause) {
+    if (sortClause == null || sortClause.isNull()) {
+      return;
+    }
+    if (sortClause.isTextual()) {
+      addSortFieldSpec(sortFieldSpecs, sortClause.asText(), SearchQuery.SortDirection.ASC);
+      return;
+    }
+    if (!sortClause.isObject()) {
+      throw new IllegalArgumentException("Unsupported sort clause: " + sortClause);
+    }
+
+    Iterator<Map.Entry<String, JsonNode>> fields = sortClause.fields();
+    while (fields.hasNext()) {
+      Map.Entry<String, JsonNode> entry = fields.next();
+      addSortFieldSpec(
+          sortFieldSpecs, entry.getKey(), parseSortDirection(entry.getKey(), entry.getValue()));
+    }
+  }
+
+  private static SearchQuery.SortDirection parseSortDirection(String fieldName, JsonNode value) {
+    if (value != null && value.isTextual()) {
+      return parseSortOrder(fieldName, value.asText());
+    }
+    if (value != null && value.isObject()) {
+      JsonNode order = value.get("order");
+      if (order == null) {
+        return SearchQuery.SortDirection.ASC;
+      }
+      if (order.isTextual()) {
+        return parseSortOrder(fieldName, order.asText());
+      }
+    }
+    throw new IllegalArgumentException(
+        "Unsupported sort direction for field " + fieldName + ": " + value);
+  }
+
+  private static SearchQuery.SortDirection parseSortOrder(String fieldName, String order) {
+    if ("asc".equalsIgnoreCase(order)) {
+      return SearchQuery.SortDirection.ASC;
+    }
+    if ("desc".equalsIgnoreCase(order)) {
+      return SearchQuery.SortDirection.DESC;
+    }
+    throw new IllegalArgumentException(
+        "Unsupported sort direction for field " + fieldName + ": " + order);
+  }
+
+  private static void addSortFieldSpec(
+      List<SearchQuery.SortFieldSpec> sortFieldSpecs,
+      String fieldName,
+      SearchQuery.SortDirection direction) {
+    if ("_doc".equals(fieldName)) {
+      return;
+    }
+    if (LogMessage.SystemField.ID.fieldName.equals(fieldName)) {
+      throw new IllegalArgumentException("Sorting by _id is not supported.");
+    }
+    sortFieldSpecs.add(new SearchQuery.SortFieldSpec(fieldName, direction));
   }
 
   public static SearchResult<LogMessage> fromSearchResultProtoOrEmpty(
@@ -153,12 +254,16 @@ public class SearchResultUtils {
 
   public static SearchResult<LogMessage> fromSearchResultProto(
       AstraSearch.SearchResult protoSearchResult) throws IOException {
-    List<LogMessage> hits = new ArrayList<>(protoSearchResult.getHitsCount());
+    List<SearchResultHit<LogMessage>> hits = new ArrayList<>(protoSearchResult.getHitsCount());
 
-    for (ByteString bytes : protoSearchResult.getHitsList().asByteStringList()) {
-      LogWireMessage hit = JsonUtil.read(bytes.toStringUtf8(), LogWireMessage.class);
+    for (AstraSearch.SearchResult.Hit protoHit : protoSearchResult.getHitsList()) {
+      LogWireMessage hit = JsonUtil.read(protoHit.getMessage(), LogWireMessage.class);
       LogMessage message = LogMessage.fromWireMessage(hit);
-      hits.add(message);
+      List<HitSortValue> sortValues =
+          protoHit.getSortValuesList().stream()
+              .map(SearchResultUtils::fromHitSortValueProto)
+              .toList();
+      hits.add(new SearchResultHit<>(message, sortValues));
     }
 
     return new SearchResult<>(
@@ -170,6 +275,48 @@ public class SearchResultUtils {
         protoSearchResult.getFulfilledSnapshots(),
         OpenSearchInternalAggregation.fromByteArray(
             protoSearchResult.getInternalAggregations().toByteArray()));
+  }
+
+  /** Converts a protobuf hit sort value into the domain value used by search reduction. */
+  public static HitSortValue fromHitSortValueProto(AstraSearch.HitSortValue value) {
+    if (value.hasNullValue()) {
+      return HitSortValue.nullValue();
+    } else if (value.hasIntValue()) {
+      return HitSortValue.intValue(value.getIntValue());
+    } else if (value.hasLongValue()) {
+      return HitSortValue.longValue(value.getLongValue());
+    } else if (value.hasFloatValue()) {
+      return HitSortValue.floatValue(value.getFloatValue());
+    } else if (value.hasDoubleValue()) {
+      return HitSortValue.doubleValue(value.getDoubleValue());
+    } else if (value.hasStringValue()) {
+      return HitSortValue.stringValue(value.getStringValue());
+    } else if (value.hasBoolValue()) {
+      return HitSortValue.booleanValue(value.getBoolValue());
+    } else if (value.hasBytesValue()) {
+      return HitSortValue.bytes(value.getBytesValue());
+    } else if (value.hasIpValue()) {
+      return HitSortValue.ipAddress(value.getIpValue());
+    } else {
+      return HitSortValue.nullValue();
+    }
+  }
+
+  /** Converts a domain hit sort value into its protobuf representation. */
+  public static AstraSearch.HitSortValue toHitSortValueProto(HitSortValue sortValue) {
+    AstraSearch.HitSortValue.Builder valueBuilder = AstraSearch.HitSortValue.newBuilder();
+    switch (sortValue.kind()) {
+      case NULL -> valueBuilder.setNullValue(AstraSearch.NullValue.NULL_VALUE);
+      case INT -> valueBuilder.setIntValue((Integer) sortValue.value());
+      case LONG -> valueBuilder.setLongValue((Long) sortValue.value());
+      case FLOAT -> valueBuilder.setFloatValue((Float) sortValue.value());
+      case DOUBLE -> valueBuilder.setDoubleValue((Double) sortValue.value());
+      case STRING -> valueBuilder.setStringValue((String) sortValue.value());
+      case BOOLEAN -> valueBuilder.setBoolValue((Boolean) sortValue.value());
+      case BYTES -> valueBuilder.setBytesValue((ByteString) sortValue.value());
+      case IP_ADDRESS -> valueBuilder.setIpValue((ByteString) sortValue.value());
+    }
+    return valueBuilder.build();
   }
 
   public static FieldType fromSchemaDefinitionProto(
@@ -220,15 +367,18 @@ public class SearchResultUtils {
     searchResultBuilder.setFulfilledSnapshots(searchResult.fulfilledSnapshots);
 
     // Set hits
-    ArrayList<String> protoHits = new ArrayList<>(searchResult.hits.size());
-    for (T hit : searchResult.hits) {
+    for (SearchResultHit<T> hit : searchResult.hits) {
       try {
-        protoHits.add(JsonUtil.writeAsString(hit));
+        searchResultBuilder.addHits(
+            AstraSearch.SearchResult.Hit.newBuilder()
+                .setMessage(JsonUtil.writeAsString(hit.message()))
+                .addAllSortValues(
+                    hit.sortValues().stream().map(SearchResultUtils::toHitSortValueProto).toList())
+                .build());
       } catch (JsonProcessingException e) {
         throw new IllegalArgumentException(e);
       }
     }
-    searchResultBuilder.addAllHits(protoHits);
 
     ByteString bytes =
         ByteString.copyFrom(

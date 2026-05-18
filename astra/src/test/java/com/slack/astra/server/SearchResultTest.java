@@ -4,19 +4,25 @@ import static com.slack.astra.util.AggregatorFactoriesUtil.createGenericDateHist
 import static org.assertj.core.api.Assertions.assertThat;
 
 import brave.Tracing;
+import com.google.common.net.InetAddresses;
+import com.google.protobuf.ByteString;
 import com.slack.astra.logstore.LogMessage;
 import com.slack.astra.logstore.opensearch.OpenSearchAdapter;
 import com.slack.astra.logstore.opensearch.OpenSearchInternalAggregation;
+import com.slack.astra.logstore.search.HitSortValue;
 import com.slack.astra.logstore.search.SearchResult;
+import com.slack.astra.logstore.search.SearchResultHit;
 import com.slack.astra.logstore.search.SearchResultUtils;
 import com.slack.astra.proto.service.AstraSearch;
 import com.slack.astra.testlib.MessageUtil;
 import com.slack.astra.testlib.TemporaryLogStoreAndSearcherExtension;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import org.apache.lucene.document.InetAddressPoint;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
 import org.opensearch.search.aggregations.AggregatorFactories;
@@ -74,7 +80,7 @@ public class SearchResultTest {
             null);
     InternalAggregations internalAggregations = aggregationExecution.finish();
     SearchResult<LogMessage> searchResult =
-        new SearchResult<>(logMessages, 1, 1, 5, 7, 7, internalAggregations);
+        searchResult(logMessages, 1, 1, 5, 7, 7, internalAggregations);
     AstraSearch.SearchResult protoSearchResult =
         SearchResultUtils.toSearchResultProto(searchResult);
 
@@ -164,7 +170,7 @@ public class SearchResultTest {
             null);
     InternalAggregations internalAggregations = aggregationExecution.finish();
     SearchResult<LogMessage> searchResult =
-        new SearchResult<>(List.of(), 1, 0, 1, 1, 1, internalAggregations);
+        searchResult(List.of(), 1, 0, 1, 1, 1, internalAggregations);
 
     AstraSearch.SearchResult protoSearchResult =
         SearchResultUtils.toSearchResultProto(searchResult);
@@ -177,5 +183,62 @@ public class SearchResultTest {
     assertThat(bar).isNotNull();
     assertThat(foo.getName()).isEqualTo("foo");
     assertThat(bar.getName()).isEqualTo("bar");
+  }
+
+  @Test
+  void testSearchResultProtoRoundTripPreservesHitSortValues() throws Exception {
+    Tracing.newBuilder().build();
+    LogMessage message = MessageUtil.makeMessage(1);
+    List<HitSortValue> sortValues =
+        Arrays.asList(
+            HitSortValue.bytes(ByteString.copyFromUtf8("encoded-id")),
+            HitSortValue.ipAddress(
+                ByteString.copyFrom(InetAddressPoint.encode(InetAddresses.forString("10.0.0.1")))),
+            HitSortValue.of(10),
+            HitSortValue.of(20L),
+            HitSortValue.of(25F),
+            HitSortValue.of(30D),
+            HitSortValue.of("forty"),
+            HitSortValue.of(false),
+            HitSortValue.of(null));
+    SearchResult<LogMessage> searchResult =
+        new SearchResult<>(
+            List.of(new SearchResultHit<>(message, sortValues)), 1, 0, 1, 1, 1, null);
+
+    AstraSearch.SearchResult protoSearchResult =
+        SearchResultUtils.toSearchResultProto(searchResult);
+    assertThat(protoSearchResult.getHits(0).getSortValues(0).hasBytesValue()).isTrue();
+    assertThat(protoSearchResult.getHits(0).getSortValues(1).hasIpValue()).isTrue();
+    assertThat(protoSearchResult.getHits(0).getSortValues(4).hasFloatValue()).isTrue();
+    SearchResult<LogMessage> convertedSearchResult =
+        SearchResultUtils.fromSearchResultProto(protoSearchResult);
+
+    assertThat(convertedSearchResult.hits).hasSize(1);
+    assertThat(convertedSearchResult.hits.get(0).message()).isEqualTo(message);
+    assertThat(convertedSearchResult.hits.get(0).sortValues())
+        .containsExactlyElementsOf(sortValues);
+  }
+
+  private SearchResult<LogMessage> searchResult(
+      List<LogMessage> messages,
+      long tookMicros,
+      int failedNodes,
+      int totalNodes,
+      int totalSnapshots,
+      int snapshotsWithReplicas,
+      InternalAggregations internalAggregations) {
+    return new SearchResult<>(
+        messages.stream()
+            .map(
+                message ->
+                    new SearchResultHit<>(
+                        message, List.of(HitSortValue.of(message.getTimestamp().toEpochMilli()))))
+            .toList(),
+        tookMicros,
+        failedNodes,
+        totalNodes,
+        totalSnapshots,
+        snapshotsWithReplicas,
+        internalAggregations);
   }
 }

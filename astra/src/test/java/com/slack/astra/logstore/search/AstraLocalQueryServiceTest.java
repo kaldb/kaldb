@@ -13,7 +13,6 @@ import static org.mockito.Mockito.when;
 
 import brave.Tracing;
 import com.adobe.testing.s3mock.junit5.S3MockExtension;
-import com.google.protobuf.ByteString;
 import com.slack.astra.chunkManager.ChunkManager;
 import com.slack.astra.chunkManager.IndexingChunkManager;
 import com.slack.astra.chunkManager.RollOverChunkTask;
@@ -181,10 +180,10 @@ public class AstraLocalQueryServiceTest {
     assertThat(response.getFulfilledSnapshots()).isEqualTo(1);
 
     // Test hit contents
-    assertThat(response.getHits(0)).contains("Message100");
-    List<ByteString> hits = response.getHitsList().asByteStringList();
+    assertThat(response.getHits(0).getMessage()).contains("Message100");
+    List<AstraSearch.SearchResult.Hit> hits = response.getHitsList();
     assertThat(hits.size()).isEqualTo(1);
-    LogWireMessage hit = JsonUtil.read(hits.get(0).toStringUtf8(), LogWireMessage.class);
+    LogWireMessage hit = JsonUtil.read(hits.get(0).getMessage(), LogWireMessage.class);
     LogMessage m = LogMessage.fromWireMessage(hit);
     assertThat(m.getType()).isEqualTo(MessageUtil.TEST_MESSAGE_TYPE);
     assertThat(m.getIndex()).isEqualTo(MessageUtil.TEST_DATASET_NAME);
@@ -237,7 +236,7 @@ public class AstraLocalQueryServiceTest {
 
     assertThat(response.getHitsCount()).isZero();
     assertThat(response.getTookMicros()).isNotZero();
-    assertThat(response.getHitsList().asByteStringList().size()).isZero();
+    assertThat(response.getHitsList().size()).isZero();
     assertThat(response.getFailedNodes()).isZero();
     assertThat(response.getTotalNodes()).isEqualTo(1);
     assertThat(response.getRequestedSnapshots()).isEqualTo(1);
@@ -288,7 +287,7 @@ public class AstraLocalQueryServiceTest {
     assertThat(response.getTotalNodes()).isEqualTo(1);
     assertThat(response.getRequestedSnapshots()).isEqualTo(1);
     assertThat(response.getFulfilledSnapshots()).isEqualTo(1);
-    assertThat(response.getHitsList().asByteStringList().size()).isZero();
+    assertThat(response.getHitsList().size()).isZero();
 
     // Test histogram buckets
     InternalAggregations internalAggregations =
@@ -336,11 +335,11 @@ public class AstraLocalQueryServiceTest {
     assertThat(response.getFulfilledSnapshots()).isEqualTo(1);
 
     // Test hit contents
-    assertThat(response.getHitsList().asByteStringList().size()).isEqualTo(1);
-    assertThat(response.getHits(0)).contains("Message1");
-    List<ByteString> hits = response.getHitsList().asByteStringList();
+    assertThat(response.getHitsList().size()).isEqualTo(1);
+    assertThat(response.getHits(0).getMessage()).contains("Message1");
+    List<AstraSearch.SearchResult.Hit> hits = response.getHitsList();
     assertThat(hits.size()).isEqualTo(1);
-    LogWireMessage hit = JsonUtil.read(hits.get(0).toStringUtf8(), LogWireMessage.class);
+    LogWireMessage hit = JsonUtil.read(hits.get(0).getMessage(), LogWireMessage.class);
     LogMessage m = LogMessage.fromWireMessage(hit);
     assertThat(m.getType()).isEqualTo(MessageUtil.TEST_MESSAGE_TYPE);
     assertThat(m.getIndex()).isEqualTo(MessageUtil.TEST_DATASET_NAME);
@@ -558,10 +557,10 @@ public class AstraLocalQueryServiceTest {
     assertThat(response.getFulfilledSnapshots()).isEqualTo(1);
 
     // Test hit contents
-    assertThat(response.getHits(0)).contains("Message1");
-    List<ByteString> hits = response.getHitsList().asByteStringList();
+    assertThat(response.getHits(0).getMessage()).contains("Message1");
+    List<AstraSearch.SearchResult.Hit> hits = response.getHitsList();
     assertThat(hits.size()).isEqualTo(1);
-    LogWireMessage hit = JsonUtil.read(hits.get(0).toStringUtf8(), LogWireMessage.class);
+    LogWireMessage hit = JsonUtil.read(hits.get(0).getMessage(), LogWireMessage.class);
     LogMessage m = LogMessage.fromWireMessage(hit);
     assertThat(m.getType()).isEqualTo(MessageUtil.TEST_MESSAGE_TYPE);
     assertThat(m.getIndex()).isEqualTo(MessageUtil.TEST_DATASET_NAME);
