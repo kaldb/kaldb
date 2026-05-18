@@ -369,6 +369,22 @@ public class AstraDistributedQueryService extends AstraQueryServiceBase implemen
     }
   }
 
+  private static AstraSearch.SearchRequest toNodeSearchRequest(
+      AstraSearch.SearchRequest request, List<String> chunkIds) {
+    int howMany = request.getHowMany();
+    int startFrom = request.getStartFrom();
+    if (howMany > 0 && startFrom > Integer.MAX_VALUE - howMany) {
+      throw new IllegalArgumentException("from plus size is too large.");
+    }
+
+    return request.toBuilder()
+        .clearChunkIds()
+        .addAllChunkIds(chunkIds)
+        .setHowMany(howMany == 0 ? 0 : startFrom + howMany)
+        .setStartFrom(0)
+        .build();
+  }
+
   private AstraServiceGrpc.AstraServiceFutureStub getStub(String url) {
     if (stubs.get(url) != null) {
       return stubs.get(url);
@@ -484,9 +500,7 @@ public class AstraDistributedQueryService extends AstraQueryServiceBase implemen
                                   }
 
                                   AstraSearch.SearchRequest localSearchReq =
-                                      distribSearchReq.toBuilder()
-                                          .addAllChunkIds(searchNode.getValue())
-                                          .build();
+                                      toNodeSearchRequest(distribSearchReq, searchNode.getValue());
                                   SearchResult<LogMessage> temp =
                                       SearchResultUtils.fromSearchResultProtoOrEmpty(
                                           stub.withDeadlineAfter(
