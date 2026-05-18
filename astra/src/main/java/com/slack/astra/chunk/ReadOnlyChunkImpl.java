@@ -627,7 +627,8 @@ public class ReadOnlyChunkImpl<T> implements Chunk<T> {
 
       return logSearcher.search(
           query.dataset,
-          query.howMany,
+          query.leafHowMany(),
+          query.sortFieldSpecs,
           query.queryBuilder,
           query.sourceFieldFilter,
           query.aggregatorFactoriesBuilder);

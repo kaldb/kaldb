@@ -16,9 +16,17 @@ import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.when;
 
 import brave.Tracing;
+import com.google.common.io.Files;
 import com.google.common.util.concurrent.Futures;
 import com.slack.astra.chunk.ChunkInfo;
 import com.slack.astra.chunk.SearchContext;
+import com.slack.astra.elasticsearchApi.OpenSearchRequest;
+import com.slack.astra.logstore.DocumentBuilder;
+import com.slack.astra.logstore.LogMessage;
+import com.slack.astra.logstore.LogStore;
+import com.slack.astra.logstore.LuceneIndexStoreConfig;
+import com.slack.astra.logstore.LuceneIndexStoreImpl;
+import com.slack.astra.logstore.schema.SchemaAwareLogDocumentBuilderImpl;
 import com.slack.astra.metadata.core.AstraMetadataTestUtils;
 import com.slack.astra.metadata.core.CuratorBuilder;
 import com.slack.astra.metadata.dataset.DatasetMetadata;
@@ -32,7 +40,13 @@ import com.slack.astra.proto.config.AstraConfigs;
 import com.slack.astra.proto.schema.Schema;
 import com.slack.astra.proto.service.AstraSearch;
 import com.slack.astra.proto.service.AstraServiceGrpc;
+import com.slack.astra.testlib.MessageUtil;
+import com.slack.astra.testlib.SpanUtil;
+import com.slack.service.murron.trace.Trace;
+import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.io.File;
+import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -1049,6 +1063,75 @@ public class AstraDistributedQueryServiceTest {
     distributedQueryService.close();
   }
 
+  @Test
+  public void testDistributedSearchAppliesFromAfterGlobalHitSort() throws Exception {
+    Instant start = Instant.parse("2026-05-18T01:30:00Z");
+    Instant node1End = start.plusSeconds(10);
+    Instant node2Start = node1End.plusMillis(1);
+    Instant end = node2Start.plusSeconds(10);
+
+    datasetMetadataStore.createSync(
+        new DatasetMetadata(
+            MessageUtil.TEST_DATASET_NAME,
+            "testOwner",
+            1,
+            List.of(
+                new DatasetPartitionMetadata(
+                    start.toEpochMilli(), end.toEpochMilli(), List.of("1", "2"))),
+            MessageUtil.TEST_DATASET_NAME));
+    await().until(() -> AstraMetadataTestUtils.listSyncUncached(datasetMetadataStore).size() == 1);
+
+    createIndexerZKMetadata(start, node1End, "1", indexer1SearchContext);
+    createIndexerZKMetadata(node2Start, end, "2", indexer2SearchContext);
+    await().until(() -> AstraMetadataTestUtils.listSyncUncached(snapshotMetadataStore).size() == 4);
+    await().until(() -> AstraMetadataTestUtils.listSyncUncached(searchMetadataStore).size() == 2);
+
+    List<Trace.Span> node1Spans =
+        List.of(
+            makeWindowSpan(1, start.plusMillis(1), 62, 10, 768, false, false),
+            makeWindowSpan(2, start.plusMillis(2), 62, 20, 768, false, false),
+            makeWindowSpan(3, start.plusMillis(3), 62, 30, 768, false, false));
+    List<Trace.Span> node2Spans =
+        List.of(
+            makeWindowSpan(4, node2Start.plusMillis(1), 62, 15, 768, false, false),
+            makeWindowSpan(5, node2Start.plusMillis(2), 62, 25, 768, false, false),
+            makeWindowSpan(6, node2Start.plusMillis(3), 62, 35, 768, false, false));
+
+    AstraDistributedQueryService distributedQueryService = createDistributedQueryService();
+    distributedQueryService.stubs.put(
+        indexer1SearchContext.toString(), mockSearchFutureStub(node1Spans));
+    distributedQueryService.stubs.put(
+        indexer2SearchContext.toString(), mockSearchFutureStub(node2Spans));
+
+    AstraSearch.SearchRequest request =
+        new OpenSearchRequest()
+            .parseSingleSearchRequest(
+                MessageUtil.TEST_DATASET_NAME,
+                """
+                {
+                  "from": 2,
+                  "size": 2,
+                  "query": {
+                    "match_all": {}
+                  },
+                  "sort": [
+                    {
+                      "WindowClientWidth": {
+                        "order": "asc"
+                      }
+                    }
+                  ]
+                }
+                """);
+
+    SearchResult<LogMessage> result =
+        SearchResultUtils.fromSearchResultProto(distributedQueryService.doSearch(request));
+
+    assertThat(result.hits.stream().map(hit -> hit.getSource().get("WindowClientWidth")).toList())
+        .containsExactly(20, 25);
+    distributedQueryService.close();
+  }
+
   private String createIndexerZKMetadata(
       Instant chunkCreationTime,
       Instant chunkEndTime,
@@ -1111,5 +1194,113 @@ public class AstraDistributedQueryServiceTest {
         getMatchingSearchMetadata(searchMetadataStore, snapshotsToSearch);
 
     return getNodesAndSnapshotsToQuery(searchMetadataToQuery);
+  }
+
+  private AstraDistributedQueryService createDistributedQueryService() {
+    return new AstraDistributedQueryService(
+        searchMetadataStore,
+        snapshotMetadataStore,
+        datasetMetadataStore,
+        metricsRegistry,
+        Duration.ofSeconds(10),
+        Duration.ofSeconds(10));
+  }
+
+  private AstraServiceGrpc.AstraServiceFutureStub mockSearchFutureStub(List<Trace.Span> spans)
+      throws Exception {
+    AstraServiceGrpc.AstraServiceFutureStub futureStub =
+        mock(AstraServiceGrpc.AstraServiceFutureStub.class);
+    when(futureStub.withDeadlineAfter(anyLong(), any(TimeUnit.class))).thenReturn(futureStub);
+    when(futureStub.withInterceptors(any())).thenReturn(futureStub);
+    when(futureStub.search(any(AstraSearch.SearchRequest.class)))
+        .thenAnswer(
+            invocation ->
+                Futures.immediateFuture(
+                    SearchResultUtils.toSearchResultProto(
+                        searchLocally(invocation.getArgument(0), spans))));
+    return futureStub;
+  }
+
+  private SearchResult<LogMessage> searchLocally(
+      AstraSearch.SearchRequest request, List<Trace.Span> spans) throws IOException {
+    SearchQuery searchQuery = SearchResultUtils.fromSearchRequest(request);
+    File tempFolder = Files.createTempDir();
+    LuceneIndexStoreConfig indexStoreCfg =
+        new LuceneIndexStoreConfig(
+            Duration.of(1, ChronoUnit.MINUTES),
+            Duration.of(1, ChronoUnit.MINUTES),
+            tempFolder.getCanonicalPath(),
+            false);
+    MeterRegistry tempMetricsRegistry = new SimpleMeterRegistry();
+    DocumentBuilder documentBuilder =
+        SchemaAwareLogDocumentBuilderImpl.build(
+            SchemaAwareLogDocumentBuilderImpl.FieldConflictPolicy.DROP_FIELD,
+            true,
+            tempMetricsRegistry);
+    LogStore logStore =
+        new LuceneIndexStoreImpl(indexStoreCfg, documentBuilder, tempMetricsRegistry);
+    LogIndexSearcherImpl logSearcher =
+        new LogIndexSearcherImpl(logStore.getAstraSearcherManager(), logStore.getSchema());
+
+    for (Trace.Span span : spans) {
+      logStore.addMessage(span);
+    }
+    logStore.commit();
+    logStore.refresh();
+
+    try {
+      return logSearcher.search(
+          searchQuery.dataset,
+          searchQuery.leafHowMany(),
+          searchQuery.sortFieldSpecs,
+          searchQuery.queryBuilder,
+          searchQuery.sourceFieldFilter,
+          searchQuery.aggregatorFactoriesBuilder);
+    } finally {
+      logSearcher.close();
+      logStore.close();
+      logStore.cleanup();
+      tempMetricsRegistry.close();
+    }
+  }
+
+  private Trace.Span makeWindowSpan(
+      int id,
+      Instant timestamp,
+      int counterId,
+      int windowClientWidth,
+      int windowClientHeight,
+      boolean dontCountHits,
+      boolean isRefresh) {
+    return SpanUtil.makeSpan(
+        id,
+        "window-message-" + id,
+        timestamp,
+        List.of(
+            Trace.KeyValue.newBuilder()
+                .setKey("CounterID")
+                .setFieldType(Schema.SchemaFieldType.INTEGER)
+                .setVInt32(counterId)
+                .build(),
+            Trace.KeyValue.newBuilder()
+                .setKey("WindowClientWidth")
+                .setFieldType(Schema.SchemaFieldType.INTEGER)
+                .setVInt32(windowClientWidth)
+                .build(),
+            Trace.KeyValue.newBuilder()
+                .setKey("WindowClientHeight")
+                .setFieldType(Schema.SchemaFieldType.INTEGER)
+                .setVInt32(windowClientHeight)
+                .build(),
+            Trace.KeyValue.newBuilder()
+                .setKey("DontCountHits")
+                .setFieldType(Schema.SchemaFieldType.BOOLEAN)
+                .setVBool(dontCountHits)
+                .build(),
+            Trace.KeyValue.newBuilder()
+                .setKey("IsRefresh")
+                .setFieldType(Schema.SchemaFieldType.BOOLEAN)
+                .setVBool(isRefresh)
+                .build()));
   }
 }

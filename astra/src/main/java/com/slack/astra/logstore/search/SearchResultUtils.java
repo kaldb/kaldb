@@ -3,6 +3,7 @@ package com.slack.astra.logstore.search;
 import brave.ScopedSpan;
 import brave.Tracing;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.protobuf.ByteString;
 import com.slack.astra.logstore.LogMessage;
@@ -14,6 +15,7 @@ import com.slack.astra.util.JsonUtil;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -136,10 +138,73 @@ public class SearchResultUtils {
         searchRequest.getStartTimeEpochMs(),
         searchRequest.getEndTimeEpochMs(),
         searchRequest.getHowMany(),
+        searchRequest.getStartFrom(),
+        parseSortFieldSpecs(searchRequest.getSortJson()),
         searchRequest.getChunkIdsList(),
         queryBuilder,
         SourceFieldFilter.fromProto(searchRequest.getSourceFieldFilter()),
         aggregatorFactoriesBuilder);
+  }
+
+  /** Parses OpenSearch hit sort clauses into the internal sort representation. */
+  public static List<SearchQuery.SortFieldSpec> parseSortFieldSpecs(String sortJson) {
+    if (sortJson == null || sortJson.isBlank()) {
+      return List.of();
+    }
+
+    try {
+      JsonNode sortNode = objectMapper.readTree(sortJson);
+      List<SearchQuery.SortFieldSpec> sortFieldSpecs = new ArrayList<>();
+
+      if (sortNode.isArray()) {
+        for (JsonNode sortClause : sortNode) {
+          addSortFieldSpec(sortFieldSpecs, sortClause);
+        }
+      } else {
+        addSortFieldSpec(sortFieldSpecs, sortNode);
+      }
+
+      return sortFieldSpecs;
+    } catch (IOException e) {
+      throw new IllegalArgumentException(e);
+    }
+  }
+
+  private static void addSortFieldSpec(
+      List<SearchQuery.SortFieldSpec> sortFieldSpecs, JsonNode sortClause) {
+    if (sortClause == null || sortClause.isNull()) {
+      return;
+    }
+    if (sortClause.isTextual()) {
+      addSortFieldSpec(sortFieldSpecs, sortClause.asText(), SearchQuery.SortDirection.ASC);
+      return;
+    }
+    if (!sortClause.isObject()) {
+      throw new IllegalArgumentException("Unsupported sort clause: " + sortClause);
+    }
+
+    Iterator<Map.Entry<String, JsonNode>> fields = sortClause.fields();
+    while (fields.hasNext()) {
+      Map.Entry<String, JsonNode> entry = fields.next();
+      JsonNode value = entry.getValue();
+      SearchQuery.SortDirection direction =
+          value != null
+                  && ((value.isObject() && "desc".equalsIgnoreCase(value.path("order").asText()))
+                      || (value.isTextual() && "desc".equalsIgnoreCase(value.asText())))
+              ? SearchQuery.SortDirection.DESC
+              : SearchQuery.SortDirection.ASC;
+      addSortFieldSpec(sortFieldSpecs, entry.getKey(), direction);
+    }
+  }
+
+  private static void addSortFieldSpec(
+      List<SearchQuery.SortFieldSpec> sortFieldSpecs,
+      String fieldName,
+      SearchQuery.SortDirection direction) {
+    if ("_doc".equals(fieldName)) {
+      return;
+    }
+    sortFieldSpecs.add(new SearchQuery.SortFieldSpec(fieldName, direction));
   }
 
   public static SearchResult<LogMessage> fromSearchResultProtoOrEmpty(

@@ -9,6 +9,7 @@ public class IllegalArgumentLogIndexSearcherImpl implements LogIndexSearcher<Log
   public SearchResult<LogMessage> search(
       String dataset,
       int howMany,
+      java.util.List<SearchQuery.SortFieldSpec> sortFieldSpecs,
       QueryBuilder queryBuilder,
       SourceFieldFilter sourceFieldFilter,
       AggregatorFactories.Builder aggregatorFactoriesBuilder) {

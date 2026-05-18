@@ -19,6 +19,9 @@ message SearchRequest {
   int64 end_time_epoch_ms = 5;
   int32 how_many = 6;
 
+  // The zero-based result offset for top-level hits.
+  int32 start_from = 12;
+
   // The fully query JSON object, to be used in the leaf nodes and parsed by OpenSearch
   string query = 8;
 
@@ -27,6 +30,10 @@ message SearchRequest {
 
   // The full agg JSON object, to be used in the leaf and query nodes and parsed by OpenSearch
   string aggregation_json = 10;
+
+  // The full hit sort JSON object/array, to be used in the leaf and query nodes and parsed by
+  // Astra's OpenSearch compatibility layer.
+  string sort_json = 11;
 
   message SourceFieldFilter {
     // Whether or not to include/exclude _all_ fields
