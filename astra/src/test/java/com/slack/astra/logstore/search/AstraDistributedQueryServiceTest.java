@@ -16,9 +16,17 @@ import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.when;
 
 import brave.Tracing;
+import com.google.common.io.Files;
 import com.google.common.util.concurrent.Futures;
 import com.slack.astra.chunk.ChunkInfo;
 import com.slack.astra.chunk.SearchContext;
+import com.slack.astra.elasticsearchApi.OpenSearchRequest;
+import com.slack.astra.logstore.DocumentBuilder;
+import com.slack.astra.logstore.LogMessage;
+import com.slack.astra.logstore.LogStore;
+import com.slack.astra.logstore.LuceneIndexStoreConfig;
+import com.slack.astra.logstore.LuceneIndexStoreImpl;
+import com.slack.astra.logstore.schema.SchemaAwareLogDocumentBuilderImpl;
 import com.slack.astra.metadata.core.AstraMetadataTestUtils;
 import com.slack.astra.metadata.core.CuratorBuilder;
 import com.slack.astra.metadata.dataset.DatasetMetadata;
@@ -32,10 +40,17 @@ import com.slack.astra.proto.config.AstraConfigs;
 import com.slack.astra.proto.schema.Schema;
 import com.slack.astra.proto.service.AstraSearch;
 import com.slack.astra.proto.service.AstraServiceGrpc;
+import com.slack.astra.testlib.MessageUtil;
+import com.slack.astra.testlib.SpanUtil;
+import com.slack.service.murron.trace.Trace;
+import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.io.File;
+import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -49,6 +64,9 @@ import org.apache.curator.x.async.AsyncCuratorFramework;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.opensearch.search.aggregations.InternalAggregations;
+import org.opensearch.search.aggregations.bucket.terms.StringTerms;
+import org.opensearch.search.aggregations.metrics.InternalValueCount;
 
 public class AstraDistributedQueryServiceTest {
 
@@ -1049,6 +1067,318 @@ public class AstraDistributedQueryServiceTest {
     distributedQueryService.close();
   }
 
+  @Test
+  public void testDistributedSearchSupportsValueCountAggregations() throws Exception {
+    Instant start = Instant.parse("2026-05-18T00:00:00Z");
+    Instant node1End = start.plusSeconds(10);
+    Instant node2Start = node1End.plusMillis(1);
+    Instant end = node2Start.plusSeconds(10);
+
+    datasetMetadataStore.createSync(
+        new DatasetMetadata(
+            MessageUtil.TEST_DATASET_NAME,
+            "testOwner",
+            1,
+            List.of(
+                new DatasetPartitionMetadata(
+                    start.toEpochMilli(), end.toEpochMilli(), List.of("1", "2"))),
+            MessageUtil.TEST_DATASET_NAME));
+    await().until(() -> AstraMetadataTestUtils.listSyncUncached(datasetMetadataStore).size() == 1);
+
+    createIndexerZKMetadata(start, node1End, "1", indexer1SearchContext);
+    createIndexerZKMetadata(node2Start, end, "2", indexer2SearchContext);
+    await().until(() -> AstraMetadataTestUtils.listSyncUncached(snapshotMetadataStore).size() == 4);
+    await().until(() -> AstraMetadataTestUtils.listSyncUncached(searchMetadataStore).size() == 2);
+
+    List<Trace.Span> node1Spans =
+        List.of(
+            SpanUtil.makeSpan(
+                1,
+                "count-message-1",
+                start.plusMillis(1),
+                List.of(
+                    Trace.KeyValue.newBuilder()
+                        .setKey("AdvEngineID")
+                        .setFieldType(Schema.SchemaFieldType.INTEGER)
+                        .setVInt32(0)
+                        .build())),
+            SpanUtil.makeSpan(
+                2,
+                "count-message-2",
+                start.plusMillis(2),
+                List.of(
+                    Trace.KeyValue.newBuilder()
+                        .setKey("AdvEngineID")
+                        .setFieldType(Schema.SchemaFieldType.INTEGER)
+                        .setVInt32(1)
+                        .build())));
+    List<Trace.Span> node2Spans =
+        List.of(
+            SpanUtil.makeSpan(
+                3,
+                "count-message-3",
+                node2Start.plusMillis(1),
+                List.of(
+                    Trace.KeyValue.newBuilder()
+                        .setKey("AdvEngineID")
+                        .setFieldType(Schema.SchemaFieldType.INTEGER)
+                        .setVInt32(7)
+                        .build())));
+
+    AstraDistributedQueryService distributedQueryService = createDistributedQueryService();
+    distributedQueryService.stubs.put(
+        indexer1SearchContext.toString(), mockSearchFutureStub(node1Spans));
+    distributedQueryService.stubs.put(
+        indexer2SearchContext.toString(), mockSearchFutureStub(node2Spans));
+
+    AstraSearch.SearchRequest allRowsRequest =
+        new OpenSearchRequest()
+            .parseSingleSearchRequest(
+                MessageUtil.TEST_DATASET_NAME,
+                """
+                {
+                  "size": 0,
+                  "query": {
+                    "match_all": {}
+                  },
+                  "aggs": {
+                    "row_count": {
+                      "value_count": {
+                        "field": "@timestamp"
+                      }
+                    }
+                  }
+                }
+                """);
+    AstraSearch.SearchRequest filteredRowsRequest =
+        new OpenSearchRequest()
+            .parseSingleSearchRequest(
+                MessageUtil.TEST_DATASET_NAME,
+                """
+                {
+                  "size": 0,
+                  "query": {
+                    "range": {
+                      "AdvEngineID": {
+                        "gt": 0
+                      }
+                    }
+                  },
+                  "aggs": {
+                    "row_count": {
+                      "value_count": {
+                        "field": "@timestamp"
+                      }
+                    }
+                  }
+                }
+                """);
+
+    InternalAggregations allRowsAggregations =
+        SearchResultUtils.fromSearchResultProto(distributedQueryService.doSearch(allRowsRequest))
+            .internalAggregations;
+    InternalAggregations filteredRowsAggregations =
+        SearchResultUtils.fromSearchResultProto(
+                distributedQueryService.doSearch(filteredRowsRequest))
+            .internalAggregations;
+
+    assertThat(((InternalValueCount) allRowsAggregations.get("row_count")).getValue())
+        .isEqualTo(3L);
+    assertThat(((InternalValueCount) filteredRowsAggregations.get("row_count")).getValue())
+        .isEqualTo(2L);
+    distributedQueryService.close();
+  }
+
+  @Test
+  public void testDistributedSearchSupportsTermsAggregationOrderByCount() throws Exception {
+    Instant start = Instant.parse("2026-05-18T01:00:00Z");
+    Instant node1End = start.plusSeconds(10);
+    Instant node2Start = node1End.plusMillis(1);
+    Instant end = node2Start.plusSeconds(10);
+
+    datasetMetadataStore.createSync(
+        new DatasetMetadata(
+            MessageUtil.TEST_DATASET_NAME,
+            "testOwner",
+            1,
+            List.of(
+                new DatasetPartitionMetadata(
+                    start.toEpochMilli(), end.toEpochMilli(), List.of("1", "2"))),
+            MessageUtil.TEST_DATASET_NAME));
+    await().until(() -> AstraMetadataTestUtils.listSyncUncached(datasetMetadataStore).size() == 1);
+
+    createIndexerZKMetadata(start, node1End, "1", indexer1SearchContext);
+    createIndexerZKMetadata(node2Start, end, "2", indexer2SearchContext);
+    await().until(() -> AstraMetadataTestUtils.listSyncUncached(snapshotMetadataStore).size() == 4);
+    await().until(() -> AstraMetadataTestUtils.listSyncUncached(searchMetadataStore).size() == 2);
+
+    List<Trace.Span> node1Spans =
+        List.of(
+            makeKeywordSpan(
+                1, "url-message-1", start.plusMillis(1), "URL", "https://slack.example"),
+            makeKeywordSpan(
+                2, "url-message-2", start.plusMillis(2), "URL", "https://slack.example"),
+            makeKeywordSpan(
+                3, "url-message-3", start.plusMillis(3), "URL", "https://google.example"));
+    List<Trace.Span> node2Spans =
+        List.of(
+            makeKeywordSpan(
+                4, "url-message-4", node2Start.plusMillis(1), "URL", "https://slack.example"),
+            makeKeywordSpan(
+                5, "url-message-5", node2Start.plusMillis(2), "URL", "https://google.example"));
+
+    AstraDistributedQueryService distributedQueryService = createDistributedQueryService();
+    distributedQueryService.stubs.put(
+        indexer1SearchContext.toString(), mockSearchFutureStub(node1Spans));
+    distributedQueryService.stubs.put(
+        indexer2SearchContext.toString(), mockSearchFutureStub(node2Spans));
+
+    AstraSearch.SearchRequest request =
+        new OpenSearchRequest()
+            .parseSingleSearchRequest(
+                MessageUtil.TEST_DATASET_NAME,
+                """
+                {
+                  "size": 0,
+                  "query": {
+                    "match_all": {}
+                  },
+                  "aggs": {
+                    "top_urls": {
+                      "terms": {
+                        "field": "URL",
+                        "size": 2,
+                        "order": {
+                          "_count": "desc"
+                        }
+                      }
+                    }
+                  }
+                }
+                """);
+
+    InternalAggregations aggregations =
+        SearchResultUtils.fromSearchResultProto(distributedQueryService.doSearch(request))
+            .internalAggregations;
+    StringTerms topUrls = (StringTerms) aggregations.get("top_urls");
+
+    assertThat(topUrls.getBuckets()).hasSize(2);
+    assertThat(topUrls.getBuckets().get(0).getKeyAsString()).isEqualTo("https://slack.example");
+    assertThat(topUrls.getBuckets().get(0).getDocCount()).isEqualTo(3);
+    assertThat(topUrls.getBuckets().get(1).getKeyAsString()).isEqualTo("https://google.example");
+    assertThat(topUrls.getBuckets().get(1).getDocCount()).isEqualTo(2);
+    distributedQueryService.close();
+  }
+
+  @Test
+  public void testDistributedSearchSupportsBucketSortOnTermsAggregation() throws Exception {
+    Instant start = Instant.parse("2026-05-18T02:00:00Z");
+    Instant node1End = start.plusSeconds(10);
+    Instant node2Start = node1End.plusMillis(1);
+    Instant end = node2Start.plusSeconds(10);
+
+    datasetMetadataStore.createSync(
+        new DatasetMetadata(
+            MessageUtil.TEST_DATASET_NAME,
+            "testOwner",
+            1,
+            List.of(
+                new DatasetPartitionMetadata(
+                    start.toEpochMilli(), end.toEpochMilli(), List.of("1", "2"))),
+            MessageUtil.TEST_DATASET_NAME));
+    await().until(() -> AstraMetadataTestUtils.listSyncUncached(datasetMetadataStore).size() == 1);
+
+    createIndexerZKMetadata(start, node1End, "1", indexer1SearchContext);
+    createIndexerZKMetadata(node2Start, end, "2", indexer2SearchContext);
+    await().until(() -> AstraMetadataTestUtils.listSyncUncached(snapshotMetadataStore).size() == 4);
+    await().until(() -> AstraMetadataTestUtils.listSyncUncached(searchMetadataStore).size() == 2);
+
+    List<Trace.Span> node1Spans = new ArrayList<>();
+    List<Trace.Span> node2Spans = new ArrayList<>();
+    int nextId = 1;
+    for (int bucketNumber = 1; bucketNumber <= 12; bucketNumber++) {
+      int occurrences = 13 - bucketNumber;
+      int node1Occurrences = (occurrences + 1) / 2;
+      for (int occurrence = 0; occurrence < occurrences; occurrence++) {
+        Instant timestamp =
+            occurrence < node1Occurrences
+                ? start.plusMillis(nextId)
+                : node2Start.plusMillis(nextId);
+        Trace.Span span =
+            makeKeywordSpan(
+                nextId++,
+                "bucket-message-" + bucketNumber + '-' + occurrence,
+                timestamp,
+                "URL",
+                "https://bucket-" + bucketNumber + ".example");
+        if (occurrence < node1Occurrences) {
+          node1Spans.add(span);
+        } else {
+          node2Spans.add(span);
+        }
+      }
+    }
+
+    AstraDistributedQueryService distributedQueryService = createDistributedQueryService();
+    distributedQueryService.stubs.put(
+        indexer1SearchContext.toString(), mockSearchFutureStub(node1Spans));
+    distributedQueryService.stubs.put(
+        indexer2SearchContext.toString(), mockSearchFutureStub(node2Spans));
+
+    AstraSearch.SearchRequest request =
+        new OpenSearchRequest()
+            .parseSingleSearchRequest(
+                MessageUtil.TEST_DATASET_NAME,
+                """
+                {
+                  "size": 0,
+                  "query": {
+                    "match_all": {}
+                  },
+                  "aggs": {
+                    "top_urls": {
+                      "terms": {
+                        "field": "URL",
+                        "size": 12,
+                        "order": {
+                          "_count": "desc"
+                        }
+                      },
+                      "aggs": {
+                        "page": {
+                          "bucket_sort": {
+                            "sort": [
+                              {
+                                "_count": {
+                                  "order": "desc"
+                                }
+                              }
+                            ],
+                            "from": 5,
+                            "size": 3
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+                """);
+
+    InternalAggregations aggregations =
+        SearchResultUtils.fromSearchResultProto(distributedQueryService.doSearch(request))
+            .internalAggregations;
+    StringTerms topUrls = (StringTerms) aggregations.get("top_urls");
+
+    assertThat(topUrls.getBuckets()).hasSize(3);
+    assertThat(topUrls.getBuckets().get(0).getKeyAsString()).isEqualTo("https://bucket-6.example");
+    assertThat(topUrls.getBuckets().get(0).getDocCount()).isEqualTo(7);
+    assertThat(topUrls.getBuckets().get(1).getKeyAsString()).isEqualTo("https://bucket-7.example");
+    assertThat(topUrls.getBuckets().get(1).getDocCount()).isEqualTo(6);
+    assertThat(topUrls.getBuckets().get(2).getKeyAsString()).isEqualTo("https://bucket-8.example");
+    assertThat(topUrls.getBuckets().get(2).getDocCount()).isEqualTo(5);
+    distributedQueryService.close();
+  }
+
   private String createIndexerZKMetadata(
       Instant chunkCreationTime,
       Instant chunkEndTime,
@@ -1112,4 +1442,86 @@ public class AstraDistributedQueryServiceTest {
 
     return getNodesAndSnapshotsToQuery(searchMetadataToQuery);
   }
+
+  private AstraDistributedQueryService createDistributedQueryService() {
+    return new AstraDistributedQueryService(
+        searchMetadataStore,
+        snapshotMetadataStore,
+        datasetMetadataStore,
+        metricsRegistry,
+        Duration.ofSeconds(10),
+        Duration.ofSeconds(10));
+  }
+
+  private AstraServiceGrpc.AstraServiceFutureStub mockSearchFutureStub(List<Trace.Span> spans)
+      throws Exception {
+    AstraServiceGrpc.AstraServiceFutureStub futureStub =
+        mock(AstraServiceGrpc.AstraServiceFutureStub.class);
+    when(futureStub.withDeadlineAfter(anyLong(), any(TimeUnit.class))).thenReturn(futureStub);
+    when(futureStub.withInterceptors(any())).thenReturn(futureStub);
+    when(futureStub.search(any(AstraSearch.SearchRequest.class)))
+        .thenAnswer(
+            invocation ->
+                Futures.immediateFuture(
+                    SearchResultUtils.toSearchResultProto(
+                        searchLocally(invocation.getArgument(0), spans))));
+    return futureStub;
+  }
+
+  private SearchResult<LogMessage> searchLocally(
+      AstraSearch.SearchRequest request, List<Trace.Span> spans) throws IOException {
+    SearchQuery searchQuery = SearchResultUtils.fromSearchRequest(request);
+    File tempFolder = Files.createTempDir();
+    LuceneIndexStoreConfig indexStoreCfg =
+        new LuceneIndexStoreConfig(
+            Duration.of(1, ChronoUnit.MINUTES),
+            Duration.of(1, ChronoUnit.MINUTES),
+            tempFolder.getCanonicalPath(),
+            false);
+    MeterRegistry tempMetricsRegistry = new SimpleMeterRegistry();
+    DocumentBuilder documentBuilder =
+        SchemaAwareLogDocumentBuilderImpl.build(
+            SchemaAwareLogDocumentBuilderImpl.FieldConflictPolicy.DROP_FIELD,
+            true,
+            tempMetricsRegistry);
+    LogStore logStore =
+        new LuceneIndexStoreImpl(indexStoreCfg, documentBuilder, tempMetricsRegistry);
+    LogIndexSearcherImpl logSearcher =
+        new LogIndexSearcherImpl(logStore.getAstraSearcherManager(), logStore.getSchema());
+
+    for (Trace.Span span : spans) {
+      logStore.addMessage(span);
+    }
+    logStore.commit();
+    logStore.refresh();
+
+    try {
+      return logSearcher.search(
+          searchQuery.dataset,
+          searchQuery.howMany,
+          searchQuery.queryBuilder,
+          searchQuery.sourceFieldFilter,
+          searchQuery.aggregatorFactoriesBuilder);
+    } finally {
+      logSearcher.close();
+      logStore.close();
+      logStore.cleanup();
+      tempMetricsRegistry.close();
+    }
+  }
+
+  private Trace.Span makeKeywordSpan(
+      int id, String message, Instant timestamp, String key, String value) {
+    return SpanUtil.makeSpan(
+        id,
+        message,
+        timestamp,
+        List.of(
+            Trace.KeyValue.newBuilder()
+                .setKey(key)
+                .setFieldType(Schema.SchemaFieldType.KEYWORD)
+                .setVStr(value)
+                .build()));
+  }
+
 }
