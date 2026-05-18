@@ -76,8 +76,8 @@ class ClickBenchDistributedCompatibilityTest {
   private static final String DEFAULT_HOST = "localhost";
   private static final int DEFAULT_PORT = 8081;
   private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
-  private static final Instant Q39_NODE1_START = Instant.parse("2013-07-14T00:00:00Z");
-  private static final Instant Q39_NODE2_START = Instant.parse("2013-07-14T01:00:00Z");
+  private static final Instant NODE1_START = Instant.parse("2013-07-14T00:00:00Z");
+  private static final Instant NODE2_START = Instant.parse("2013-07-14T01:00:00Z");
   private static final SearchContext INDEXER_1_SEARCH_CONTEXT =
       new SearchContext("indexer_host1", 10000);
   private static final SearchContext INDEXER_2_SEARCH_CONTEXT =
@@ -100,7 +100,7 @@ class ClickBenchDistributedCompatibilityTest {
       for (int i = 0; i < buckets.length; i++) {
         ExpectedBucket expectedBucket = buckets[i];
         JsonNode actualBucket = bucketNodes.get(i);
-        assertThat(actualBucket.path("key").asText())
+        assertThat(bucketKey(actualBucket))
             .as("%s: %s -> %s bucket %s key", spec.queryId(), spec.expects(), aggregationName, i)
             .isEqualTo(expectedBucket.key());
         assertThat(actualBucket.path("doc_count").asLong())
@@ -112,8 +112,22 @@ class ClickBenchDistributedCompatibilityTest {
     };
   }
 
-  private static ExpectedBucket bucket(String key, long docCount) {
-    return new ExpectedBucket(key, docCount);
+  private static ExpectedBucket bucket(Object key, long docCount) {
+    return new ExpectedBucket(List.of(String.valueOf(key)), docCount);
+  }
+
+  private static ExpectedBucket bucket(List<?> key, long docCount) {
+    return new ExpectedBucket(key.stream().map(String::valueOf).toList(), docCount);
+  }
+
+  private static List<String> bucketKey(JsonNode bucket) {
+    JsonNode key = bucket.path("key");
+    if (key.isArray()) {
+      List<String> keyParts = new ArrayList<>();
+      key.forEach(keyPart -> keyParts.add(keyPart.asText()));
+      return keyParts;
+    }
+    return List.of(key.asText());
   }
 
   private static List<ClickBenchRow> q39Rows() {
@@ -135,10 +149,41 @@ class ClickBenchDistributedCompatibilityTest {
     return rows;
   }
 
+  private static List<ClickBenchRow> q42Rows() {
+    List<ClickBenchRow> rows = new ArrayList<>();
+    addWindowRows(rows, 1, 1, 1024, 768, 3);
+    addWindowRows(rows, 4, 1, 1440, 900, 1);
+    addWindowRows(rows, 5, 1, 800, 600, 2);
+    addWindowRows(rows, 7, 1, 1920, 1080, 1);
+    addWindowRows(rows, 8, 2, 1024, 768, 2);
+    addWindowRows(rows, 10, 2, 1440, 900, 3);
+    addWindowRows(rows, 13, 2, 800, 600, 1);
+    addWindowRows(rows, 14, 2, 1920, 1080, 1);
+    rows.add(row(15).node(1).windowSize(320, 200).isRefresh(true).build());
+    rows.add(row(16).node(1).windowSize(320, 200).dontCountHits(true).build());
+    rows.add(row(17).node(2).windowSize(320, 200).urlHash(1).build());
+    rows.add(row(18).node(2).windowSize(320, 200).eventDate("2013-08-01T00:00:00Z").build());
+    rows.add(row(19).node(2).windowSize(320, 200).counterId(61).build());
+    return rows;
+  }
+
   private static void addUrlRows(
       List<ClickBenchRow> rows, int firstId, int node, String url, int count) {
     for (int i = 0; i < count; i++) {
       rows.add(row(firstId + i).node(node).url(url).build());
+    }
+  }
+
+  private static void addWindowRows(
+      List<ClickBenchRow> rows,
+      int firstId,
+      int node,
+      int windowClientWidth,
+      int windowClientHeight,
+      int count) {
+    for (int i = 0; i < count; i++) {
+      rows.add(
+          row(firstId + i).node(node).windowSize(windowClientWidth, windowClientHeight).build());
     }
   }
 
@@ -155,6 +200,14 @@ class ClickBenchDistributedCompatibilityTest {
         .setKey(key)
         .setFieldType(Schema.SchemaFieldType.INTEGER)
         .setVInt32(value)
+        .build();
+  }
+
+  private static Trace.KeyValue longField(String key, long value) {
+    return Trace.KeyValue.newBuilder()
+        .setKey(key)
+        .setFieldType(Schema.SchemaFieldType.LONG)
+        .setVInt64(value)
         .build();
   }
 
@@ -253,7 +306,7 @@ class ClickBenchDistributedCompatibilityTest {
   }
 
   private static Instant rowTimestamp(int node, int id) {
-    return (node == 1 ? Q39_NODE1_START : Q39_NODE2_START).plusMillis(id);
+    return (node == 1 ? NODE1_START : NODE2_START).plusMillis(id);
   }
 
   private ElasticsearchApiService elasticsearchApiService;
@@ -390,6 +443,94 @@ class ClickBenchDistributedCompatibilityTest {
                     bucket("https://offset.example/d", 2))));
   }
 
+  @Test
+  public void q42WindowSizesWithBucketOffset() throws Exception {
+    verify(
+        clickBench("Q42")
+            .expects(
+                "window-size page-view buckets after Q42 filters, count ordering, and scaled"
+                    + " bucket offset")
+            .givenRows(q42Rows())
+            .whenAstraReceivesEquivalentOpenSearch(
+                """
+                {
+                  "size": 0,
+                  "query": {
+                    "bool": {
+                      "filter": [
+                        {
+                          "term": {
+                            "CounterID": 62
+                          }
+                        },
+                        {
+                          "range": {
+                            "EventDate": {
+                              "gte": "2013-07-01T00:00:00Z",
+                              "lte": "2013-07-31T23:59:59Z"
+                            }
+                          }
+                        },
+                        {
+                          "term": {
+                            "URLHash": 2868770270353813622
+                          }
+                        }
+                      ],
+                      "must_not": [
+                        {
+                          "term": {
+                            "IsRefresh": true
+                          }
+                        },
+                        {
+                          "term": {
+                            "DontCountHits": true
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "aggs": {
+                    "window_sizes": {
+                      "multi_terms": {
+                        "terms": [
+                          {
+                            "field": "WindowClientWidth"
+                          },
+                          {
+                            "field": "WindowClientHeight"
+                          }
+                        ],
+                        "size": 4,
+                        "order": {
+                          "_count": "desc"
+                        }
+                      },
+                      "aggs": {
+                        "page": {
+                          "bucket_sort": {
+                            "sort": [
+                              {
+                                "_count": {
+                                  "order": "desc"
+                                }
+                              }
+                            ],
+                            "from": 2,
+                            "size": 2
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+                """)
+            .thenResponseContains(
+                buckets(
+                    "window_sizes", bucket(List.of(800, 600), 3), bucket(List.of(1920, 1080), 2))));
+  }
+
   private void verify(ClickBenchSpec spec) throws Exception {
     registerRows(spec.rows());
     AstraServiceGrpc.AstraServiceFutureStub node1Stub = mockSearchFutureStub(spans(spec.rows(), 1));
@@ -515,7 +656,11 @@ class ClickBenchDistributedCompatibilityTest {
             dateField("EventDate", row.eventDate()),
             booleanField("IsRefresh", row.isRefresh()),
             integerField("IsLink", row.isLink()),
-            integerField("IsDownload", row.isDownload())));
+            integerField("IsDownload", row.isDownload()),
+            booleanField("DontCountHits", row.dontCountHits()),
+            longField("URLHash", row.urlHash()),
+            integerField("WindowClientWidth", row.windowClientWidth()),
+            integerField("WindowClientHeight", row.windowClientHeight())));
   }
 
   private JsonNode searchJson(String postBody) throws Exception {
@@ -530,7 +675,7 @@ class ClickBenchDistributedCompatibilityTest {
     void verify(JsonNode response, ClickBenchSpec spec);
   }
 
-  private record ExpectedBucket(String key, long docCount) {}
+  private record ExpectedBucket(List<String> key, long docCount) {}
 
   private record ClickBenchRow(
       int id,
@@ -541,7 +686,11 @@ class ClickBenchDistributedCompatibilityTest {
       int counterId,
       boolean isRefresh,
       int isLink,
-      int isDownload) {
+      int isDownload,
+      boolean dontCountHits,
+      long urlHash,
+      int windowClientWidth,
+      int windowClientHeight) {
     private static final class Builder {
       private final int id;
       private int node = 1;
@@ -552,6 +701,10 @@ class ClickBenchDistributedCompatibilityTest {
       private boolean isRefresh;
       private int isLink = 1;
       private int isDownload;
+      private boolean dontCountHits;
+      private long urlHash = 2868770270353813622L;
+      private int windowClientWidth = 1024;
+      private int windowClientHeight = 768;
 
       private Builder(int id) {
         this.id = id;
@@ -592,10 +745,38 @@ class ClickBenchDistributedCompatibilityTest {
         return this;
       }
 
+      private Builder dontCountHits(boolean dontCountHits) {
+        this.dontCountHits = dontCountHits;
+        return this;
+      }
+
+      private Builder urlHash(long urlHash) {
+        this.urlHash = urlHash;
+        return this;
+      }
+
+      private Builder windowSize(int windowClientWidth, int windowClientHeight) {
+        this.windowClientWidth = windowClientWidth;
+        this.windowClientHeight = windowClientHeight;
+        return this;
+      }
+
       private ClickBenchRow build() {
         Instant rowEventTime = eventTime == null ? rowTimestamp(node, id) : eventTime;
         return new ClickBenchRow(
-            id, node, rowEventTime, eventDate, url, counterId, isRefresh, isLink, isDownload);
+            id,
+            node,
+            rowEventTime,
+            eventDate,
+            url,
+            counterId,
+            isRefresh,
+            isLink,
+            isDownload,
+            dontCountHits,
+            urlHash,
+            windowClientWidth,
+            windowClientHeight);
       }
     }
   }
