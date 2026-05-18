@@ -989,6 +989,136 @@ public class ElasticsearchApiServiceTest {
   }
 
   @Test
+  public void testSingleSearchSupportsClickBenchHitSortQueries() throws Exception {
+    Instant start = Instant.parse("2026-05-18T05:00:00Z");
+    addMessagesToChunkManager(
+        List.of(
+            makeClickBenchHitSpan(1, start.plusSeconds(3), "https://mail.google.example", "zulu"),
+            makeClickBenchHitSpan(2, start.plusSeconds(1), "https://slack.example", ""),
+            makeClickBenchHitSpan(
+                3, start.plusSeconds(2), "https://google.example/search", "delta"),
+            makeClickBenchHitSpan(4, start.plusSeconds(4), "https://astra.example", "bravo"),
+            makeClickBenchHitSpan(5, start.plusSeconds(5), "https://google.example/maps", ""),
+            makeClickBenchHitSpan(6, start.plusSeconds(2), "https://astra.example/docs", "alpha")));
+
+    JsonNode q24 =
+        searchJson(
+            """
+            {
+              "size": 10,
+              "query": {
+                "wildcard": {
+                  "URL": {
+                    "value": "*google*"
+                  }
+                }
+              },
+              "sort": [
+                {
+                  "@timestamp": {
+                    "order": "asc"
+                  }
+                }
+              ]
+            }
+            """);
+    assertThat(sourceValues(q24, "URL"))
+        .containsExactly(
+            "https://google.example/search",
+            "https://mail.google.example",
+            "https://google.example/maps");
+
+    JsonNode q25 =
+        searchJson(
+            """
+            {
+              "size": 10,
+              "query": {
+                "bool": {
+                  "must_not": [
+                    {
+                      "term": {
+                        "SearchPhrase": ""
+                      }
+                    }
+                  ]
+                }
+              },
+              "sort": [
+                {
+                  "@timestamp": {
+                    "order": "asc"
+                  }
+                }
+              ]
+            }
+            """);
+    assertThat(sourceValues(q25, "SearchPhrase"))
+        .containsExactly("delta", "alpha", "zulu", "bravo");
+
+    JsonNode q26 =
+        searchJson(
+            """
+            {
+              "size": 10,
+              "query": {
+                "bool": {
+                  "must_not": [
+                    {
+                      "term": {
+                        "SearchPhrase": ""
+                      }
+                    }
+                  ]
+                }
+              },
+              "sort": [
+                {
+                  "SearchPhrase": {
+                    "order": "asc"
+                  }
+                }
+              ]
+            }
+            """);
+    assertThat(sourceValues(q26, "SearchPhrase"))
+        .containsExactly("alpha", "bravo", "delta", "zulu");
+
+    JsonNode q27 =
+        searchJson(
+            """
+            {
+              "size": 10,
+              "query": {
+                "bool": {
+                  "must_not": [
+                    {
+                      "term": {
+                        "SearchPhrase": ""
+                      }
+                    }
+                  ]
+                }
+              },
+              "sort": [
+                {
+                  "@timestamp": {
+                    "order": "asc"
+                  }
+                },
+                {
+                  "SearchPhrase": {
+                    "order": "asc"
+                  }
+                }
+              ]
+            }
+            """);
+    assertThat(sourceValues(q27, "SearchPhrase"))
+        .containsExactly("alpha", "delta", "zulu", "bravo");
+  }
+
+  @Test
   public void testLargeSetOfQueries() throws Exception {
     addMessagesToChunkManager(SpanUtil.makeSpansWithTimeDifference(1, 100, 1, Instant.now()));
     String postBody = readResource("elasticsearchApi/multisearch_query_10results.ndjson");
@@ -1334,6 +1464,10 @@ public class ElasticsearchApiServiceTest {
     return OBJECT_MAPPER.readTree(aggregatedRes.content(StandardCharsets.UTF_8));
   }
 
+  private List<String> sourceValues(JsonNode searchResponse, String field) {
+    return searchResponse.findValue("hits").get("hits").findValuesAsText(field);
+  }
+
   private static DatasetMetadata datasetMetadata(String name) {
     return new DatasetMetadata(name, "test-owner", 0, List.of(), name);
   }
@@ -1395,6 +1529,25 @@ public class ElasticsearchApiServiceTest {
                 .setKey("IsRefresh")
                 .setFieldType(Schema.SchemaFieldType.BOOLEAN)
                 .setVBool(isRefresh)
+                .build(),
+            Trace.KeyValue.newBuilder()
+                .setKey("SearchPhrase")
+                .setFieldType(Schema.SchemaFieldType.KEYWORD)
+                .setVStr(searchPhrase)
+                .build()));
+  }
+
+  private Trace.Span makeClickBenchHitSpan(
+      int id, Instant timestamp, String url, String searchPhrase) {
+    return SpanUtil.makeSpan(
+        id,
+        "clickbench-message-" + id,
+        timestamp,
+        List.of(
+            Trace.KeyValue.newBuilder()
+                .setKey("URL")
+                .setFieldType(Schema.SchemaFieldType.KEYWORD)
+                .setVStr(url)
                 .build(),
             Trace.KeyValue.newBuilder()
                 .setKey("SearchPhrase")
