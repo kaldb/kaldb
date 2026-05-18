@@ -479,7 +479,7 @@
         "Name",
         "Owner",
         "Service Pattern",
-        "Throughput (bytes)",
+        "Throughput (bytes/sec)",
         "Partition Mode",
         "Active Count",
         "Active Partitions",
@@ -540,14 +540,14 @@
     var mode = form.elements.partition_mode.value;
 
     if (partitionCatalogSupport.status === "unknown") {
-      if (strategy === "auto" || mode !== "preserve") {
+      if (strategy === "auto" || mode === "shared" || mode === "dedicated") {
         messages.push("Checking partition catalog support for shard auto-assignment features.");
       }
     } else if (partitionCatalogSupport.status === "unavailable") {
       if (strategy === "auto") {
         messages.push("Auto-assignment requires a manager build with partition catalog support.");
       }
-      if (mode !== "preserve") {
+      if (mode === "shared" || mode === "dedicated") {
         messages.push("Shared and dedicated mode overrides require shard auto-assignment support.");
       }
       if (partitionCatalogSupport.lastError) {
@@ -581,8 +581,8 @@
     form.reset();
     form.elements.name.value = dataset.name;
     form.elements.throughput_bytes.value = dataset.throughputBytes == null ? 0 : dataset.throughputBytes;
-    form.elements.assignment_strategy.value = activeIds.length ? "manual" : "auto";
-    form.elements.partition_mode.value = "preserve";
+    form.elements.partition_mode.value = dataset.usingDedicatedPartitions ? "dedicated" : "shared";
+    form.elements.assignment_strategy.value = "auto";
     form.elements.partition_ids.value = activeIds.join(", ");
 
     document.getElementById("partition-current-summary").innerHTML = buildPartitionSummaryCard(dataset);
@@ -686,7 +686,7 @@
             showToast("Error: auto-assignment requires partition catalog support", "error");
             return;
           }
-          if (!catalogSupported && partitionMode !== "preserve") {
+          if (!catalogSupported && (partitionMode === "shared" || partitionMode === "dedicated")) {
             showToast("Error: shared/dedicated mode overrides require partition catalog support", "error");
             return;
           }
@@ -891,9 +891,9 @@
       partitionsGrid = new gridjs.Grid({
         columns: [
           "Partition ID",
-          "Max Capacity",
-          "Provisioned",
-          "Available",
+          "Max Capacity (bytes/sec)",
+          "Provisioned (bytes/sec)",
+          "Available (bytes/sec)",
           "Occupancy",
           "Datasets",
           { name: "Actions", sort: false },
