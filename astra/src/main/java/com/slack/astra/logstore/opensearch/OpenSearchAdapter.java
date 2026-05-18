@@ -9,11 +9,9 @@ import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
-import org.apache.lucene.search.CollectorManager;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.Query;
 import org.opensearch.cluster.ClusterModule;
@@ -38,8 +36,10 @@ import org.opensearch.index.similarity.SimilarityService;
 import org.opensearch.indices.fielddata.cache.IndicesFieldDataCache;
 import org.opensearch.search.aggregations.Aggregator;
 import org.opensearch.search.aggregations.AggregatorFactories;
-import org.opensearch.search.aggregations.CardinalityUpperBound;
+import org.opensearch.search.aggregations.BucketCollector;
 import org.opensearch.search.aggregations.InternalAggregation;
+import org.opensearch.search.aggregations.InternalAggregations;
+import org.opensearch.search.aggregations.MultiBucketCollector;
 import org.opensearch.search.aggregations.bucket.filter.FiltersAggregationBuilder;
 import org.opensearch.search.aggregations.bucket.histogram.AutoDateHistogramAggregationBuilder;
 import org.opensearch.search.aggregations.bucket.histogram.DateHistogramAggregationBuilder;
@@ -53,7 +53,6 @@ import org.opensearch.search.aggregations.metrics.MinAggregationBuilder;
 import org.opensearch.search.aggregations.metrics.PercentilesAggregationBuilder;
 import org.opensearch.search.aggregations.metrics.SumAggregationBuilder;
 import org.opensearch.search.aggregations.metrics.ValueCountAggregationBuilder;
-import org.opensearch.search.aggregations.pipeline.PipelineAggregator;
 import org.opensearch.search.aggregations.support.ValuesSourceRegistry;
 import org.opensearch.search.internal.SearchContext;
 import org.slf4j.Logger;
@@ -79,7 +78,21 @@ public class OpenSearchAdapter {
     this.chunkSchema = chunkSchema;
   }
 
-  public Aggregator buildAggregatorFromFactory(
+  /** Aggregation execution state for one local Lucene search. */
+  public record AggregationExecution(
+      List<Aggregator> topLevelAggregators, BucketCollector collector) {
+    /** Finalizes collection and builds the aggregation result. */
+    public InternalAggregations finish() throws IOException {
+      collector.postCollection();
+      List<InternalAggregation> internalAggregations = new ArrayList<>(topLevelAggregators.size());
+      for (Aggregator aggregator : topLevelAggregators) {
+        internalAggregations.add(aggregator.buildTopLevel());
+      }
+      return InternalAggregations.from(internalAggregations);
+    }
+  }
+
+  private List<Aggregator> buildAggregatorsFromFactory(
       IndexSearcher indexSearcher,
       AggregatorFactories.Builder aggregatorFactoriesBuilder,
       Query query) {
@@ -93,10 +106,7 @@ public class OpenSearchAdapter {
         SearchContext searchContext =
             new AstraSearchContext(
                 AstraBigArrays.getInstance(), queryShardContext, indexSearcher, query);
-        Aggregator[] aggregators =
-            aggregatorFactories.createSubAggregators(
-                searchContext, null, CardinalityUpperBound.ONE);
-        return aggregators[0];
+        return aggregatorFactories.createTopLevelAggregators(searchContext);
       } catch (Exception e) {
         LOG.error(
             "Aggregator parse exception {} for AggregatorFactoriesBuilder {} and Query {}",
@@ -106,8 +116,7 @@ public class OpenSearchAdapter {
         throw new IllegalArgumentException(e);
       }
     }
-    // TODO: Should this return null? Raise an error?
-    return null;
+    return List.of();
   }
 
   /**
@@ -224,52 +233,17 @@ public class OpenSearchAdapter {
         });
   }
 
-  public CollectorManager<Aggregator, InternalAggregation> getCollectorManager(
+  /** Builds the local collector state needed to execute one aggregation for one chunk search. */
+  public AggregationExecution createAggregationExecution(
       AggregatorFactories.Builder aggregatorFactoriesBuilder,
       IndexSearcher indexSearcher,
       Query query)
       throws IOException {
-    return new CollectorManager<>() {
-      @Override
-      public Aggregator newCollector() throws IOException {
-        // preCollection must be invoked prior to using aggregations
-        Aggregator aggregator =
-            buildAggregatorFromFactory(indexSearcher, aggregatorFactoriesBuilder, query);
-        aggregator.preCollection();
-        return aggregator;
-      }
-
-      /**
-       * The collector manager required a collection of collectors for reducing, though for our
-       * normal case this will likely only be a single collector
-       */
-      @Override
-      public InternalAggregation reduce(Collection<Aggregator> collectors) throws IOException {
-        List<InternalAggregation> internalAggregationList = new ArrayList<>();
-        for (Aggregator collector : collectors) {
-          // postCollection must be invoked prior to building the internal aggregations
-          collector.postCollection();
-          internalAggregationList.add(collector.buildTopLevel());
-        }
-
-        if (internalAggregationList.size() == 0) {
-          return null;
-        } else {
-          // Using the first element on the list as the basis for the reduce method is per
-          // OpenSearch recommendations: "For best efficiency, when implementing, try
-          // reusing an existing instance (typically the first in the given list) to save
-          // on redundant object construction."
-          return internalAggregationList
-              .get(0)
-              .reduce(
-                  internalAggregationList,
-                  InternalAggregation.ReduceContext.forPartialReduction(
-                      AstraBigArrays.getInstance(),
-                      null,
-                      () -> PipelineAggregator.PipelineTree.EMPTY));
-        }
-      }
-    };
+    List<Aggregator> topLevelAggregators =
+        buildAggregatorsFromFactory(indexSearcher, aggregatorFactoriesBuilder, query);
+    BucketCollector collector = MultiBucketCollector.wrap(topLevelAggregators);
+    collector.preCollection();
+    return new AggregationExecution(topLevelAggregators, collector);
   }
 
   /**

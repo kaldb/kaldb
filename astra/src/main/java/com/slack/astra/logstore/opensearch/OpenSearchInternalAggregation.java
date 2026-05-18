@@ -5,7 +5,6 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Arrays;
-import java.util.List;
 import org.opensearch.core.common.io.stream.InputStreamStreamInput;
 import org.opensearch.core.common.io.stream.NamedWriteableAwareStreamInput;
 import org.opensearch.core.common.io.stream.NamedWriteableRegistry;
@@ -228,17 +227,15 @@ public class OpenSearchInternalAggregation {
                   DocValueFormat.UNSIGNED_LONG_SHIFTED.getWriteableName(),
                   in -> DocValueFormat.UNSIGNED_LONG_SHIFTED)));
 
-  /** Serializes InternalAggregation to byte array for transport */
-  public static byte[] toByteArray(InternalAggregation internalAggregation) {
-    if (internalAggregation == null) {
+  /** Serializes InternalAggregations to byte array for transport */
+  public static byte[] toByteArray(InternalAggregations internalAggregations) {
+    if (internalAggregations == null) {
       return new byte[] {};
     }
 
     byte[] returnBytes;
     try (ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream()) {
       try (StreamOutput streamOutput = new OutputStreamStreamOutput(byteArrayOutputStream)) {
-        InternalAggregations internalAggregations =
-            new InternalAggregations(List.of(internalAggregation), null);
         internalAggregations.writeTo(streamOutput);
       }
       returnBytes = byteArrayOutputStream.toByteArray();
@@ -249,25 +246,19 @@ public class OpenSearchInternalAggregation {
     return returnBytes;
   }
 
-  /** Deserializes a bytearray into an InternalAggregation */
-  public static InternalAggregation fromByteArray(byte[] bytes) throws IOException {
+  /** Deserializes a bytearray into InternalAggregations */
+  public static InternalAggregations fromByteArray(byte[] bytes) throws IOException {
     if (bytes.length == 0) {
       return null;
     }
 
-    InternalAggregation internalAggregation;
     try (InputStream inputStream = new ByteArrayInputStream(bytes)) {
       try (StreamInput streamInput = new InputStreamStreamInput(inputStream)) {
         try (NamedWriteableAwareStreamInput namedWriteableAwareStreamInput =
             new NamedWriteableAwareStreamInput(streamInput, NAMED_WRITEABLE_REGISTRY)) {
-          // the use of this InternalAggregations wrapper lightly follows OpenSearch
-          // See OpenSearch InternalAggregationsTest.writeToAndReadFrom() for more details
-          InternalAggregations internalAggregations =
-              InternalAggregations.readFrom(namedWriteableAwareStreamInput);
-          internalAggregation = internalAggregations.copyResults().get(0);
+          return InternalAggregations.readFrom(namedWriteableAwareStreamInput);
         }
       }
     }
-    return internalAggregation;
   }
 }

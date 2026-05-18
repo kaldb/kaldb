@@ -1,10 +1,12 @@
 package com.slack.astra.logstore.search;
 
 import com.slack.astra.logstore.LogMessage;
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import org.opensearch.search.aggregations.InternalAggregation;
+import java.util.Objects;
+import org.opensearch.core.common.Strings;
+import org.opensearch.core.xcontent.MediaTypeRegistry;
+import org.opensearch.search.aggregations.InternalAggregations;
 
 public class SearchResult<T> {
 
@@ -28,19 +30,9 @@ public class SearchResult<T> {
   public final int totalSnapshots;
   public final int snapshotsWithReplicas;
 
-  public final InternalAggregation internalAggregation;
+  public final InternalAggregations internalAggregations;
 
-  public SearchResult() {
-    this.hits = new ArrayList<>();
-    this.tookMicros = 0;
-    this.failedNodes = 0;
-    this.totalNodes = 0;
-    this.totalSnapshots = 0;
-    this.snapshotsWithReplicas = 0;
-    this.internalAggregation = null;
-  }
-
-  // TODO: Move stats into a separate struct.
+  /** Creates a search result that carries the full top-level OpenSearch aggregation collection. */
   public SearchResult(
       List<T> hits,
       long tookMicros,
@@ -48,14 +40,14 @@ public class SearchResult<T> {
       int totalNodes,
       int totalSnapshots,
       int snapshotsWithReplicas,
-      InternalAggregation internalAggregation) {
+      InternalAggregations internalAggregations) {
     this.hits = hits;
     this.tookMicros = tookMicros;
     this.failedNodes = failedNodes;
     this.totalNodes = totalNodes;
     this.totalSnapshots = totalSnapshots;
     this.snapshotsWithReplicas = snapshotsWithReplicas;
-    this.internalAggregation = internalAggregation;
+    this.internalAggregations = internalAggregations;
   }
 
   @Override
@@ -73,8 +65,8 @@ public class SearchResult<T> {
         + totalSnapshots
         + ", snapshotsWithReplicas="
         + snapshotsWithReplicas
-        + ", internalAggregation="
-        + internalAggregation
+        + ", internalAggregations="
+        + aggregationString(internalAggregations)
         + '}';
   }
 
@@ -97,19 +89,20 @@ public class SearchResult<T> {
     // this is because DocValueFormat.DateTime in OpenSearch does not implement a proper equals
     // method
     // As such the DocValueFormat.parser are never equal to each other
-    return internalAggregation.toString().equals(that.internalAggregation.toString());
+    return Objects.equals(
+        aggregationString(internalAggregations), aggregationString(that.internalAggregations));
   }
 
   @Override
   public int hashCode() {
-    int result = hits.hashCode();
-    result = 31 * result + (int) (tookMicros ^ (tookMicros >>> 32));
-    result = 31 * result + failedNodes;
-    result = 31 * result + totalNodes;
-    result = 31 * result + totalSnapshots;
-    result = 31 * result + snapshotsWithReplicas;
-    result = 31 * result + internalAggregation.hashCode();
-    return result;
+    return Objects.hash(
+        hits,
+        tookMicros,
+        failedNodes,
+        totalNodes,
+        totalSnapshots,
+        snapshotsWithReplicas,
+        aggregationString(internalAggregations));
   }
 
   public static SearchResult<LogMessage> empty() {
@@ -122,5 +115,11 @@ public class SearchResult<T> {
 
   public static SearchResult<LogMessage> soft_error() {
     return USER_ERROR;
+  }
+
+  private static String aggregationString(InternalAggregations internalAggregations) {
+    return internalAggregations == null
+        ? null
+        : Strings.toString(MediaTypeRegistry.JSON, internalAggregations);
   }
 }

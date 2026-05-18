@@ -176,7 +176,7 @@ public abstract class ChunkManagerBase<T> extends AbstractIdleService implements
         searchResult.totalNodes + 1,
         searchResult.totalSnapshots,
         searchResult.snapshotsWithReplicas,
-        searchResult.internalAggregation);
+        searchResult.internalAggregations);
   }
 
   @VisibleForTesting
