@@ -7,6 +7,7 @@ import com.slack.astra.metadata.schema.FieldType;
 import com.slack.astra.proto.service.AstraSearch;
 import com.slack.astra.server.AstraQueryServiceBase;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,6 +31,24 @@ public class AstraLocalQueryService<T> extends AstraQueryServiceBase {
     // TODO: In the future we will also accept query timeouts from the search request. If provided
     // we'll use that over defaultQueryTimeout
     SearchResult<T> searchResult = chunkManager.query(query, defaultQueryTimeout);
+    if (query.aggregatorFactoriesBuilder != null) {
+      SearchQuery finalReductionQuery =
+          new SearchQuery(
+              query.dataset,
+              query.startTimeEpochMs,
+              query.endTimeEpochMs,
+              searchResult.hits.size(),
+              0,
+              query.sortFieldSpecs,
+              query.chunkIds,
+              query.queryBuilder,
+              query.sourceFieldFilter,
+              query.aggregatorFactoriesBuilder);
+      //noinspection unchecked
+      searchResult =
+          ((SearchResultAggregator<T>) new SearchResultAggregatorImpl<>(finalReductionQuery))
+              .aggregate(List.of(searchResult), true);
+    }
     AstraSearch.SearchResult result = SearchResultUtils.toSearchResultProto(searchResult);
     span.tag("totalNodes", String.valueOf(result.getTotalNodes()));
     span.tag("failedNodes", String.valueOf(result.getFailedNodes()));
