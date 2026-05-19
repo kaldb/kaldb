@@ -294,32 +294,6 @@
     return '<span class="mode-badge ' + cssClass + '">' + escapeHtml(modeLabel) + "</span>";
   }
 
-  function summaryItemHtml(label, value) {
-    return (
-      '<div class="summary-item">' +
-      '<span class="summary-item-label">' +
-      escapeHtml(label) +
-      "</span>" +
-      '<span class="summary-item-value">' +
-      escapeHtml(value) +
-      "</span>" +
-      "</div>"
-    );
-  }
-
-  function buildPartitionSummaryCard(dataset) {
-    var activeIds = getActivePartitionIds(dataset.partitionConfigs || []);
-    return (
-      '<div class="summary-card-title">Current dataset state</div>' +
-      '<div class="summary-card-grid">' +
-      summaryItemHtml("Partition mode", currentDatasetModeLabel(dataset)) +
-      summaryItemHtml("Throughput", toDisplayNumber(dataset.throughputBytes || 0) + " bytes") +
-      summaryItemHtml("Active partitions", activeIds.length ? activeIds.join(", ") : "(none)") +
-      summaryItemHtml("Active window", formatCurrentWindow(dataset.partitionConfigs || [])) +
-      "</div>"
-    );
-  }
-
   function refreshRelatedViews() {
     loadDatasets();
     if (partitionCatalogSupport.status === "available" || isTabActive("partitions")) {
@@ -332,7 +306,7 @@
   function setPartitionCatalogSupport(status, errorMessage) {
     partitionCatalogSupport.status = status;
     partitionCatalogSupport.lastError = errorMessage || "";
-    updatePartitionCapabilityNote();
+    updateDatasetCapabilityNote();
   }
 
   function fetchPartitionMetadata() {
@@ -386,7 +360,6 @@
     return gridjs.html(
       '<div class="grid-actions">' +
       '<button class="btn btn-sm" data-action="edit" data-dataset="' + encodedName + '">Edit</button>' +
-      '<button class="btn btn-sm" data-action="assignment" data-dataset="' + encodedName + '">Assignment</button>' +
       '<button class="btn btn-sm btn-danger" data-action="delete" data-dataset="' + encodedName + '">Delete</button>' +
       "</div>"
     );
@@ -409,11 +382,6 @@
 
       if (action === "edit") {
         showDatasetForm(dataset);
-        return;
-      }
-
-      if (action === "assignment") {
-        openPartitionModal(dataset);
         return;
       }
 
@@ -517,22 +485,34 @@
     form.reset();
 
     if (dataset) {
+      var activeIds = getActivePartitionIds(dataset.partitionConfigs || []);
       title.textContent = "Edit Dataset";
       form.elements.name.value = dataset.name;
       form.elements.name.readOnly = true;
       form.elements.owner.value = dataset.owner || "";
       form.elements.service_name_pattern.value = dataset.serviceNamePattern || "";
+      form.elements.throughput_bytes.value = dataset.throughputBytes == null ? 0 : dataset.throughputBytes;
+      form.elements.partition_mode.value = dataset.usingDedicatedPartitions ? "dedicated" : "shared";
+      form.elements.assignment_strategy.value = "auto";
+      form.elements.partition_ids.value = activeIds.join(", ");
       form.dataset.editing = "true";
     } else {
       title.textContent = "New Dataset";
       form.elements.name.readOnly = false;
+      form.elements.throughput_bytes.value = 0;
+      form.elements.partition_mode.value = "dedicated";
+      form.elements.assignment_strategy.value = "auto";
+      form.elements.partition_ids.value = "";
       form.dataset.editing = "false";
     }
+
+    updateDatasetFormState();
+    probePartitionCatalogSupport();
   }
 
-  function updatePartitionCapabilityNote() {
-    var note = document.getElementById("partition-capability-note");
-    var form = document.getElementById("form-partition");
+  function updateDatasetCapabilityNote() {
+    var note = document.getElementById("dataset-capability-note");
+    var form = document.getElementById("form-dataset");
     if (!note || !form) return;
 
     var messages = [];
@@ -541,14 +521,14 @@
 
     if (partitionCatalogSupport.status === "unknown") {
       if (strategy === "auto" || mode === "shared" || mode === "dedicated") {
-        messages.push("Checking partition catalog support for shard auto-assignment features.");
+        messages.push("Checking partition catalog support for quota and shard assignment features.");
       }
     } else if (partitionCatalogSupport.status === "unavailable") {
       if (strategy === "auto") {
         messages.push("Auto-assignment requires a manager build with partition catalog support.");
       }
       if (mode === "shared" || mode === "dedicated") {
-        messages.push("Shared and dedicated mode overrides require shard auto-assignment support.");
+        messages.push("Shared and dedicated mode choices require shard assignment support.");
       }
       if (partitionCatalogSupport.lastError) {
         messages.push("Latest manager response: " + partitionCatalogSupport.lastError);
@@ -565,29 +545,13 @@
     note.textContent = messages.join(" ");
   }
 
-  function updatePartitionFormState() {
-    var form = document.getElementById("form-partition");
-    var idsField = document.getElementById("partition-ids-field");
+  function updateDatasetFormState() {
+    var form = document.getElementById("form-dataset");
+    var idsField = document.getElementById("dataset-partition-ids-field");
     if (!form || !idsField) return;
 
     idsField.style.display = form.elements.assignment_strategy.value === "manual" ? "" : "none";
-    updatePartitionCapabilityNote();
-  }
-
-  function openPartitionModal(dataset) {
-    var form = document.getElementById("form-partition");
-    var activeIds = getActivePartitionIds(dataset.partitionConfigs || []);
-
-    form.reset();
-    form.elements.name.value = dataset.name;
-    form.elements.throughput_bytes.value = dataset.throughputBytes == null ? 0 : dataset.throughputBytes;
-    form.elements.partition_mode.value = dataset.usingDedicatedPartitions ? "dedicated" : "shared";
-    form.elements.assignment_strategy.value = "auto";
-    form.elements.partition_ids.value = activeIds.join(", ");
-
-    document.getElementById("partition-current-summary").innerHTML = buildPartitionSummaryCard(dataset);
-    updatePartitionFormState();
-    openModal("modal-partition");
+    updateDatasetCapabilityNote();
   }
 
   function validateManualPartitionIds(partitionIds) {
@@ -612,6 +576,78 @@
     return null;
   }
 
+  function parseDatasetForm(form) {
+    var throughputInput = form.elements.throughput_bytes.value.trim();
+    var parsedThroughput = Number(throughputInput);
+    var assignmentStrategy = form.elements.assignment_strategy.value;
+    var partitionMode = form.elements.partition_mode.value;
+    var ids = assignmentStrategy === "manual"
+      ? splitPartitionIds(form.elements.partition_ids.value.trim())
+      : [];
+
+    if (throughputInput === "" || !Number.isInteger(parsedThroughput) || parsedThroughput < 0) {
+      throw new Error("throughput must be a non-negative integer");
+    }
+
+    if (assignmentStrategy === "manual" && ids.length === 0) {
+      throw new Error("manual assignment requires at least one partition ID");
+    }
+
+    if (assignmentStrategy === "manual") {
+      var manualValidationError = validateManualPartitionIds(ids);
+      if (manualValidationError) {
+        throw new Error(manualValidationError);
+      }
+    }
+
+    return {
+      metadata: {
+        name: form.elements.name.value,
+        owner: form.elements.owner.value,
+        service_name_pattern: form.elements.service_name_pattern.value,
+      },
+      assignment: {
+        name: form.elements.name.value,
+        throughput_bytes: parsedThroughput,
+        partition_ids: ids,
+        require_dedicated_partition: partitionMode === "dedicated",
+      },
+      assignmentStrategy: assignmentStrategy,
+      partitionMode: partitionMode,
+    };
+  }
+
+  function validateDatasetAssignmentCapability(bundle) {
+    return probePartitionCatalogSupport().then(function (catalogSupported) {
+      if (!catalogSupported && bundle.assignmentStrategy === "auto") {
+        throw new Error("auto-assignment requires partition catalog support");
+      }
+      if (!catalogSupported && (bundle.partitionMode === "shared" || bundle.partitionMode === "dedicated")) {
+        throw new Error("shared/dedicated mode choices require partition catalog support");
+      }
+      return bundle;
+    });
+  }
+
+  function saveDatasetAssignment(bundle) {
+    return apiCall("UpdatePartitionAssignment", bundle.assignment);
+  }
+
+  function rollbackCreatedDataset(name, originalError) {
+    return apiCall("DeleteDatasetMetadata", { name: name }).then(
+      function () {
+        throw originalError;
+      },
+      function (rollbackError) {
+        throw new Error(
+          originalError.message +
+            ". Dataset was created, but rollback failed: " +
+            rollbackError.message
+        );
+      }
+    );
+  }
+
   function initDatasets() {
     document.getElementById("btn-new-dataset").addEventListener("click", function () {
       showDatasetForm(null);
@@ -626,95 +662,53 @@
         e.preventDefault();
         var form = this;
         var isEdit = form.dataset.editing === "true";
-        var method = isEdit ? "UpdateDatasetMetadata" : "CreateDatasetMetadata";
-        var body = {
-          name: form.elements.name.value,
-          owner: form.elements.owner.value,
-          service_name_pattern: form.elements.service_name_pattern.value,
-        };
+        var bundle;
 
-        apiCall(method, body)
+        try {
+          bundle = parseDatasetForm(form);
+        } catch (err) {
+          showToast("Error: " + err.message, "error");
+          return;
+        }
+
+        validateDatasetAssignmentCapability(bundle)
           .then(function () {
-            showToast(isEdit ? "Dataset updated" : "Dataset created");
-            showDatasetList();
+            if (isEdit) {
+              return apiCall("UpdateDatasetMetadata", bundle.metadata)
+                .then(function () {
+                  return saveDatasetAssignment(bundle);
+                })
+                .then(function () {
+                  showToast("Dataset updated");
+                  showDatasetList();
+                  if (partitionCatalogSupport.status === "available") loadPartitions();
+                });
+            }
+
+            return apiCall("CreateDatasetMetadata", bundle.metadata)
+              .then(function () {
+                return saveDatasetAssignment(bundle).catch(function (err) {
+                  return rollbackCreatedDataset(bundle.metadata.name, err);
+                });
+              })
+              .then(function () {
+                showToast("Dataset created");
+                showDatasetList();
+                if (partitionCatalogSupport.status === "available") loadPartitions();
+              });
           })
           .catch(function (err) {
             showToast("Error: " + err.message, "error");
+            refreshRelatedViews();
           });
       });
 
     document
-      .getElementById("form-partition")
-      .elements.assignment_strategy.addEventListener("change", updatePartitionFormState);
+      .getElementById("form-dataset")
+      .elements.assignment_strategy.addEventListener("change", updateDatasetFormState);
     document
-      .getElementById("form-partition")
-      .elements.partition_mode.addEventListener("change", updatePartitionCapabilityNote);
-
-    document
-      .getElementById("form-partition")
-      .addEventListener("submit", function (e) {
-        e.preventDefault();
-        var form = this;
-        var throughputInput = form.elements.throughput_bytes.value.trim();
-        var parsedThroughput = Number(throughputInput);
-        var assignmentStrategy = form.elements.assignment_strategy.value;
-        var partitionMode = form.elements.partition_mode.value;
-        var ids = assignmentStrategy === "manual"
-          ? splitPartitionIds(form.elements.partition_ids.value.trim())
-          : [];
-
-        if (throughputInput === "" || !Number.isInteger(parsedThroughput) || parsedThroughput < 0) {
-          showToast("Error: throughput must be a non-negative integer", "error");
-          return;
-        }
-
-        if (assignmentStrategy === "manual" && ids.length === 0) {
-          showToast("Error: manual assignment requires at least one partition ID", "error");
-          return;
-        }
-
-        if (assignmentStrategy === "manual") {
-          var manualValidationError = validateManualPartitionIds(ids);
-          if (manualValidationError) {
-            showToast("Error: " + manualValidationError, "error");
-            return;
-          }
-        }
-
-        probePartitionCatalogSupport().then(function (catalogSupported) {
-          if (!catalogSupported && assignmentStrategy === "auto") {
-            showToast("Error: auto-assignment requires partition catalog support", "error");
-            return;
-          }
-          if (!catalogSupported && (partitionMode === "shared" || partitionMode === "dedicated")) {
-            showToast("Error: shared/dedicated mode overrides require partition catalog support", "error");
-            return;
-          }
-
-          var body = {
-            name: form.elements.name.value,
-            throughput_bytes: parsedThroughput,
-            partition_ids: ids,
-          };
-
-          if (partitionMode === "shared") {
-            body.require_dedicated_partition = false;
-          } else if (partitionMode === "dedicated") {
-            body.require_dedicated_partition = true;
-          }
-
-          apiCall("UpdatePartitionAssignment", body)
-            .then(function (resp) {
-              closeModal("modal-partition");
-              var assigned = (resp.assignedPartitionIds || []).join(", ");
-              showToast("Assignment updated: " + (assigned || "(none)"));
-              refreshRelatedViews();
-            })
-            .catch(function (err) {
-              showToast("Error: " + err.message, "error");
-            });
-        });
-      });
+      .getElementById("form-dataset")
+      .elements.partition_mode.addEventListener("change", updateDatasetCapabilityNote);
   }
 
   // ---- Partitions ----
