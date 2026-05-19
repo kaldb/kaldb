@@ -229,15 +229,15 @@ public class ObjectMapperTest {
     SearchQuery searchQuery = newTermsAggregatorCountSearchQuery("test1", "alerts.count");
     SearchResult<LogMessage> results = chunkManager.query(searchQuery, Duration.ofMillis(3000));
     assertThat(results.hits.size()).isEqualTo(2);
-    assert results.internalAggregations.get("test1") != null;
-    assertThat(((StringTerms) results.internalAggregations.get("test1")).getBuckets().size())
-        .isEqualTo(1);
+    StringTerms childTerms = (StringTerms) results.internalAggregations.get("test1");
+    assertThat(childTerms).isNotNull();
+    assertThat(childTerms.getBuckets().size()).isEqualTo(1);
 
     searchQuery = newTermsAggregatorCountSearchQuery("test1", "alerts");
     results = chunkManager.query(searchQuery, Duration.ofMillis(3000));
     assertThat(results.hits.size()).isEqualTo(2);
-    assert results.internalAggregations.get("test1") != null;
-    assertThat(((StringTerms) results.internalAggregations.get("test1")).getBuckets().size())
-        .isEqualTo(1);
+    StringTerms parentTerms = (StringTerms) results.internalAggregations.get("test1");
+    assertThat(parentTerms).isNotNull();
+    assertThat(parentTerms.getBuckets().size()).isEqualTo(1);
   }
 }
