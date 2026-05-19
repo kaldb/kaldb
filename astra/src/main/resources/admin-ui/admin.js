@@ -192,6 +192,29 @@
       .replace(/'/g, "&#39;");
   }
 
+  function gridColumn(label, tooltip, options) {
+    var column = {};
+    var key;
+
+    if (options) {
+      for (key in options) {
+        if (Object.prototype.hasOwnProperty.call(options, key)) {
+          column[key] = options[key];
+        }
+      }
+    }
+
+    column.name = label;
+    column.attributes = function (cell, row) {
+      if (row) return {};
+      return {
+        title: tooltip,
+        "aria-label": label + ": " + tooltip,
+      };
+    };
+    return column;
+  }
+
   function formatTime(epochMs) {
     if (!epochMs || epochMs === "0") return "-";
     if (String(epochMs) === MAX_TIME) return "MAX";
@@ -283,6 +306,60 @@
     var active = getActivePartitionConfig(partitionConfigs);
     if (!active) return "-";
     return formatTime(active.startTimeEpochMs) + " -> " + formatTime(active.endTimeEpochMs);
+  }
+
+  function renderDatasetAssignmentHistory(dataset) {
+    var container = document.getElementById("dataset-assignment-history");
+    if (!container) return;
+
+    if (!dataset) {
+      container.innerHTML =
+        '<p class="empty-inline">Assignment history appears after the dataset is saved.</p>';
+      return;
+    }
+
+    var partitionConfigs = (dataset.partitionConfigs || []).slice();
+    if (partitionConfigs.length === 0) {
+      container.innerHTML = '<p class="empty-inline">No assignment history.</p>';
+      return;
+    }
+
+    partitionConfigs.sort(function (a, b) {
+      return toNumericValue(b.startTimeEpochMs) - toNumericValue(a.startTimeEpochMs);
+    });
+
+    var html =
+      '<table class="compact-table">' +
+      "<thead><tr>" +
+      '<th title="Whether this assignment window is current or historical.">Status</th>' +
+      '<th title="Start and end time for this assignment window.">Window</th>' +
+      '<th title="Partition IDs assigned during this window.">Partition IDs</th>' +
+      '<th title="Number of partitions assigned during this window.">Count</th>' +
+      "</tr></thead><tbody>";
+    var i;
+
+    for (i = 0; i < partitionConfigs.length; i++) {
+      var config = partitionConfigs[i];
+      var partitions = config.partitions || [];
+      var status = String(config.endTimeEpochMs) === MAX_TIME ? "Current" : "Historical";
+      html +=
+        "<tr>" +
+        "<td>" +
+        escapeHtml(status) +
+        "</td>" +
+        "<td>" +
+        escapeHtml(formatTime(config.startTimeEpochMs) + " -> " + formatTime(config.endTimeEpochMs)) +
+        "</td>" +
+        "<td>" +
+        escapeHtml(partitions.length ? partitions.join(", ") : "(none)") +
+        "</td>" +
+        "<td>" +
+        escapeHtml(String(partitions.length)) +
+        "</td>" +
+        "</tr>";
+    }
+
+    container.innerHTML = html + "</tbody></table>";
   }
 
   function currentDatasetModeLabel(dataset) {
@@ -444,16 +521,16 @@
 
     datasetsGrid = new gridjs.Grid({
       columns: [
-        "Name",
-        "Owner",
-        "Service Pattern",
-        "Throughput (bytes/sec)",
-        "Partition Mode",
-        "Active Count",
-        "Active Partitions",
-        "Current Window",
-        "History Windows",
-        { name: "Actions", sort: false },
+        gridColumn("Name", "Dataset identifier."),
+        gridColumn("Owner", "Team or oncall owner responsible for this dataset."),
+        gridColumn("Service Pattern", "Service-name match pattern used by dataset routing."),
+        gridColumn("Throughput", "Allowed ingest throughput in bytes/sec."),
+        gridColumn("Mode", "Whether the current assignment uses dedicated or shared partitions."),
+        gridColumn("Active", "Number of partitions in the active assignment."),
+        gridColumn("Active IDs", "Partition IDs in the active assignment."),
+        gridColumn("Current", "Time window for the active assignment."),
+        gridColumn("History", "Number of assignment windows retained for this dataset."),
+        gridColumn("Actions", "Edit or delete this dataset.", { sort: false }),
       ],
       data: rows,
       search: true,
@@ -496,6 +573,7 @@
       form.elements.assignment_strategy.value = "auto";
       form.elements.partition_ids.value = activeIds.join(", ");
       form.dataset.editing = "true";
+      renderDatasetAssignmentHistory(dataset);
     } else {
       title.textContent = "New Dataset";
       form.elements.name.readOnly = false;
@@ -504,6 +582,7 @@
       form.elements.assignment_strategy.value = "auto";
       form.elements.partition_ids.value = "";
       form.dataset.editing = "false";
+      renderDatasetAssignmentHistory(null);
     }
 
     updateDatasetFormState();
@@ -884,13 +963,13 @@
     } else {
       partitionsGrid = new gridjs.Grid({
         columns: [
-          "Partition ID",
-          "Max Capacity (bytes/sec)",
-          "Provisioned (bytes/sec)",
-          "Available (bytes/sec)",
-          "Occupancy",
-          "Datasets",
-          { name: "Actions", sort: false },
+          gridColumn("Partition ID", "Canonical Kafka partition identifier."),
+          gridColumn("Max Capacity", "Configured capacity ceiling in bytes/sec."),
+          gridColumn("Provisioned", "Capacity currently reserved by dataset assignments."),
+          gridColumn("Available", "Unreserved capacity available for future assignments."),
+          gridColumn("Occupancy", "Current catalog state for this partition."),
+          gridColumn("Datasets", "Datasets currently assigned to this partition."),
+          gridColumn("Actions", "Edit or delete this partition.", { sort: false }),
         ],
         data: rows,
         search: true,
@@ -1076,11 +1155,11 @@
 
     redactionsGrid = new gridjs.Grid({
       columns: [
-        "Name",
-        "Field Name",
-        "Start Time",
-        "End Time",
-        { name: "Actions", sort: false },
+        gridColumn("Name", "Unique redaction rule identifier."),
+        gridColumn("Field", "Field key redacted from search responses."),
+        gridColumn("Start", "Start of redaction window in UTC."),
+        gridColumn("End", "End of redaction window in UTC."),
+        gridColumn("Actions", "Edit or delete this redaction rule.", { sort: false }),
       ],
       data: rows,
       sort: true,

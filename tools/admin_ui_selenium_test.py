@@ -201,7 +201,9 @@ def run_test(args: argparse.Namespace) -> None:
     redaction_name = f"selenium-redaction-{suffix}"
     field_name = f"field_{suffix}"
     partition_seed = int(uuid4().hex[:8], 16) % 100000000
-    partition_ids = [str(partition_seed), str(partition_seed + 1)]
+    initial_partition_ids = [str(partition_seed), str(partition_seed + 1)]
+    updated_partition_ids = [str(partition_seed + 2), str(partition_seed + 3)]
+    all_partition_ids = initial_partition_ids + updated_partition_ids
 
     screenshot_dir = Path(args.screenshot_dir)
     screenshot_dir.mkdir(parents=True, exist_ok=True)
@@ -312,6 +314,39 @@ def run_test(args: argparse.Namespace) -> None:
     def wait_for_grid_row_absent(grid_id: str, text: str) -> None:
         wait.until(lambda d: find_grid_row(grid_id, text) is None)
 
+    def assert_grid_header_tooltip(grid_id: str, label: str, expected_text: str) -> None:
+        label_lower = label.lower()
+
+        def matching_header():
+            for header in driver.find_elements(By.CSS_SELECTOR, f"#{grid_id} th.gridjs-th"):
+                try:
+                    aria_label = header.get_attribute("aria-label") or ""
+                    visible_label = header.text.strip().split("\n")[0]
+                    if (
+                        aria_label.lower().startswith(f"{label_lower}:")
+                        or visible_label.lower() == label_lower
+                    ):
+                        return header
+                except StaleElementReferenceException:
+                    continue
+            return None
+
+        header = wait.until(
+            lambda d: matching_header(),
+            message=f"Could not find {label!r} header in {grid_id}",
+        )
+        tooltip = header.get_attribute("title") or ""
+        if expected_text not in tooltip:
+            fail(f"{grid_id} {label!r} tooltip {tooltip!r} did not contain {expected_text!r}")
+
+    def wait_for_dataset_history_rows(min_rows: int) -> None:
+        wait.until(
+            lambda d: len(
+                d.find_elements(By.CSS_SELECTOR, "#dataset-assignment-history tbody tr")
+            )
+            >= min_rows
+        )
+
     def click_grid_row_action(grid_id: str, row_text: str, action: str) -> None:
         def resolve_action_button():
             row = find_grid_row(grid_id, row_text)
@@ -354,6 +389,24 @@ def run_test(args: argparse.Namespace) -> None:
                 wait_for_toasts_to_clear()
         wait.until(EC.element_to_be_clickable(locator)).click()
 
+    def create_partition(partition_id: str, max_capacity: str = "2000") -> None:
+        click((By.ID, "btn-new-partition"))
+        wait.until(
+            lambda d: "open"
+            in d.find_element(By.ID, "modal-create-partition").get_attribute("class")
+        )
+        driver.find_element(
+            By.CSS_SELECTOR, "#form-create-partition [name='partition_id']"
+        ).send_keys(partition_id)
+        driver.find_element(
+            By.CSS_SELECTOR, "#form-create-partition [name='max_capacity']"
+        ).send_keys(max_capacity)
+        click((By.CSS_SELECTOR, "#form-create-partition button[type='submit']"))
+        wait_for_toast("Partition created")
+        click((By.ID, "btn-refresh-partitions"))
+        wait_for_grid_row("partitions-grid", partition_id)
+        wait_for_grid_row_text("partitions-grid", partition_id, "Empty")
+
     def select_value(locator: tuple[str, str], value: str) -> None:
         element = wait.until(EC.presence_of_element_located(locator))
         Select(element).select_by_value(value)
@@ -370,6 +423,8 @@ def run_test(args: argparse.Namespace) -> None:
 
         wait.until(EC.visibility_of_element_located((By.ID, "btn-new-dataset")))
         wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "#datasets-grid .gridjs-container")))
+        assert_grid_header_tooltip("datasets-grid", "Throughput", "Allowed ingest throughput")
+        assert_grid_header_tooltip("datasets-grid", "History", "Number of assignment windows")
 
         catalog_supported = False
         log_step("Checking partition catalog support")
@@ -389,24 +444,12 @@ def run_test(args: argparse.Namespace) -> None:
         if not catalog_supported:
             fail("Dataset CRUD quota flow requires partition catalog support")
 
+        assert_grid_header_tooltip("partitions-grid", "Available", "Unreserved capacity")
+        assert_grid_header_tooltip("partitions-grid", "Occupancy", "Current catalog state")
+
         log_step("Creating catalog partitions")
-        for partition_id in partition_ids:
-            click((By.ID, "btn-new-partition"))
-            wait.until(
-                lambda d: "open"
-                in d.find_element(By.ID, "modal-create-partition").get_attribute("class")
-            )
-            driver.find_element(
-                By.CSS_SELECTOR, "#form-create-partition [name='partition_id']"
-            ).send_keys(partition_id)
-            driver.find_element(
-                By.CSS_SELECTOR, "#form-create-partition [name='max_capacity']"
-            ).send_keys("2000")
-            click((By.CSS_SELECTOR, "#form-create-partition button[type='submit']"))
-            wait_for_toast("Partition created")
-            click((By.ID, "btn-refresh-partitions"))
-            wait_for_grid_row("partitions-grid", partition_id)
-            wait_for_grid_row_text("partitions-grid", partition_id, "Empty")
+        for partition_id in initial_partition_ids:
+            create_partition(partition_id)
 
         log_step("Creating dataset with quota")
         click((By.CSS_SELECTOR, ".tab[data-tab='datasets']"))
@@ -435,9 +478,18 @@ def run_test(args: argparse.Namespace) -> None:
         wait_for_grid_row_text("datasets-grid", dataset_name, "1000")
         wait_for_grid_row_text("datasets-grid", dataset_name, "Dedicated")
 
+        log_step("Creating replacement catalog partition")
+        click((By.CSS_SELECTOR, ".tab[data-tab='partitions']"))
+        wait.until(lambda d: d.find_element(By.ID, "partitions").is_displayed())
+        for partition_id in updated_partition_ids:
+            create_partition(partition_id)
+
         log_step("Editing dataset and quota")
+        click((By.CSS_SELECTOR, ".tab[data-tab='datasets']"))
+        wait_for_grid_row("datasets-grid", dataset_name)
         click_grid_row_action("datasets-grid", dataset_name, "edit")
         wait.until(lambda d: d.find_element(By.ID, "dataset-form-page").is_displayed())
+        wait_for_dataset_history_rows(1)
         owner_input = driver.find_element(By.CSS_SELECTOR, "#form-dataset [name='owner']")
         pattern_input = driver.find_element(By.CSS_SELECTOR, "#form-dataset [name='service_name_pattern']")
         throughput_input = driver.find_element(By.CSS_SELECTOR, "#form-dataset [name='throughput_bytes']")
@@ -451,23 +503,40 @@ def run_test(args: argparse.Namespace) -> None:
         select_value((By.CSS_SELECTOR, "#form-dataset [name='assignment_strategy']"), "manual")
         partition_ids_input = driver.find_element(By.CSS_SELECTOR, "#form-dataset [name='partition_ids']")
         partition_ids_input.clear()
-        partition_ids_input.send_keys(", ".join(partition_ids))
+        partition_ids_input.send_keys(", ".join(updated_partition_ids))
         click((By.CSS_SELECTOR, "#form-dataset button[type='submit']"))
         wait_for_toast("Dataset updated")
         wait_for_grid_row_text("datasets-grid", dataset_name, updated_owner)
         wait_for_grid_row_text("datasets-grid", dataset_name, updated_service_pattern)
         wait_for_grid_row_text("datasets-grid", dataset_name, "1234")
-        wait_for_grid_row_text("datasets-grid", dataset_name, partition_ids[0])
-        wait_for_grid_row_text("datasets-grid", dataset_name, partition_ids[1])
+        wait_for_grid_row_text("datasets-grid", dataset_name, updated_partition_ids[0])
         wait_for_grid_row_text("datasets-grid", dataset_name, "Dedicated")
+
+        log_step("Checking dataset assignment history")
+        click_grid_row_action("datasets-grid", dataset_name, "edit")
+        wait.until(lambda d: d.find_element(By.ID, "dataset-form-page").is_displayed())
+        wait_for_dataset_history_rows(2)
+        history_text = driver.find_element(By.ID, "dataset-assignment-history").text
+        if "Current" not in history_text or "Historical" not in history_text:
+            fail("Dataset assignment history did not show current and historical windows")
+        for partition_id in updated_partition_ids:
+            if partition_id not in history_text:
+                fail(f"Dataset assignment history did not include partition {partition_id}")
+        if not any(partition_id in history_text for partition_id in initial_partition_ids):
+            fail("Dataset assignment history did not include the previous assignment")
+        click((By.ID, "btn-dataset-cancel"))
+
         click((By.CSS_SELECTOR, ".tab[data-tab='partitions']"))
-        wait_for_grid_row("partitions-grid", partition_ids[0])
-        wait_for_grid_row_text("partitions-grid", partition_ids[0], "Dedicated")
-        wait_for_grid_row_text("partitions-grid", partition_ids[0], dataset_name)
+        wait_for_grid_row("partitions-grid", updated_partition_ids[0])
+        wait_for_grid_row_text("partitions-grid", updated_partition_ids[0], "Dedicated")
+        wait_for_grid_row_text("partitions-grid", updated_partition_ids[0], dataset_name)
 
         log_step("Creating redaction")
         click((By.CSS_SELECTOR, ".tab[data-tab='redactions']"))
         wait.until(lambda d: d.find_element(By.ID, "redactions").is_displayed())
+        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "#redactions-grid .gridjs-container")))
+        assert_grid_header_tooltip("redactions-grid", "Field", "Field key")
+        assert_grid_header_tooltip("redactions-grid", "Start", "Start of redaction window")
         click((By.ID, "btn-new-redaction"))
         wait.until(lambda d: "open" in d.find_element(By.ID, "modal-redaction").get_attribute("class"))
         driver.find_element(By.CSS_SELECTOR, "#form-redaction [name='name']").send_keys(redaction_name)
@@ -521,7 +590,7 @@ def run_test(args: argparse.Namespace) -> None:
             log_step("Deleting catalog partitions")
             click((By.CSS_SELECTOR, ".tab[data-tab='partitions']"))
             wait.until(lambda d: d.find_element(By.ID, "partitions").is_displayed())
-            for partition_id in partition_ids:
+            for partition_id in all_partition_ids:
                 wait_for_grid_row("partitions-grid", partition_id)
                 click_grid_row_action("partitions-grid", partition_id, "delete-partition")
                 wait.until(
