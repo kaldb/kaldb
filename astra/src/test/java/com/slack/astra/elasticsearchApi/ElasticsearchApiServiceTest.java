@@ -480,6 +480,515 @@ public class ElasticsearchApiServiceTest {
   }
 
   @Test
+  public void testMultiSearchReturnsAttributeAggregation() throws Exception {
+    addMessagesToChunkManager(SpanUtil.makeSpansWithTimeDifference(1, 100, 1, Instant.now()));
+
+    String postBody =
+        """
+        {"index":"%s"}
+        {"size":0,"query":{"match_all":{}},"aggs":{"services":{"terms":{"field":"service_name","size":10}}}}
+        """
+            .formatted(TEST_DATASET_NAME);
+    HttpResponse response = elasticsearchApiService.multiSearch(postBody);
+
+    AggregatedHttpResponse aggregatedRes = response.aggregate().join();
+    String body = aggregatedRes.content(StandardCharsets.UTF_8);
+    JsonNode jsonNode = OBJECT_MAPPER.readTree(body);
+    JsonNode responseNode = jsonNode.get("responses").get(0);
+
+    assertThat(aggregatedRes.status().code()).isEqualTo(200);
+    assertThat(jsonNode.get("responses").size()).isEqualTo(1);
+    assertThat(responseNode.get("status").asInt()).isEqualTo(200);
+    assertThat(responseNode.get("aggregations").get("services").get("buckets").size()).isEqualTo(1);
+    assertThat(
+            responseNode
+                .get("aggregations")
+                .get("services")
+                .get("buckets")
+                .get(0)
+                .get("key")
+                .asText())
+        .isEqualTo(TEST_DATASET_NAME);
+    assertThat(
+            responseNode
+                .get("aggregations")
+                .get("services")
+                .get("buckets")
+                .get(0)
+                .get("doc_count")
+                .asInt())
+        .isEqualTo(100);
+    assertThat(responseNode.get("_shards").get("total").asInt()).isEqualTo(1);
+    assertThat(responseNode.get("_shards").get("failed").asInt()).isEqualTo(0);
+  }
+
+  @Test
+  public void testMultiSearchReturnsMultipleSiblingAggregations() throws Exception {
+    addMessagesToChunkManager(SpanUtil.makeSpansWithTimeDifference(1, 100, 1, Instant.now()));
+
+    String postBody =
+        """
+        {"index":"%s"}
+        {"size":0,"query":{"match_all":{}},"aggs":{"over_time":{"date_histogram":{"field":"@timestamp","interval":"1h","min_doc_count":1},"aggs":{}},"services":{"terms":{"field":"service_name","size":10}}}}
+        """
+            .formatted(TEST_DATASET_NAME);
+    HttpResponse response = elasticsearchApiService.multiSearch(postBody);
+
+    AggregatedHttpResponse aggregatedRes = response.aggregate().join();
+    String body = aggregatedRes.content(StandardCharsets.UTF_8);
+    JsonNode jsonNode = OBJECT_MAPPER.readTree(body);
+    JsonNode responseNode = jsonNode.get("responses").get(0);
+
+    assertThat(aggregatedRes.status().code()).isEqualTo(200);
+    assertThat(jsonNode.get("responses").size()).isEqualTo(1);
+    assertThat(responseNode.get("status").asInt()).isEqualTo(200);
+    assertThat(responseNode.get("aggregations").get("over_time").get("buckets").size())
+        .isEqualTo(1);
+    assertThat(responseNode.get("aggregations").get("services").get("buckets").size()).isEqualTo(1);
+    assertThat(
+            responseNode
+                .get("aggregations")
+                .get("services")
+                .get("buckets")
+                .get(0)
+                .get("doc_count")
+                .asInt())
+        .isEqualTo(100);
+    assertThat(responseNode.get("_shards").get("total").asInt()).isEqualTo(1);
+    assertThat(responseNode.get("_shards").get("failed").asInt()).isEqualTo(0);
+  }
+
+  @Test
+  public void testMultiSearchReturnsSiblingMetricAggregationsOnSameField() throws Exception {
+    addMessagesToChunkManager(SpanUtil.makeSpansWithTimeDifference(1, 100, 1, Instant.now()));
+
+    String postBody =
+        """
+        {"index":"%s"}
+        {"size":0,"query":{"match_all":{}},"aggs":{"avg_longproperty":{"avg":{"field":"longproperty"}},"max_longproperty":{"max":{"field":"longproperty"}}}}
+        """
+            .formatted(TEST_DATASET_NAME);
+    HttpResponse response = elasticsearchApiService.multiSearch(postBody);
+
+    AggregatedHttpResponse aggregatedRes = response.aggregate().join();
+    String body = aggregatedRes.content(StandardCharsets.UTF_8);
+    JsonNode jsonNode = OBJECT_MAPPER.readTree(body);
+    JsonNode responseNode = jsonNode.get("responses").get(0);
+
+    assertThat(aggregatedRes.status().code()).isEqualTo(200);
+    assertThat(jsonNode.get("responses").size()).isEqualTo(1);
+    assertThat(responseNode.get("status").asInt()).isEqualTo(200);
+    assertThat(responseNode.get("aggregations").get("avg_longproperty").get("value").asDouble())
+        .isCloseTo(50.5, Offset.offset(0.001));
+    assertThat(responseNode.get("aggregations").get("max_longproperty").get("value").asDouble())
+        .isCloseTo(100.0, Offset.offset(0.001));
+    assertThat(responseNode.get("_shards").get("total").asInt()).isEqualTo(1);
+    assertThat(responseNode.get("_shards").get("failed").asInt()).isEqualTo(0);
+  }
+
+  @Test
+  public void testMultiSearchReturnsSiblingMetricAggregationsAcrossFields() throws Exception {
+    Instant start = Instant.parse("2026-05-08T08:00:00Z");
+    addMessagesToChunkManager(SpanUtil.makeSpansWithTimeDifference(1, 100, 1, start));
+
+    String postBody =
+        """
+        {"index":"%s"}
+        {"size":0,"query":{"match_all":{}},"aggs":{"max_longproperty":{"max":{"field":"longproperty"}},"min_timestamp":{"min":{"field":"@timestamp"}}}}
+        """
+            .formatted(TEST_DATASET_NAME);
+    HttpResponse response = elasticsearchApiService.multiSearch(postBody);
+
+    AggregatedHttpResponse aggregatedRes = response.aggregate().join();
+    String body = aggregatedRes.content(StandardCharsets.UTF_8);
+    JsonNode jsonNode = OBJECT_MAPPER.readTree(body);
+    JsonNode responseNode = jsonNode.get("responses").get(0);
+
+    assertThat(aggregatedRes.status().code()).isEqualTo(200);
+    assertThat(jsonNode.get("responses").size()).isEqualTo(1);
+    assertThat(responseNode.get("status").asInt()).isEqualTo(200);
+    assertThat(responseNode.get("aggregations").get("max_longproperty").get("value").asDouble())
+        .isCloseTo(100.0, Offset.offset(0.001));
+    assertThat(responseNode.get("aggregations").get("min_timestamp").get("value").asDouble())
+        .isCloseTo((double) start.toEpochMilli(), Offset.offset(0.001));
+    assertThat(responseNode.get("_shards").get("total").asInt()).isEqualTo(1);
+    assertThat(responseNode.get("_shards").get("failed").asInt()).isEqualTo(0);
+  }
+
+  @Test
+  public void testMultiSearchReturnsMinAndMaxTimestampAggregations() throws Exception {
+    Instant start = Instant.parse("2026-05-08T09:00:00Z");
+    addMessagesToChunkManager(SpanUtil.makeSpansWithTimeDifference(1, 100, 1, start));
+
+    String postBody =
+        """
+        {"index":"%s"}
+        {"size":0,"query":{"match_all":{}},"aggs":{"min_timestamp":{"min":{"field":"@timestamp"}},"max_timestamp":{"max":{"field":"@timestamp"}}}}
+        """
+            .formatted(TEST_DATASET_NAME);
+    HttpResponse response = elasticsearchApiService.multiSearch(postBody);
+
+    AggregatedHttpResponse aggregatedRes = response.aggregate().join();
+    String body = aggregatedRes.content(StandardCharsets.UTF_8);
+    JsonNode jsonNode = OBJECT_MAPPER.readTree(body);
+    JsonNode responseNode = jsonNode.get("responses").get(0);
+
+    assertThat(aggregatedRes.status().code()).isEqualTo(200);
+    assertThat(jsonNode.get("responses").size()).isEqualTo(1);
+    assertThat(responseNode.get("status").asInt()).isEqualTo(200);
+    assertThat(responseNode.get("aggregations").get("min_timestamp").get("value").asDouble())
+        .isCloseTo((double) start.toEpochMilli(), Offset.offset(0.001));
+    assertThat(responseNode.get("aggregations").get("max_timestamp").get("value").asDouble())
+        .isCloseTo((double) start.plusMillis(99).toEpochMilli(), Offset.offset(0.001));
+    assertThat(responseNode.get("_shards").get("total").asInt()).isEqualTo(1);
+    assertThat(responseNode.get("_shards").get("failed").asInt()).isEqualTo(0);
+  }
+
+  @Test
+  public void testMultiSearchReturnsNestedAndSiblingAggregations() throws Exception {
+    addMessagesToChunkManager(SpanUtil.makeSpansWithTimeDifference(1, 100, 1, Instant.now()));
+
+    String postBody =
+        """
+        {"index":"%s"}
+        {"size":0,"query":{"match_all":{}},"aggs":{"over_time":{"date_histogram":{"field":"@timestamp","interval":"1h","min_doc_count":1},"aggs":{"bucket_services":{"terms":{"field":"service_name","size":10}}}},"all_services":{"terms":{"field":"service_name","size":10}}}}
+        """
+            .formatted(TEST_DATASET_NAME);
+    HttpResponse response = elasticsearchApiService.multiSearch(postBody);
+
+    AggregatedHttpResponse aggregatedRes = response.aggregate().join();
+    String body = aggregatedRes.content(StandardCharsets.UTF_8);
+    JsonNode jsonNode = OBJECT_MAPPER.readTree(body);
+    JsonNode responseNode = jsonNode.get("responses").get(0);
+
+    assertThat(aggregatedRes.status().code()).isEqualTo(200);
+    assertThat(jsonNode.get("responses").size()).isEqualTo(1);
+    assertThat(responseNode.get("status").asInt()).isEqualTo(200);
+    assertThat(responseNode.get("aggregations").get("over_time").get("buckets").size())
+        .isEqualTo(1);
+    assertThat(responseNode.get("aggregations").get("all_services").get("buckets").size())
+        .isEqualTo(1);
+    assertThat(
+            responseNode
+                .get("aggregations")
+                .get("over_time")
+                .get("buckets")
+                .get(0)
+                .get("bucket_services")
+                .get("buckets")
+                .size())
+        .isEqualTo(1);
+    assertThat(
+            responseNode
+                .get("aggregations")
+                .get("over_time")
+                .get("buckets")
+                .get(0)
+                .get("bucket_services")
+                .get("buckets")
+                .get(0)
+                .get("doc_count")
+                .asInt())
+        .isEqualTo(100);
+    assertThat(
+            responseNode
+                .get("aggregations")
+                .get("all_services")
+                .get("buckets")
+                .get(0)
+                .get("doc_count")
+                .asInt())
+        .isEqualTo(100);
+    assertThat(responseNode.get("_shards").get("total").asInt()).isEqualTo(1);
+    assertThat(responseNode.get("_shards").get("failed").asInt()).isEqualTo(0);
+  }
+
+  @Test
+  public void testSearchAllReturnsAttributeAggregation() throws Exception {
+    addMessagesToChunkManager(SpanUtil.makeSpansWithTimeDifference(1, 100, 1, Instant.now()));
+
+    String postBody =
+        """
+        {"size":0,"query":{"match_all":{}},"aggs":{"services":{"terms":{"field":"service_name","size":10}}}}
+        """;
+    HttpResponse response = elasticsearchApiService.searchAll(postBody);
+
+    AggregatedHttpResponse aggregatedRes = response.aggregate().join();
+    String body = aggregatedRes.content(StandardCharsets.UTF_8);
+    JsonNode jsonNode = OBJECT_MAPPER.readTree(body);
+
+    assertThat(aggregatedRes.status().code()).isEqualTo(200);
+    assertThat(jsonNode.get("aggregations").get("services").get("buckets").size()).isEqualTo(1);
+    assertThat(
+            jsonNode.get("aggregations").get("services").get("buckets").get(0).get("key").asText())
+        .isEqualTo(TEST_DATASET_NAME);
+    assertThat(
+            jsonNode
+                .get("aggregations")
+                .get("services")
+                .get("buckets")
+                .get(0)
+                .get("doc_count")
+                .asInt())
+        .isEqualTo(100);
+    assertThat(jsonNode.get("_shards").get("total").asInt()).isEqualTo(1);
+    assertThat(jsonNode.get("_shards").get("failed").asInt()).isEqualTo(0);
+  }
+
+  @Test
+  public void testSearchAllReturnsMultipleSiblingAggregations() throws Exception {
+    addMessagesToChunkManager(SpanUtil.makeSpansWithTimeDifference(1, 100, 1, Instant.now()));
+
+    String postBody =
+        """
+        {
+          "size": 0,
+          "query": {
+            "match_all": {}
+          },
+          "aggs": {
+            "over_time": {
+              "date_histogram": {
+                "field": "@timestamp",
+                "interval": "1h",
+                "min_doc_count": 1
+              },
+              "aggs": {}
+            },
+            "services": {
+              "terms": {
+                "field": "service_name",
+                "size": 10
+              }
+            }
+          }
+        }
+        """;
+    HttpResponse response = elasticsearchApiService.searchAll(postBody);
+
+    AggregatedHttpResponse aggregatedRes = response.aggregate().join();
+    String body = aggregatedRes.content(StandardCharsets.UTF_8);
+    JsonNode jsonNode = OBJECT_MAPPER.readTree(body);
+
+    assertThat(aggregatedRes.status().code()).isEqualTo(200);
+    assertThat(jsonNode.get("aggregations").get("over_time").get("buckets").size()).isEqualTo(1);
+    assertThat(jsonNode.get("aggregations").get("services").get("buckets").size()).isEqualTo(1);
+    assertThat(
+            jsonNode
+                .get("aggregations")
+                .get("services")
+                .get("buckets")
+                .get(0)
+                .get("doc_count")
+                .asInt())
+        .isEqualTo(100);
+    assertThat(jsonNode.get("_shards").get("total").asInt()).isEqualTo(1);
+    assertThat(jsonNode.get("_shards").get("failed").asInt()).isEqualTo(0);
+  }
+
+  @Test
+  public void testSearchAllReturnsSiblingMetricAggregationsOnSameField() throws Exception {
+    addMessagesToChunkManager(SpanUtil.makeSpansWithTimeDifference(1, 100, 1, Instant.now()));
+
+    String postBody =
+        """
+        {
+          "size": 0,
+          "query": {
+            "match_all": {}
+          },
+          "aggs": {
+            "avg_longproperty": {
+              "avg": {
+                "field": "longproperty"
+              }
+            },
+            "max_longproperty": {
+              "max": {
+                "field": "longproperty"
+              }
+            }
+          }
+        }
+        """;
+    HttpResponse response = elasticsearchApiService.searchAll(postBody);
+
+    AggregatedHttpResponse aggregatedRes = response.aggregate().join();
+    String body = aggregatedRes.content(StandardCharsets.UTF_8);
+    JsonNode jsonNode = OBJECT_MAPPER.readTree(body);
+
+    assertThat(aggregatedRes.status().code()).isEqualTo(200);
+    assertThat(jsonNode.get("aggregations").get("avg_longproperty").get("value").asDouble())
+        .isCloseTo(50.5, Offset.offset(0.001));
+    assertThat(jsonNode.get("aggregations").get("max_longproperty").get("value").asDouble())
+        .isCloseTo(100.0, Offset.offset(0.001));
+    assertThat(jsonNode.get("_shards").get("total").asInt()).isEqualTo(1);
+    assertThat(jsonNode.get("_shards").get("failed").asInt()).isEqualTo(0);
+  }
+
+  @Test
+  public void testSearchAllReturnsSiblingMetricAggregationsAcrossFields() throws Exception {
+    Instant start = Instant.parse("2026-05-08T08:00:00Z");
+    addMessagesToChunkManager(SpanUtil.makeSpansWithTimeDifference(1, 100, 1, start));
+
+    String postBody =
+        """
+        {
+          "size": 0,
+          "query": {
+            "match_all": {}
+          },
+          "aggs": {
+            "max_longproperty": {
+              "max": {
+                "field": "longproperty"
+              }
+            },
+            "min_timestamp": {
+              "min": {
+                "field": "@timestamp"
+              }
+            }
+          }
+        }
+        """;
+    HttpResponse response = elasticsearchApiService.searchAll(postBody);
+
+    AggregatedHttpResponse aggregatedRes = response.aggregate().join();
+    String body = aggregatedRes.content(StandardCharsets.UTF_8);
+    JsonNode jsonNode = OBJECT_MAPPER.readTree(body);
+
+    assertThat(aggregatedRes.status().code()).isEqualTo(200);
+    assertThat(jsonNode.get("aggregations").get("max_longproperty").get("value").asDouble())
+        .isCloseTo(100.0, Offset.offset(0.001));
+    assertThat(jsonNode.get("aggregations").get("min_timestamp").get("value").asDouble())
+        .isCloseTo((double) start.toEpochMilli(), Offset.offset(0.001));
+    assertThat(jsonNode.get("_shards").get("total").asInt()).isEqualTo(1);
+    assertThat(jsonNode.get("_shards").get("failed").asInt()).isEqualTo(0);
+  }
+
+  @Test
+  public void testSearchAllReturnsMinAndMaxTimestampAggregations() throws Exception {
+    Instant start = Instant.parse("2026-05-08T09:00:00Z");
+    addMessagesToChunkManager(SpanUtil.makeSpansWithTimeDifference(1, 100, 1, start));
+
+    String postBody =
+        """
+        {
+          "size": 0,
+          "query": {
+            "match_all": {}
+          },
+          "aggs": {
+            "min_timestamp": {
+              "min": {
+                "field": "@timestamp"
+              }
+            },
+            "max_timestamp": {
+              "max": {
+                "field": "@timestamp"
+              }
+            }
+          }
+        }
+        """;
+    HttpResponse response = elasticsearchApiService.searchAll(postBody);
+
+    AggregatedHttpResponse aggregatedRes = response.aggregate().join();
+    String body = aggregatedRes.content(StandardCharsets.UTF_8);
+    JsonNode jsonNode = OBJECT_MAPPER.readTree(body);
+
+    assertThat(aggregatedRes.status().code()).isEqualTo(200);
+    assertThat(jsonNode.get("aggregations").get("min_timestamp").get("value").asDouble())
+        .isCloseTo((double) start.toEpochMilli(), Offset.offset(0.001));
+    assertThat(jsonNode.get("aggregations").get("max_timestamp").get("value").asDouble())
+        .isCloseTo((double) start.plusMillis(99).toEpochMilli(), Offset.offset(0.001));
+    assertThat(jsonNode.get("_shards").get("total").asInt()).isEqualTo(1);
+    assertThat(jsonNode.get("_shards").get("failed").asInt()).isEqualTo(0);
+  }
+
+  @Test
+  public void testSearchAllReturnsNestedAndSiblingAggregations() throws Exception {
+    addMessagesToChunkManager(SpanUtil.makeSpansWithTimeDifference(1, 100, 1, Instant.now()));
+
+    String postBody =
+        """
+        {
+          "size": 0,
+          "query": {
+            "match_all": {}
+          },
+          "aggs": {
+            "over_time": {
+              "date_histogram": {
+                "field": "@timestamp",
+                "interval": "1h",
+                "min_doc_count": 1
+              },
+              "aggs": {
+                "bucket_services": {
+                  "terms": {
+                    "field": "service_name",
+                    "size": 10
+                  }
+                }
+              }
+            },
+            "all_services": {
+              "terms": {
+                "field": "service_name",
+                "size": 10
+              }
+            }
+          }
+        }
+        """;
+    HttpResponse response = elasticsearchApiService.searchAll(postBody);
+
+    AggregatedHttpResponse aggregatedRes = response.aggregate().join();
+    String body = aggregatedRes.content(StandardCharsets.UTF_8);
+    JsonNode jsonNode = OBJECT_MAPPER.readTree(body);
+
+    assertThat(aggregatedRes.status().code()).isEqualTo(200);
+    assertThat(jsonNode.get("aggregations").get("over_time").get("buckets").size()).isEqualTo(1);
+    assertThat(jsonNode.get("aggregations").get("all_services").get("buckets").size()).isEqualTo(1);
+    assertThat(
+            jsonNode
+                .get("aggregations")
+                .get("over_time")
+                .get("buckets")
+                .get(0)
+                .get("bucket_services")
+                .get("buckets")
+                .size())
+        .isEqualTo(1);
+    assertThat(
+            jsonNode
+                .get("aggregations")
+                .get("over_time")
+                .get("buckets")
+                .get(0)
+                .get("bucket_services")
+                .get("buckets")
+                .get(0)
+                .get("doc_count")
+                .asInt())
+        .isEqualTo(100);
+    assertThat(
+            jsonNode
+                .get("aggregations")
+                .get("all_services")
+                .get("buckets")
+                .get(0)
+                .get("doc_count")
+                .asInt())
+        .isEqualTo(100);
+    assertThat(jsonNode.get("_shards").get("total").asInt()).isEqualTo(1);
+    assertThat(jsonNode.get("_shards").get("failed").asInt()).isEqualTo(0);
+  }
+
+  @Test
   public void testSingleSearchReturnsAttributeAggregation() throws Exception {
     addMessagesToChunkManager(SpanUtil.makeSpansWithTimeDifference(1, 100, 1, Instant.now()));
 
@@ -509,6 +1018,255 @@ public class ElasticsearchApiServiceTest {
         .isEqualTo(100);
     assertThat(jsonNode.get("_shards").get("total").asInt()).isEqualTo(1);
     assertThat(jsonNode.get("_shards").get("failed").asInt()).isEqualTo(0);
+  }
+
+  @Test
+  public void testSingleSearchReturnsMultipleSiblingAggregations() throws Exception {
+    addMessagesToChunkManager(SpanUtil.makeSpansWithTimeDifference(1, 100, 1, Instant.now()));
+
+    String postBody =
+        """
+        {
+          "size": 0,
+          "query": {
+            "match_all": {}
+          },
+          "aggs": {
+            "over_time": {
+              "date_histogram": {
+                "field": "@timestamp",
+                "interval": "1h",
+                "min_doc_count": 1
+              },
+              "aggs": {}
+            },
+            "services": {
+              "terms": {
+                "field": "service_name",
+                "size": 10
+              }
+            }
+          }
+        }
+        """;
+    HttpResponse response = elasticsearchApiService.search(TEST_DATASET_NAME, postBody);
+
+    AggregatedHttpResponse aggregatedRes = response.aggregate().join();
+    String body = aggregatedRes.content(StandardCharsets.UTF_8);
+    JsonNode jsonNode = OBJECT_MAPPER.readTree(body);
+
+    assertThat(aggregatedRes.status().code()).isEqualTo(200);
+    assertThat(jsonNode.get("aggregations").get("over_time").get("buckets").size()).isEqualTo(1);
+    assertThat(jsonNode.get("aggregations").get("services").get("buckets").size()).isEqualTo(1);
+    assertThat(
+            jsonNode
+                .get("aggregations")
+                .get("services")
+                .get("buckets")
+                .get(0)
+                .get("doc_count")
+                .asInt())
+        .isEqualTo(100);
+  }
+
+  @Test
+  public void testSingleSearchReturnsSiblingMetricAggregationsOnSameField() throws Exception {
+    addMessagesToChunkManager(SpanUtil.makeSpansWithTimeDifference(1, 100, 1, Instant.now()));
+
+    String postBody =
+        """
+        {
+          "size": 0,
+          "query": {
+            "match_all": {}
+          },
+          "aggs": {
+            "avg_longproperty": {
+              "avg": {
+                "field": "longproperty"
+              }
+            },
+            "max_longproperty": {
+              "max": {
+                "field": "longproperty"
+              }
+            }
+          }
+        }
+        """;
+    HttpResponse response = elasticsearchApiService.search(TEST_DATASET_NAME, postBody);
+
+    AggregatedHttpResponse aggregatedRes = response.aggregate().join();
+    String body = aggregatedRes.content(StandardCharsets.UTF_8);
+    JsonNode jsonNode = OBJECT_MAPPER.readTree(body);
+
+    assertThat(aggregatedRes.status().code()).isEqualTo(200);
+    assertThat(jsonNode.get("aggregations").get("avg_longproperty").get("value").asDouble())
+        .isCloseTo(50.5, Offset.offset(0.001));
+    assertThat(jsonNode.get("aggregations").get("max_longproperty").get("value").asDouble())
+        .isCloseTo(100.0, Offset.offset(0.001));
+    assertThat(jsonNode.get("_shards").get("total").asInt()).isEqualTo(1);
+    assertThat(jsonNode.get("_shards").get("failed").asInt()).isEqualTo(0);
+  }
+
+  @Test
+  public void testSingleSearchReturnsSiblingMetricAggregationsAcrossFields() throws Exception {
+    Instant start = Instant.parse("2026-05-08T08:00:00Z");
+    addMessagesToChunkManager(SpanUtil.makeSpansWithTimeDifference(1, 100, 1, start));
+
+    String postBody =
+        """
+        {
+          "size": 0,
+          "query": {
+            "match_all": {}
+          },
+          "aggs": {
+            "max_longproperty": {
+              "max": {
+                "field": "longproperty"
+              }
+            },
+            "min_timestamp": {
+              "min": {
+                "field": "@timestamp"
+              }
+            }
+          }
+        }
+        """;
+    HttpResponse response = elasticsearchApiService.search(TEST_DATASET_NAME, postBody);
+
+    AggregatedHttpResponse aggregatedRes = response.aggregate().join();
+    String body = aggregatedRes.content(StandardCharsets.UTF_8);
+    JsonNode jsonNode = OBJECT_MAPPER.readTree(body);
+
+    assertThat(aggregatedRes.status().code()).isEqualTo(200);
+    assertThat(jsonNode.get("aggregations").get("max_longproperty").get("value").asDouble())
+        .isCloseTo(100.0, Offset.offset(0.001));
+    assertThat(jsonNode.get("aggregations").get("min_timestamp").get("value").asDouble())
+        .isCloseTo((double) start.toEpochMilli(), Offset.offset(0.001));
+    assertThat(jsonNode.get("_shards").get("total").asInt()).isEqualTo(1);
+    assertThat(jsonNode.get("_shards").get("failed").asInt()).isEqualTo(0);
+  }
+
+  @Test
+  public void testSingleSearchReturnsMinAndMaxTimestampAggregations() throws Exception {
+    Instant start = Instant.parse("2026-05-08T09:00:00Z");
+    addMessagesToChunkManager(SpanUtil.makeSpansWithTimeDifference(1, 100, 1, start));
+
+    String postBody =
+        """
+        {
+          "size": 0,
+          "query": {
+            "match_all": {}
+          },
+          "aggs": {
+            "min_timestamp": {
+              "min": {
+                "field": "@timestamp"
+              }
+            },
+            "max_timestamp": {
+              "max": {
+                "field": "@timestamp"
+              }
+            }
+          }
+        }
+        """;
+    HttpResponse response = elasticsearchApiService.search(TEST_DATASET_NAME, postBody);
+
+    AggregatedHttpResponse aggregatedRes = response.aggregate().join();
+    String body = aggregatedRes.content(StandardCharsets.UTF_8);
+    JsonNode jsonNode = OBJECT_MAPPER.readTree(body);
+
+    assertThat(aggregatedRes.status().code()).isEqualTo(200);
+    assertThat(jsonNode.get("aggregations").get("min_timestamp").get("value").asDouble())
+        .isCloseTo((double) start.toEpochMilli(), Offset.offset(0.001));
+    assertThat(jsonNode.get("aggregations").get("max_timestamp").get("value").asDouble())
+        .isCloseTo((double) start.plusMillis(99).toEpochMilli(), Offset.offset(0.001));
+    assertThat(jsonNode.get("_shards").get("total").asInt()).isEqualTo(1);
+    assertThat(jsonNode.get("_shards").get("failed").asInt()).isEqualTo(0);
+  }
+
+  @Test
+  public void testSingleSearchReturnsNestedAndSiblingAggregations() throws Exception {
+    addMessagesToChunkManager(SpanUtil.makeSpansWithTimeDifference(1, 100, 1, Instant.now()));
+
+    String postBody =
+        """
+        {
+          "size": 0,
+          "query": {
+            "match_all": {}
+          },
+          "aggs": {
+            "over_time": {
+              "date_histogram": {
+                "field": "@timestamp",
+                "interval": "1h",
+                "min_doc_count": 1
+              },
+              "aggs": {
+                "bucket_services": {
+                  "terms": {
+                    "field": "service_name",
+                    "size": 10
+                  }
+                }
+              }
+            },
+            "all_services": {
+              "terms": {
+                "field": "service_name",
+                "size": 10
+              }
+            }
+          }
+        }
+        """;
+    HttpResponse response = elasticsearchApiService.search(TEST_DATASET_NAME, postBody);
+
+    AggregatedHttpResponse aggregatedRes = response.aggregate().join();
+    String body = aggregatedRes.content(StandardCharsets.UTF_8);
+    JsonNode jsonNode = OBJECT_MAPPER.readTree(body);
+
+    assertThat(aggregatedRes.status().code()).isEqualTo(200);
+    assertThat(jsonNode.get("aggregations").get("over_time").get("buckets").size()).isEqualTo(1);
+    assertThat(jsonNode.get("aggregations").get("all_services").get("buckets").size()).isEqualTo(1);
+    assertThat(
+            jsonNode
+                .get("aggregations")
+                .get("over_time")
+                .get("buckets")
+                .get(0)
+                .get("bucket_services")
+                .get("buckets")
+                .size())
+        .isEqualTo(1);
+    assertThat(
+            jsonNode
+                .get("aggregations")
+                .get("over_time")
+                .get("buckets")
+                .get(0)
+                .get("bucket_services")
+                .get("buckets")
+                .get(0)
+                .get("doc_count")
+                .asInt())
+        .isEqualTo(100);
+    assertThat(
+            jsonNode
+                .get("aggregations")
+                .get("all_services")
+                .get("buckets")
+                .get(0)
+                .get("doc_count")
+                .asInt())
+        .isEqualTo(100);
   }
 
   @Test

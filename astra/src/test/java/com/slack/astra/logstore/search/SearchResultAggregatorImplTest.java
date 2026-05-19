@@ -12,6 +12,7 @@ import com.slack.astra.logstore.LogStore;
 import com.slack.astra.logstore.LuceneIndexStoreConfig;
 import com.slack.astra.logstore.LuceneIndexStoreImpl;
 import com.slack.astra.logstore.schema.SchemaAwareLogDocumentBuilderImpl;
+import com.slack.astra.proto.service.AstraSearch;
 import com.slack.astra.testlib.MessageUtil;
 import com.slack.astra.testlib.SpanUtil;
 import com.slack.astra.util.QueryBuilderUtil;
@@ -31,7 +32,9 @@ import java.util.stream.Collectors;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.opensearch.search.aggregations.InternalAggregation;
+import org.opensearch.search.aggregations.InternalAggregations;
 import org.opensearch.search.aggregations.bucket.histogram.InternalDateHistogram;
+import org.opensearch.search.aggregations.bucket.terms.StringTerms;
 
 public class SearchResultAggregatorImplTest {
   @BeforeEach
@@ -69,9 +72,11 @@ public class SearchResultAggregatorImplTest {
             SpanUtil.makeSpansWithTimeDifference(11, 20, 1000 * 60, startTime2));
 
     SearchResult<LogMessage> searchResult1 =
-        new SearchResult<>(messages1, tookMs, 0, 1, 1, 0, histogram1);
+        new SearchResult<>(
+            messages1, tookMs, 0, 1, 1, 0, InternalAggregations.from(List.of(histogram1)));
     SearchResult<LogMessage> searchResult2 =
-        new SearchResult<>(messages2, tookMs + 1, 0, 1, 1, 0, histogram2);
+        new SearchResult<>(
+            messages2, tookMs + 1, 0, 1, 1, 0, InternalAggregations.from(List.of(histogram2)));
 
     SearchQuery searchQuery =
         new SearchQuery(
@@ -102,7 +107,8 @@ public class SearchResultAggregatorImplTest {
     assertThat(hit.getTimestamp()).isEqualTo(startTime2.plus(9, ChronoUnit.MINUTES));
 
     InternalDateHistogram internalDateHistogram =
-        Objects.requireNonNull((InternalDateHistogram) aggSearchResult.internalAggregation);
+        Objects.requireNonNull(
+            (InternalDateHistogram) aggSearchResult.internalAggregations.get("1"));
     assertThat(
             internalDateHistogram.getBuckets().stream()
                 .collect(Collectors.summarizingLong(InternalDateHistogram.Bucket::getDocCount))
@@ -140,9 +146,11 @@ public class SearchResultAggregatorImplTest {
             SpanUtil.makeSpansWithTimeDifference(11, 20, 1000 * 60, startTime2));
 
     SearchResult<LogMessage> searchResult1 =
-        new SearchResult<>(messages1, tookMs, 0, 1, 1, 0, histogram1);
+        new SearchResult<>(
+            messages1, tookMs, 0, 1, 1, 0, InternalAggregations.from(List.of(histogram1)));
     SearchResult<LogMessage> searchResult2 =
-        new SearchResult<>(messages2, tookMs + 1, 0, 1, 1, 0, histogram2);
+        new SearchResult<>(
+            messages2, tookMs + 1, 0, 1, 1, 0, InternalAggregations.from(List.of(histogram2)));
 
     SearchQuery searchQuery =
         new SearchQuery(
@@ -173,7 +181,8 @@ public class SearchResultAggregatorImplTest {
     }
 
     InternalDateHistogram internalDateHistogram =
-        Objects.requireNonNull((InternalDateHistogram) aggSearchResult.internalAggregation);
+        Objects.requireNonNull(
+            (InternalDateHistogram) aggSearchResult.internalAggregations.get("1"));
     assertThat(
             internalDateHistogram.getBuckets().stream()
                 .collect(Collectors.summarizingLong(InternalDateHistogram.Bucket::getDocCount))
@@ -229,13 +238,17 @@ public class SearchResultAggregatorImplTest {
             SpanUtil.makeSpansWithTimeDifference(31, 40, 1000 * 60, startTime4));
 
     SearchResult<LogMessage> searchResult1 =
-        new SearchResult<>(messages1, tookMs, 0, 1, 1, 0, histogram1);
+        new SearchResult<>(
+            messages1, tookMs, 0, 1, 1, 0, InternalAggregations.from(List.of(histogram1)));
     SearchResult<LogMessage> searchResult2 =
-        new SearchResult<>(messages2, tookMs + 1, 1, 1, 1, 1, histogram2);
+        new SearchResult<>(
+            messages2, tookMs + 1, 1, 1, 1, 1, InternalAggregations.from(List.of(histogram2)));
     SearchResult<LogMessage> searchResult3 =
-        new SearchResult<>(messages3, tookMs + 2, 0, 1, 1, 0, histogram3);
+        new SearchResult<>(
+            messages3, tookMs + 2, 0, 1, 1, 0, InternalAggregations.from(List.of(histogram3)));
     SearchResult<LogMessage> searchResult4 =
-        new SearchResult<>(messages4, tookMs + 3, 0, 1, 1, 1, histogram4);
+        new SearchResult<>(
+            messages4, tookMs + 3, 0, 1, 1, 1, InternalAggregations.from(List.of(histogram4)));
 
     SearchQuery searchQuery =
         new SearchQuery(
@@ -264,13 +277,134 @@ public class SearchResultAggregatorImplTest {
     }
 
     InternalDateHistogram internalDateHistogram =
-        Objects.requireNonNull((InternalDateHistogram) aggSearchResult.internalAggregation);
+        Objects.requireNonNull(
+            (InternalDateHistogram) aggSearchResult.internalAggregations.get("1"));
     assertThat(
             internalDateHistogram.getBuckets().stream()
                 .collect(Collectors.summarizingLong(InternalDateHistogram.Bucket::getDocCount))
                 .getSum())
         .isEqualTo(messages1.size() + messages2.size() + messages3.size() + messages4.size());
     assertThat(internalDateHistogram.getBuckets().size()).isEqualTo(bucketCount);
+  }
+
+  @Test
+  public void testSearchResultAggregatorWithMultipleSiblingAggregations() throws IOException {
+    long tookMs = 10;
+    int howMany = 10;
+    Instant startTime1 = Instant.now();
+    Instant startTime2 = startTime1.plus(1, ChronoUnit.HOURS);
+    long histogramStartMs = startTime1.toEpochMilli();
+    long histogramEndMs = startTime1.plus(2, ChronoUnit.HOURS).toEpochMilli();
+
+    List<LogMessage> messages1 =
+        MessageUtil.makeMessagesWithTimeDifference(1, 10, 1000 * 60, startTime1);
+    List<LogMessage> messages2 =
+        MessageUtil.makeMessagesWithTimeDifference(11, 20, 1000 * 60, startTime2);
+
+    SearchQuery searchQuery =
+        buildSiblingAggregationQuery(histogramStartMs, histogramEndMs, howMany, "10m");
+
+    InternalAggregations aggregations1 =
+        makeAggregations(
+            searchQuery,
+            histogramStartMs,
+            histogramEndMs,
+            SpanUtil.makeSpansWithTimeDifference(1, 10, 1000 * 60, startTime1));
+    InternalAggregations aggregations2 =
+        makeAggregations(
+            searchQuery,
+            histogramStartMs,
+            histogramEndMs,
+            SpanUtil.makeSpansWithTimeDifference(11, 20, 1000 * 60, startTime2));
+
+    SearchResult<LogMessage> searchResult1 =
+        new SearchResult<>(messages1, tookMs, 0, 1, 1, 0, aggregations1);
+    SearchResult<LogMessage> searchResult2 =
+        new SearchResult<>(messages2, tookMs + 1, 0, 1, 1, 0, aggregations2);
+
+    SearchResult<LogMessage> aggSearchResult =
+        new SearchResultAggregatorImpl<>(searchQuery)
+            .aggregate(List.of(searchResult1, searchResult2), true);
+
+    InternalAggregations combined = Objects.requireNonNull(aggSearchResult.internalAggregations);
+    InternalDateHistogram overTime =
+        (InternalDateHistogram) Objects.requireNonNull(combined.get("over_time"));
+    assertThat(
+            overTime.getBuckets().stream()
+                .collect(Collectors.summarizingLong(InternalDateHistogram.Bucket::getDocCount))
+                .getSum())
+        .isEqualTo(messages1.size() + messages2.size());
+
+    StringTerms services = (StringTerms) Objects.requireNonNull(combined.get("services"));
+    assertThat(services.getBuckets()).hasSize(1);
+    assertThat(services.getBuckets().getFirst().getDocCount())
+        .isEqualTo(messages1.size() + messages2.size());
+  }
+
+  @Test
+  public void testSearchResultAggregatorWithNestedAndSiblingAggregations() throws IOException {
+    long tookMs = 10;
+    int howMany = 10;
+    Instant startTime1 = Instant.now();
+    Instant startTime2 = startTime1.plus(1, ChronoUnit.HOURS);
+    long histogramStartMs = startTime1.toEpochMilli();
+    long histogramEndMs = startTime1.plus(2, ChronoUnit.HOURS).toEpochMilli();
+
+    List<LogMessage> messages1 =
+        MessageUtil.makeMessagesWithTimeDifference(1, 10, 1000 * 60, startTime1);
+    List<LogMessage> messages2 =
+        MessageUtil.makeMessagesWithTimeDifference(11, 20, 1000 * 60, startTime2);
+
+    SearchQuery searchQuery =
+        buildNestedAndSiblingAggregationQuery(histogramStartMs, histogramEndMs, howMany, "10m");
+
+    InternalAggregations aggregations1 =
+        makeAggregations(
+            searchQuery,
+            histogramStartMs,
+            histogramEndMs,
+            SpanUtil.makeSpansWithTimeDifference(1, 10, 1000 * 60, startTime1));
+    InternalAggregations aggregations2 =
+        makeAggregations(
+            searchQuery,
+            histogramStartMs,
+            histogramEndMs,
+            SpanUtil.makeSpansWithTimeDifference(11, 20, 1000 * 60, startTime2));
+
+    SearchResult<LogMessage> searchResult1 =
+        new SearchResult<>(messages1, tookMs, 0, 1, 1, 0, aggregations1);
+    SearchResult<LogMessage> searchResult2 =
+        new SearchResult<>(messages2, tookMs + 1, 0, 1, 1, 0, aggregations2);
+
+    SearchResult<LogMessage> aggSearchResult =
+        new SearchResultAggregatorImpl<>(searchQuery)
+            .aggregate(List.of(searchResult1, searchResult2), true);
+
+    InternalAggregations combined = Objects.requireNonNull(aggSearchResult.internalAggregations);
+    InternalDateHistogram overTime =
+        (InternalDateHistogram) Objects.requireNonNull(combined.get("over_time"));
+    assertThat(
+            overTime.getBuckets().stream()
+                .collect(Collectors.summarizingLong(InternalDateHistogram.Bucket::getDocCount))
+                .getSum())
+        .isEqualTo(messages1.size() + messages2.size());
+
+    long nestedServicesDocCount =
+        overTime.getBuckets().stream()
+            .map(bucket -> (StringTerms) bucket.getAggregations().get("bucket_services"))
+            .filter(Objects::nonNull)
+            .mapToLong(
+                bucketServices ->
+                    bucketServices.getBuckets().stream()
+                        .mapToLong(bucket -> bucket.getDocCount())
+                        .sum())
+            .sum();
+    assertThat(nestedServicesDocCount).isEqualTo(messages1.size() + messages2.size());
+
+    StringTerms allServices = (StringTerms) Objects.requireNonNull(combined.get("all_services"));
+    assertThat(allServices.getBuckets()).hasSize(1);
+    assertThat(allServices.getBuckets().getFirst().getDocCount())
+        .isEqualTo(messages1.size() + messages2.size());
   }
 
   @Test
@@ -320,7 +454,7 @@ public class SearchResultAggregatorImplTest {
       assertThat(messages2.contains(m)).isTrue();
     }
 
-    assertThat(aggSearchResult.internalAggregation).isNull();
+    assertThat(aggSearchResult.internalAggregations).isNull();
   }
 
   @Test
@@ -352,9 +486,23 @@ public class SearchResultAggregatorImplTest {
             SpanUtil.makeSpansWithTimeDifference(11, 20, 1000 * 60, startTime2));
 
     SearchResult<LogMessage> searchResult1 =
-        new SearchResult<>(Collections.emptyList(), tookMs, 0, 2, 2, 2, histogram1);
+        new SearchResult<>(
+            Collections.emptyList(),
+            tookMs,
+            0,
+            2,
+            2,
+            2,
+            InternalAggregations.from(List.of(histogram1)));
     SearchResult<LogMessage> searchResult2 =
-        new SearchResult<>(Collections.emptyList(), tookMs + 1, 0, 1, 1, 0, histogram2);
+        new SearchResult<>(
+            Collections.emptyList(),
+            tookMs + 1,
+            0,
+            1,
+            1,
+            0,
+            InternalAggregations.from(List.of(histogram2)));
 
     SearchQuery searchQuery =
         new SearchQuery(
@@ -381,7 +529,8 @@ public class SearchResultAggregatorImplTest {
     assertThat(aggSearchResult.totalSnapshots).isEqualTo(3);
 
     InternalDateHistogram internalDateHistogram =
-        Objects.requireNonNull((InternalDateHistogram) aggSearchResult.internalAggregation);
+        Objects.requireNonNull(
+            (InternalDateHistogram) aggSearchResult.internalAggregations.get("1"));
     assertThat(
             internalDateHistogram.getBuckets().stream()
                 .collect(Collectors.summarizingLong(InternalDateHistogram.Bucket::getDocCount))
@@ -412,7 +561,8 @@ public class SearchResultAggregatorImplTest {
             SpanUtil.makeSpansWithTimeDifference(1, 10, 1000 * 60, startTime1));
 
     SearchResult<LogMessage> searchResult1 =
-        new SearchResult<>(messages1, tookMs, 1, 1, 1, 0, histogram1);
+        new SearchResult<>(
+            messages1, tookMs, 1, 1, 1, 0, InternalAggregations.from(List.of(histogram1)));
     SearchResult<LogMessage> searchResult2 =
         new SearchResult<>(messages2, tookMs + 1, 0, 1, 1, 0, null);
 
@@ -445,7 +595,8 @@ public class SearchResultAggregatorImplTest {
     }
 
     InternalDateHistogram internalDateHistogram =
-        Objects.requireNonNull((InternalDateHistogram) aggSearchResult.internalAggregation);
+        Objects.requireNonNull(
+            (InternalDateHistogram) aggSearchResult.internalAggregations.get("1"));
     assertThat(internalDateHistogram).isEqualTo(histogram1);
   }
 
@@ -478,9 +629,17 @@ public class SearchResultAggregatorImplTest {
             SpanUtil.makeSpansWithTimeDifference(11, 20, 1000 * 60, startTime2));
 
     SearchResult<LogMessage> searchResult1 =
-        new SearchResult<>(messages1, tookMs, 0, 2, 2, 2, histogram1);
+        new SearchResult<>(
+            messages1, tookMs, 0, 2, 2, 2, InternalAggregations.from(List.of(histogram1)));
     SearchResult<LogMessage> searchResult2 =
-        new SearchResult<>(Collections.emptyList(), tookMs + 1, 0, 1, 1, 0, histogram2);
+        new SearchResult<>(
+            Collections.emptyList(),
+            tookMs + 1,
+            0,
+            1,
+            1,
+            0,
+            InternalAggregations.from(List.of(histogram2)));
 
     SearchQuery searchQuery =
         new SearchQuery(
@@ -507,7 +666,8 @@ public class SearchResultAggregatorImplTest {
     assertThat(aggSearchResult.totalSnapshots).isEqualTo(3);
 
     InternalDateHistogram internalDateHistogram =
-        Objects.requireNonNull((InternalDateHistogram) aggSearchResult.internalAggregation);
+        Objects.requireNonNull(
+            (InternalDateHistogram) aggSearchResult.internalAggregations.get("1"));
     assertThat(
             internalDateHistogram.getBuckets().stream()
                 .collect(Collectors.summarizingLong(InternalDateHistogram.Bucket::getDocCount))
@@ -563,7 +723,136 @@ public class SearchResultAggregatorImplTest {
                 histogramEndMs));
 
     try {
-      return messageSearchResult.internalAggregation;
+      return messageSearchResult.internalAggregations.get("1");
+    } finally {
+      logSearcher.close();
+      logStore.close();
+      logStore.cleanup();
+    }
+  }
+
+  private SearchQuery buildSiblingAggregationQuery(
+      long histogramStartMs, long histogramEndMs, int howMany, String interval) {
+    return SearchResultUtils.fromSearchRequest(
+        AstraSearch.SearchRequest.newBuilder()
+            .setDataset(MessageUtil.TEST_DATASET_NAME)
+            .setStartTimeEpochMs(histogramStartMs)
+            .setEndTimeEpochMs(histogramEndMs)
+            .setHowMany(howMany)
+            .setAggregationJson(
+                """
+                {
+                  "over_time": {
+                    "date_histogram": {
+                      "field": "_timesinceepoch",
+                      "interval": "%s",
+                      "min_doc_count": 0,
+                      "extended_bounds": {
+                        "min": %d,
+                        "max": %d
+                      },
+                      "format": "epoch_millis"
+                    },
+                    "aggs": {}
+                  },
+                  "services": {
+                    "terms": {
+                      "field": "service_name",
+                      "size": 10,
+                      "min_doc_count": 1
+                    }
+                  }
+                }
+                """
+                    .formatted(interval, histogramStartMs, histogramEndMs))
+            .build());
+  }
+
+  private SearchQuery buildNestedAndSiblingAggregationQuery(
+      long histogramStartMs, long histogramEndMs, int howMany, String interval) {
+    return SearchResultUtils.fromSearchRequest(
+        AstraSearch.SearchRequest.newBuilder()
+            .setDataset(MessageUtil.TEST_DATASET_NAME)
+            .setStartTimeEpochMs(histogramStartMs)
+            .setEndTimeEpochMs(histogramEndMs)
+            .setHowMany(howMany)
+            .setAggregationJson(
+                """
+                {
+                  "over_time": {
+                    "date_histogram": {
+                      "field": "_timesinceepoch",
+                      "interval": "%s",
+                      "min_doc_count": 0,
+                      "extended_bounds": {
+                        "min": %d,
+                        "max": %d
+                      },
+                      "format": "epoch_millis"
+                    },
+                    "aggs": {
+                      "bucket_services": {
+                        "terms": {
+                          "field": "service_name",
+                          "size": 10,
+                          "min_doc_count": 1
+                        }
+                      }
+                    }
+                  },
+                  "all_services": {
+                    "terms": {
+                      "field": "service_name",
+                      "size": 10,
+                      "min_doc_count": 1
+                    }
+                  }
+                }
+                """
+                    .formatted(interval, histogramStartMs, histogramEndMs))
+            .build());
+  }
+
+  private InternalAggregations makeAggregations(
+      SearchQuery searchQuery,
+      long histogramStartMs,
+      long histogramEndMs,
+      List<Trace.Span> logMessages)
+      throws IOException {
+    File tempFolder = Files.createTempDir();
+    LuceneIndexStoreConfig indexStoreCfg =
+        new LuceneIndexStoreConfig(
+            Duration.of(1, ChronoUnit.MINUTES),
+            Duration.of(1, ChronoUnit.MINUTES),
+            tempFolder.getCanonicalPath(),
+            false);
+    MeterRegistry metricsRegistry = new SimpleMeterRegistry();
+    DocumentBuilder documentBuilder =
+        SchemaAwareLogDocumentBuilderImpl.build(
+            SchemaAwareLogDocumentBuilderImpl.FieldConflictPolicy.DROP_FIELD,
+            true,
+            metricsRegistry);
+
+    LogStore logStore = new LuceneIndexStoreImpl(indexStoreCfg, documentBuilder, metricsRegistry);
+    LogIndexSearcherImpl logSearcher =
+        new LogIndexSearcherImpl(logStore.getAstraSearcherManager(), logStore.getSchema());
+
+    for (Trace.Span logMessage : logMessages) {
+      logStore.addMessage(logMessage);
+    }
+    logStore.commit();
+    logStore.refresh();
+
+    SearchResult<LogMessage> messageSearchResult =
+        logSearcher.search(
+            MessageUtil.TEST_DATASET_NAME,
+            0,
+            QueryBuilderUtil.generateQueryBuilder("*:*", histogramStartMs, histogramEndMs),
+            null,
+            searchQuery.aggregatorFactoriesBuilder);
+
+    try {
+      return messageSearchResult.internalAggregations;
     } finally {
       logSearcher.close();
       logStore.close();
