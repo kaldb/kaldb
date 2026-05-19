@@ -18,6 +18,7 @@ import org.opensearch.index.query.QueryStringQueryBuilder;
 import org.opensearch.index.query.TermsQueryBuilder;
 import org.opensearch.search.aggregations.AggregationBuilder;
 import org.opensearch.search.aggregations.bucket.histogram.DateHistogramAggregationBuilder;
+import org.opensearch.search.aggregations.bucket.terms.TermsAggregationBuilder;
 
 public class SearchResultUtilsTest {
   @Test
@@ -94,6 +95,54 @@ public class SearchResultUtilsTest {
     assertThat(dateHistogramAggregationBuilder.extendedBounds().getMax()).isEqualTo(1676500240688L);
     assertThat(dateHistogramAggregationBuilder.format()).isEqualTo("epoch_millis");
     assertThat(dateHistogramAggregationBuilder.offset()).isEqualTo(5000L);
+  }
+
+  @Test
+  public void shouldParseMultipleTopLevelAggsIntoAggregationFactoriesBuilder() {
+    AstraSearch.SearchRequest searchRequest =
+        AstraSearch.SearchRequest.newBuilder()
+            .setAggregationJson(
+                """
+                {
+                  "over_time": {
+                    "date_histogram": {
+                      "field": "_timesinceepoch",
+                      "interval": "10m",
+                      "min_doc_count": 0,
+                      "extended_bounds": {
+                        "min": 1676498801027,
+                        "max": 1676500240688
+                      },
+                      "format": "epoch_millis"
+                    },
+                    "aggs": {}
+                  },
+                  "services": {
+                    "terms": {
+                      "field": "service_name",
+                      "size": 10,
+                      "min_doc_count": 1
+                    }
+                  }
+                }""")
+            .build();
+
+    SearchQuery output = SearchResultUtils.fromSearchRequest(searchRequest);
+    assertThat(output.aggregatorFactoriesBuilder).isNotNull();
+    assertThat(output.aggregatorFactoriesBuilder.getAggregatorFactories()).hasSize(2);
+
+    Collection<AggregationBuilder> aggregatorFactories =
+        output.aggregatorFactoriesBuilder.getAggregatorFactories();
+    assertThat(aggregatorFactories)
+        .anyMatch(
+            aggregationBuilder ->
+                aggregationBuilder.getName().equals("over_time")
+                    && aggregationBuilder instanceof DateHistogramAggregationBuilder);
+    assertThat(aggregatorFactories)
+        .anyMatch(
+            aggregationBuilder ->
+                aggregationBuilder.getName().equals("services")
+                    && aggregationBuilder instanceof TermsAggregationBuilder);
   }
 
   @Test

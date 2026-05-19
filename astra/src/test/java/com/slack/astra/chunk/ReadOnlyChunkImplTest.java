@@ -95,7 +95,7 @@ public class ReadOnlyChunkImplTest {
 
     S3AsyncClient s3AsyncClient =
         S3TestUtils.createS3CrtClient(S3_MOCK_EXTENSION.getServiceEndpoint());
-    blobStore = new BlobStore(s3AsyncClient, TEST_S3_BUCKET);
+    blobStore = new BlobStore(s3AsyncClient, TEST_S3_BUCKET, "");
   }
 
   @AfterEach

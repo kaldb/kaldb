@@ -215,8 +215,10 @@ public class LuceneIndexStoreImplTest {
               null,
               aggregatorFactoriesBuilder);
       assertThat(result1.hits.size()).isEqualTo(1);
-      assertThat(result1.internalAggregation.getName()).isEqualTo("1");
-      assertThat(result1.internalAggregation.getType()).isEqualTo("date_histogram");
+      assertThat(Objects.requireNonNull(result1.internalAggregations).get("1").getName())
+          .isEqualTo("1");
+      assertThat(Objects.requireNonNull(result1.internalAggregations).get("1").getType())
+          .isEqualTo("date_histogram");
     }
 
     @Test
@@ -435,7 +437,7 @@ public class LuceneIndexStoreImplTest {
           S3TestUtils.createS3CrtClient(S3_MOCK_EXTENSION.getServiceEndpoint());
       String bucket = "snapshot-test";
       s3AsyncClient.createBucket(CreateBucketRequest.builder().bucket(bucket).build()).get();
-      BlobStore blobStore = new BlobStore(s3AsyncClient, bucket);
+      BlobStore blobStore = new BlobStore(s3AsyncClient, bucket, "");
 
       String chunkId = UUID.randomUUID().toString();
       blobStore.upload(chunkId, dirPath);

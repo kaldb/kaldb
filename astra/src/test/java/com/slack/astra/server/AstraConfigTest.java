@@ -7,20 +7,23 @@ import static org.assertj.core.api.AssertionsForClassTypes.assertThatExceptionOf
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.slack.astra.proto.config.AstraConfigs;
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 public class AstraConfigTest {
-
   @BeforeEach
   public void setUp() {
     AstraConfig.reset();
@@ -29,6 +32,25 @@ public class AstraConfigTest {
   @AfterEach
   public void tearDown() {
     AstraConfig.reset();
+  }
+
+  private String readResource(String resourceName) throws IOException {
+    try (InputStream inputStream =
+        Objects.requireNonNull(getClass().getClassLoader().getResourceAsStream(resourceName))) {
+      return new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
+    }
+  }
+
+  private String readProjectFile(String relativePath) throws IOException {
+    for (Path currentPath = Path.of("").toAbsolutePath();
+        currentPath != null;
+        currentPath = currentPath.getParent()) {
+      Path candidatePath = currentPath.resolve(relativePath);
+      if (Files.exists(candidatePath)) {
+        return Files.readString(candidatePath, StandardCharsets.UTF_8);
+      }
+    }
+    throw new IOException("Unable to find project file: " + relativePath);
   }
 
   @Test
@@ -141,6 +163,7 @@ public class AstraConfigTest {
     assertThat(s3Config.getS3SecretKey()).isEmpty();
     assertThat(s3Config.getS3Region()).isEmpty();
     assertThat(s3Config.getS3EndPoint()).isEmpty();
+    assertThat(s3Config.getS3PathPrefix()).isEmpty();
   }
 
   @Test
@@ -176,6 +199,7 @@ public class AstraConfigTest {
     assertThat(s3Config.getS3Region()).isEqualTo("us-east-1");
     assertThat(s3Config.getS3EndPoint()).isEqualTo("https://s3.us-east-1.amazonaws.com/");
     assertThat(s3Config.getS3Bucket()).isEqualTo("test-s3-bucket");
+    assertThat(s3Config.getS3PathPrefix()).isEmpty();
 
     final AstraConfigs.TracingConfig tracingConfig = config.getTracingConfig();
     assertThat(tracingConfig.getZipkinEndpoint()).isEqualTo("http://localhost:9411/api/v2/spans");
@@ -325,6 +349,41 @@ public class AstraConfigTest {
   }
 
   @Test
+  public void testDefaultConfigSupportsS3PathPrefixEnvOverride() throws IOException {
+    final AstraConfigs.AstraConfig config =
+        AstraConfig.fromYamlConfig(
+            readProjectFile("config/config.yaml"), Map.of("S3_PATH_PREFIX", "tenant-a/astra")::get);
+
+    assertThat(config.getS3Config().getS3PathPrefix()).isEqualTo("tenant-a/astra");
+  }
+
+  @Test
+  public void testParseAstraJsonConfigFileWithS3PathPrefix() throws IOException {
+    ObjectMapper mapper = new ObjectMapper();
+    ObjectNode configNode = (ObjectNode) mapper.readTree(readResource("test_config.json"));
+    ((ObjectNode) configNode.get("s3Config")).put("s3PathPrefix", "/astra/chunks/");
+
+    final AstraConfigs.AstraConfig config =
+        AstraConfig.fromJsonConfig(mapper.writeValueAsString(configNode));
+
+    assertThat(config.getS3Config().getS3PathPrefix()).isEqualTo("/astra/chunks/");
+  }
+
+  @Test
+  public void testParseAstraYamlConfigFileWithS3PathPrefix() throws IOException {
+    ObjectMapper mapper = new ObjectMapper(new YAMLFactory());
+    ObjectNode configNode = (ObjectNode) mapper.readTree(readResource("test_config.yaml"));
+    ((ObjectNode) configNode.get("s3Config")).put("s3PathPrefix", "/astra/chunks/");
+    ((ObjectNode) configNode.at("/indexerConfig/kafkaConfig"))
+        .set("additionalProps", mapper.createObjectNode());
+
+    final AstraConfigs.AstraConfig config =
+        AstraConfig.fromYamlConfig(mapper.writeValueAsString(configNode));
+
+    assertThat(config.getS3Config().getS3PathPrefix()).isEqualTo("/astra/chunks/");
+  }
+
+  @Test
   public void testParseAstraYamlConfigFile() throws IOException {
     final File cfgFile =
         new File(getClass().getClassLoader().getResource("test_config.yaml").getFile());
@@ -366,6 +425,7 @@ public class AstraConfigTest {
     assertThat(s3Config.getS3Region()).isEqualTo("us-east-1");
     assertThat(s3Config.getS3EndPoint()).isEqualTo("localhost:9090");
     assertThat(s3Config.getS3Bucket()).isEqualTo("test-s3-bucket");
+    assertThat(s3Config.getS3PathPrefix()).isEmpty();
 
     final AstraConfigs.TracingConfig tracingConfig = config.getTracingConfig();
     assertThat(tracingConfig.getZipkinEndpoint()).isEqualTo("http://localhost:9411/api/v2/spans");

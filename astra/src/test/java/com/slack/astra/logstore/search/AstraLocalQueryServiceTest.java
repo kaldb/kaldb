@@ -38,6 +38,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
+import org.opensearch.search.aggregations.InternalAggregations;
 import org.opensearch.search.aggregations.bucket.histogram.InternalDateHistogram;
 
 public class AstraLocalQueryServiceTest {
@@ -161,10 +162,10 @@ public class AstraLocalQueryServiceTest {
     assertThat((String) m.getSource().get("message")).contains("Message100");
 
     // Test histogram buckets
-    InternalDateHistogram dateHistogram =
-        (InternalDateHistogram)
-            OpenSearchInternalAggregation.fromByteArray(
-                response.getInternalAggregations().toByteArray());
+    InternalAggregations internalAggregations =
+        OpenSearchInternalAggregation.fromByteArray(
+            response.getInternalAggregations().toByteArray());
+    InternalDateHistogram dateHistogram = internalAggregations.get("1");
     assertThat(dateHistogram.getBuckets().size()).isEqualTo(1);
     assertThat(dateHistogram.getBuckets().get(0).getDocCount()).isEqualTo(1);
 
@@ -210,10 +211,10 @@ public class AstraLocalQueryServiceTest {
     assertThat(response.getSnapshotsWithReplicas()).isEqualTo(1);
 
     // Test histogram buckets
-    InternalDateHistogram dateHistogram =
-        (InternalDateHistogram)
-            OpenSearchInternalAggregation.fromByteArray(
-                response.getInternalAggregations().toByteArray());
+    InternalAggregations internalAggregations =
+        OpenSearchInternalAggregation.fromByteArray(
+            response.getInternalAggregations().toByteArray());
+    InternalDateHistogram dateHistogram = internalAggregations.get("1");
     assertThat(dateHistogram.getBuckets().size()).isEqualTo(0);
   }
 
@@ -257,10 +258,10 @@ public class AstraLocalQueryServiceTest {
     assertThat(response.getHitsList().asByteStringList().size()).isZero();
 
     // Test histogram buckets
-    InternalDateHistogram dateHistogram =
-        (InternalDateHistogram)
-            OpenSearchInternalAggregation.fromByteArray(
-                response.getInternalAggregations().toByteArray());
+    InternalAggregations internalAggregations =
+        OpenSearchInternalAggregation.fromByteArray(
+            response.getInternalAggregations().toByteArray());
+    InternalDateHistogram dateHistogram = internalAggregations.get("1");
     assertThat(dateHistogram.getBuckets().size()).isEqualTo(1);
     assertThat(dateHistogram.getBuckets().get(0).getDocCount()).isEqualTo(1);
   }
@@ -425,10 +426,10 @@ public class AstraLocalQueryServiceTest {
     assertThat((String) m.getSource().get("message")).contains("Message1");
 
     // Test histogram buckets
-    InternalDateHistogram dateHistogram =
-        (InternalDateHistogram)
-            OpenSearchInternalAggregation.fromByteArray(
-                response.getInternalAggregations().toByteArray());
+    InternalAggregations internalAggregations =
+        OpenSearchInternalAggregation.fromByteArray(
+            response.getInternalAggregations().toByteArray());
+    InternalDateHistogram dateHistogram = internalAggregations.get("1");
     assertThat(dateHistogram.getBuckets().size()).isEqualTo(1);
     assertThat(dateHistogram.getBuckets().get(0).getDocCount()).isEqualTo(1);
   }

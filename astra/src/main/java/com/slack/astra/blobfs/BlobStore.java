@@ -1,7 +1,7 @@
 package com.slack.astra.blobfs;
 
-import static software.amazon.awssdk.services.s3.model.ListObjectsV2Request.builder;
-
+import com.google.common.base.CharMatcher;
+import com.google.common.base.Strings;
 import com.slack.astra.chunk.ReadWriteChunk;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -52,12 +52,61 @@ public class BlobStore {
 
   protected final String bucketName;
   protected final S3AsyncClient s3AsyncClient;
+  private final String s3PathPrefix;
   private final S3TransferManager transferManager;
 
-  public BlobStore(S3AsyncClient s3AsyncClient, String bucketName) {
+  private static String normalizePathPrefix(String s3PathPrefix) {
+    String prefix = CharMatcher.is('/').trimFrom(Strings.nullToEmpty(s3PathPrefix));
+    return prefix.isEmpty() ? "" : prefix + "/";
+  }
+
+  /**
+   * Compresses JSON data using GZIP.
+   *
+   * @param data The JSON data to compress
+   * @return The compressed byte array
+   * @throws IOException if compression fails
+   */
+  public static byte[] compressData(String data) throws IOException {
+    ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
+    try (GZIPOutputStream gzipOutputStream = new GZIPOutputStream(byteArrayOutputStream)) {
+      gzipOutputStream.write(data.getBytes(StandardCharsets.UTF_8));
+    }
+    return byteArrayOutputStream.toByteArray();
+  }
+
+  /**
+   * Decompresses JSON data that has been compressed using GZIP.
+   *
+   * @param compressedData The compressed byte array
+   * @return The decompressed JSON data as a String
+   * @throws RuntimeException if decompression fails
+   */
+  public static String decompressData(byte[] compressedData) {
+    assert compressedData != null && compressedData.length > 0;
+
+    try (GZIPInputStream gzipInputStream =
+        new GZIPInputStream(new ByteArrayInputStream(compressedData))) {
+      return new String(gzipInputStream.readAllBytes(), StandardCharsets.UTF_8);
+    } catch (IOException e) {
+      LOG.error("Error decompressing JSON data", e);
+      throw new RuntimeException("Failed to decompress JSON data", e);
+    }
+  }
+
+  public BlobStore(S3AsyncClient s3AsyncClient, String bucketName, String s3PathPrefix) {
     this.bucketName = bucketName;
     this.s3AsyncClient = s3AsyncClient;
+    this.s3PathPrefix = normalizePathPrefix(s3PathPrefix);
     this.transferManager = S3TransferManager.builder().s3Client(s3AsyncClient).build();
+  }
+
+  String addPathPrefix(String key) {
+    return s3PathPrefix + key;
+  }
+
+  private String removePathPrefix(String key) {
+    return key.startsWith(s3PathPrefix) ? key.substring(s3PathPrefix.length()) : key;
   }
 
   /**
@@ -79,7 +128,7 @@ public class BlobStore {
               .uploadDirectory(
                   UploadDirectoryRequest.builder()
                       .source(directoryToUpload)
-                      .s3Prefix(prefix)
+                      .s3Prefix(addPathPrefix(prefix))
                       .bucket(bucketName)
                       .build())
               .completionFuture()
@@ -122,7 +171,7 @@ public class BlobStore {
                   DownloadDirectoryRequest.builder()
                       .bucket(bucketName)
                       .destination(destinationDirectory)
-                      .listObjectsV2RequestTransformer(l -> l.prefix(prefix))
+                      .listObjectsV2RequestTransformer(l -> l.prefix(addPathPrefix(prefix)))
                       .build())
               .completionFuture()
               .get();
@@ -154,7 +203,9 @@ public class BlobStore {
                   .getObjectRequest(
                       GetObjectRequest.builder()
                           .bucket(bucketName)
-                          .key(String.format("%s/%s", chunkId, ReadWriteChunk.SCHEMA_FILE_NAME))
+                          .key(
+                              addPathPrefix(
+                                  String.format("%s/%s", chunkId, ReadWriteChunk.SCHEMA_FILE_NAME)))
                           .build())
                   .responseTransformer(new ByteArrayAsyncResponseTransformer<>())
                   .build())
@@ -178,7 +229,8 @@ public class BlobStore {
   public List<String> listFiles(String prefix) {
     assert prefix != null && !prefix.isEmpty();
 
-    ListObjectsV2Request listRequest = builder().bucket(bucketName).prefix(prefix).build();
+    ListObjectsV2Request listRequest =
+        ListObjectsV2Request.builder().bucket(bucketName).prefix(addPathPrefix(prefix)).build();
     ListObjectsV2Publisher asyncPaginatedListResponse =
         s3AsyncClient.listObjectsV2Paginator(listRequest);
 
@@ -187,7 +239,9 @@ public class BlobStore {
       asyncPaginatedListResponse
           .subscribe(
               listResponse ->
-                  listResponse.contents().forEach(s3Object -> filesList.add(s3Object.key())))
+                  listResponse
+                      .contents()
+                      .forEach(s3Object -> filesList.add(removePathPrefix(s3Object.key()))))
           .get();
     } catch (InterruptedException | ExecutionException e) {
       throw new RuntimeException(e);
@@ -205,7 +259,8 @@ public class BlobStore {
   public boolean delete(String prefix) {
     assert prefix != null && !prefix.isEmpty();
 
-    ListObjectsV2Request listRequest = builder().bucket(bucketName).prefix(prefix).build();
+    ListObjectsV2Request listRequest =
+        ListObjectsV2Request.builder().bucket(bucketName).prefix(addPathPrefix(prefix)).build();
     ListObjectsV2Publisher asyncPaginatedListResponse =
         s3AsyncClient.listObjectsV2Paginator(listRequest);
 
@@ -241,21 +296,6 @@ public class BlobStore {
   }
 
   /**
-   * Compresses JSON data using GZIP.
-   *
-   * @param data The JSON data to compress
-   * @return The compressed byte array
-   * @throws IOException if compression fails
-   */
-  public static byte[] compressData(String data) throws IOException {
-    ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
-    try (GZIPOutputStream gzipOutputStream = new GZIPOutputStream(byteArrayOutputStream)) {
-      gzipOutputStream.write(data.getBytes(StandardCharsets.UTF_8));
-    }
-    return byteArrayOutputStream.toByteArray();
-  }
-
-  /**
    * Uploads JSON data to the object store by S3 key (full path in the bucket).
    *
    * @param key The S3 key (full path in the bucket)
@@ -266,7 +306,8 @@ public class BlobStore {
     assert key != null && !key.isEmpty();
     assert jsonData != null && !jsonData.isEmpty();
 
-    PutObjectRequest request = PutObjectRequest.builder().bucket(bucketName).key(key).build();
+    PutObjectRequest request =
+        PutObjectRequest.builder().bucket(bucketName).key(addPathPrefix(key)).build();
     try {
       if (gzip) {
         byte[] compressedData = compressData(jsonData);
@@ -278,25 +319,6 @@ public class BlobStore {
       }
     } catch (IOException | InterruptedException | ExecutionException e) {
       throw new RuntimeException("Failed to upload JSON data", e);
-    }
-  }
-
-  /**
-   * Decompresses JSON data that has been compressed using GZIP.
-   *
-   * @param compressedData The compressed byte array
-   * @return The decompressed JSON data as a String
-   * @throws RuntimeException if decompression fails
-   */
-  public static String decompressData(byte[] compressedData) {
-    assert compressedData != null && compressedData.length > 0;
-
-    try (GZIPInputStream gzipInputStream =
-        new GZIPInputStream(new ByteArrayInputStream(compressedData))) {
-      return new String(gzipInputStream.readAllBytes(), StandardCharsets.UTF_8);
-    } catch (IOException e) {
-      LOG.error("Error decompressing JSON data", e);
-      throw new RuntimeException("Failed to decompress JSON data", e);
     }
   }
 
@@ -314,7 +336,7 @@ public class BlobStore {
       ResponseInputStream<GetObjectResponse> futureStream =
           s3AsyncClient
               .getObject(
-                  GetObjectRequest.builder().bucket(bucketName).key(key).build(),
+                  GetObjectRequest.builder().bucket(bucketName).key(addPathPrefix(key)).build(),
                   AsyncResponseTransformer.toBlockingInputStream())
               .get();
       if (gzip) {
@@ -342,9 +364,9 @@ public class BlobStore {
       CopyObjectRequest copyRequest =
           CopyObjectRequest.builder()
               .sourceBucket(bucketName)
-              .sourceKey(sourceKey)
+              .sourceKey(addPathPrefix(sourceKey))
               .destinationBucket(bucketName)
-              .destinationKey(destinationKey)
+              .destinationKey(addPathPrefix(destinationKey))
               .build();
 
       try {
@@ -370,7 +392,8 @@ public class BlobStore {
   public boolean fileExists(String key) {
     assert key != null && !key.isEmpty();
 
-    HeadObjectRequest headRequest = HeadObjectRequest.builder().bucket(bucketName).key(key).build();
+    HeadObjectRequest headRequest =
+        HeadObjectRequest.builder().bucket(bucketName).key(addPathPrefix(key)).build();
 
     try {
       s3AsyncClient.headObject(headRequest).get();
@@ -396,10 +419,11 @@ public class BlobStore {
    * @throws RuntimeException if checking fails
    */
   public boolean pathExists(String prefix) {
+    String keyPrefix = addPathPrefix(prefix);
     ListObjectsV2Request listReq =
         ListObjectsV2Request.builder()
             .bucket(bucketName)
-            .prefix(prefix.endsWith("/") ? prefix : prefix + "/")
+            .prefix(keyPrefix.endsWith("/") ? keyPrefix : keyPrefix + "/")
             .maxKeys(1)
             .build();
 

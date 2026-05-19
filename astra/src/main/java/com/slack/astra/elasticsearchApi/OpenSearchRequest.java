@@ -8,7 +8,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.google.common.collect.Iterators;
 import com.slack.astra.logstore.LogMessage;
 import com.slack.astra.logstore.opensearch.OpenSearchAdapter;
 import com.slack.astra.proto.service.AstraSearch;
@@ -26,7 +25,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.LongSupplier;
 import java.util.stream.StreamSupport;
-import org.apache.commons.lang3.NotImplementedException;
 import org.apache.lucene.search.BooleanClause;
 import org.opensearch.OpenSearchParseException;
 import org.opensearch.common.settings.Settings;
@@ -358,10 +356,6 @@ public class OpenSearchRequest {
     JsonNode aggsNode = body.has("aggs") ? body.get("aggs") : body.get("aggregations");
     if (aggsNode == null || aggsNode.isEmpty()) {
       return "";
-    }
-    if (Iterators.size(aggsNode.fieldNames()) != 1) {
-      throw new NotImplementedException(
-          "Only exactly one top level aggregators is currently supported");
     }
     return aggsNode.toString();
   }
