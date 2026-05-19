@@ -234,11 +234,15 @@ main {
   border-radius: var(--radius-md);
   border: 1px solid var(--border);
   box-shadow: var(--shadow-sm);
-  overflow: hidden;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .gridjs-container {
   background: var(--surface);
+  display: block;
+  max-width: 100%;
 }
 
 .gridjs-head {
@@ -247,6 +251,8 @@ main {
 
 .gridjs-table {
   font-size: 13px;
+  max-width: none;
+  min-width: 1180px;
 }
 
 .gridjs-th {
@@ -273,6 +279,28 @@ main {
   border-color: var(--border) !important;
 }
 
+.gridjs-th:last-child,
+.gridjs-td:last-child {
+  position: sticky;
+  right: 0;
+  min-width: 116px;
+  box-shadow: -8px 0 14px rgba(15, 23, 42, 0.08);
+  z-index: 2;
+}
+
+.gridjs-th:last-child {
+  background: var(--surface-muted) !important;
+  z-index: 3;
+}
+
+.gridjs-td:last-child {
+  background: var(--surface) !important;
+}
+
+.gridjs-tr:hover .gridjs-td:last-child {
+  background: #f7fbff !important;
+}
+
 .gridjs-search {
   margin-bottom: 10px;
 }
@@ -297,7 +325,7 @@ main {
 .grid-actions {
   display: flex;
   gap: 6px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 
 .stats-strip {
@@ -598,7 +626,8 @@ main {
 }
 
 .form-page-body input[type="text"],
-.form-page-body input[type="number"] {
+.form-page-body input[type="number"],
+.form-page-body select {
   display: block;
   width: 100%;
   margin-top: 5px;
@@ -611,7 +640,8 @@ main {
   font-family: inherit;
 }
 
-.form-page-body input:focus {
+.form-page-body input:focus,
+.form-page-body select:focus {
   outline: none;
   border-color: var(--primary);
   box-shadow: 0 0 0 3px rgba(15, 75, 189, 0.12);
@@ -620,6 +650,19 @@ main {
 .form-page-body input[readonly] {
   background: #f3f6fb;
   color: #64748b;
+}
+
+.form-section {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.form-section h3 {
+  margin-bottom: 12px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
 }
 
 .form-page-actions {

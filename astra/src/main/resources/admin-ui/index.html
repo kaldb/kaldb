@@ -47,6 +47,32 @@
               <input type="text" name="service_name_pattern">
               <span class="field-help">Service match pattern; use <code>*</code> or <code>_all</code> for broad matching.</span>
             </label>
+            <div class="form-section">
+              <h3>Quota &amp; Assignment</h3>
+              <label>Throughput (bytes/sec)
+                <input type="number" name="throughput_bytes" value="0" min="0" required>
+                <span class="field-help">Set a non-negative throughput limit in bytes/sec. Zero is valid and means no reserved throughput.</span>
+              </label>
+              <label>Partition Mode
+                <select name="partition_mode">
+                  <option value="dedicated" selected>Require dedicated partitions</option>
+                  <option value="shared">Use shared partitions</option>
+                </select>
+                <span class="field-help">Dedicated mode reserves each assigned partition for this dataset only. Shared mode allows datasets to co-exist on the same partition.</span>
+              </label>
+              <label>Assignment Strategy
+                <select name="assignment_strategy">
+                  <option value="auto" selected>Auto-assign from catalog</option>
+                  <option value="manual">Set exact partition IDs</option>
+                </select>
+                <span class="field-help">Auto-assignment plans partitions from the catalog. Manual assignment validates the exact shard IDs you enter.</span>
+              </label>
+              <label id="dataset-partition-ids-field">Partition IDs (comma-separated)
+                <input type="text" name="partition_ids">
+                <span class="field-help">Use canonical numeric IDs such as <code>0,1,2</code>. Manual assignments must reference existing catalog partitions.</span>
+              </label>
+              <p class="inline-callout inline-callout-warning" id="dataset-capability-note" hidden></p>
+            </div>
             <div class="form-page-actions">
               <button type="button" class="btn" id="btn-dataset-cancel">Cancel</button>
               <button type="submit" class="btn btn-primary">Save</button>
@@ -143,49 +169,6 @@
       </div>
     </section>
   </main>
-
-  <!-- Partition Assignment Modal -->
-  <div class="modal-overlay" id="modal-partition">
-    <div class="modal">
-      <div class="modal-header">
-        <h3>Update Capacity &amp; Assignment</h3>
-        <button type="button" class="modal-close">&times;</button>
-      </div>
-      <form id="form-partition">
-        <label>Dataset Name
-          <input type="text" name="name" readonly>
-        </label>
-        <div class="summary-card" id="partition-current-summary"></div>
-        <label>Throughput (bytes/sec)
-          <input type="number" name="throughput_bytes" value="0" min="0">
-          <span class="field-help">Set a non-negative throughput limit in bytes/sec. Zero is valid and means no reserved throughput.</span>
-        </label>
-        <label>Partition Mode
-          <select name="partition_mode">
-            <option value="shared">Use shared partitions</option>
-            <option value="dedicated">Require dedicated partitions</option>
-          </select>
-          <span class="field-help">Dedicated mode reserves each assigned partition for this dataset only. Shared mode allows datasets to co-exist on the same partition.</span>
-        </label>
-        <label>Assignment Strategy
-          <select name="assignment_strategy">
-            <option value="auto">Auto-assign from catalog</option>
-            <option value="manual">Set exact partition IDs</option>
-          </select>
-          <span class="field-help">Auto-assignment plans partitions from the catalog. Manual assignment validates the exact shard IDs you enter.</span>
-        </label>
-        <label id="partition-ids-field">Partition IDs (comma-separated)
-          <input type="text" name="partition_ids">
-          <span class="field-help">Use canonical numeric IDs such as <code>0,1,2</code>. Manual assignments must reference existing catalog partitions.</span>
-        </label>
-        <p class="inline-callout inline-callout-warning" id="partition-capability-note" hidden></p>
-        <div class="modal-actions">
-          <button type="button" class="btn" data-dismiss="modal">Cancel</button>
-          <button type="submit" class="btn btn-primary">Update</button>
-        </div>
-      </form>
-    </div>
-  </div>
 
   <!-- Create Partition Modal -->
   <div class="modal-overlay" id="modal-create-partition">
