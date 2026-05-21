@@ -10,6 +10,7 @@ public class AlreadyClosedLogIndexSearcherImpl implements LogIndexSearcher<LogMe
   public SearchResult<LogMessage> search(
       String dataset,
       int howMany,
+      java.util.List<SearchQuery.SortFieldSpec> sortFieldSpecs,
       QueryBuilder queryBuilder,
       SourceFieldFilter sourceFieldFilter,
       AggregatorFactories.Builder aggregatorFactoriesBuilder) {

@@ -10,6 +10,7 @@ import com.slack.astra.logstore.LogMessage;
 import com.slack.astra.logstore.LogMessage.SystemField;
 import com.slack.astra.logstore.LogWireMessage;
 import com.slack.astra.logstore.opensearch.OpenSearchAdapter;
+import com.slack.astra.metadata.schema.FieldType;
 import com.slack.astra.metadata.schema.LuceneFieldDef;
 import com.slack.astra.util.JsonUtil;
 import java.io.IOException;
@@ -46,6 +47,7 @@ public class LogIndexSearcherImpl implements LogIndexSearcher<LogMessage> {
 
   private final SearcherManager searcherManager;
 
+  private final ConcurrentHashMap<String, LuceneFieldDef> chunkSchema;
   private final OpenSearchAdapter openSearchAdapter;
 
   private final ReferenceManager.RefreshListener refreshListener;
@@ -55,6 +57,7 @@ public class LogIndexSearcherImpl implements LogIndexSearcher<LogMessage> {
   public LogIndexSearcherImpl(
       AstraSearcherManager astraSearcherManager,
       ConcurrentHashMap<String, LuceneFieldDef> chunkSchema) {
+    this.chunkSchema = chunkSchema;
     this.openSearchAdapter = new OpenSearchAdapter(chunkSchema);
     this.refreshListener =
         new ReferenceManager.RefreshListener() {
@@ -87,6 +90,7 @@ public class LogIndexSearcherImpl implements LogIndexSearcher<LogMessage> {
   public SearchResult<LogMessage> search(
       String dataset,
       int howMany,
+      List<SearchQuery.SortFieldSpec> sortFieldSpecs,
       QueryBuilder queryBuilder,
       SourceFieldFilter sourceFieldFilter,
       AggregatorFactories.Builder aggregatorFactoriesBuilder) {
@@ -119,7 +123,9 @@ public class LogIndexSearcherImpl implements LogIndexSearcher<LogMessage> {
         TopFieldCollector topFieldCollector =
             howMany > 0
                 ? buildTopFieldCollector(
-                    howMany, aggregationExecution != null ? Integer.MAX_VALUE : howMany)
+                    howMany,
+                    aggregationExecution != null ? Integer.MAX_VALUE : howMany,
+                    sortFieldSpecs)
                 : null;
 
         Collector collector =
@@ -195,10 +201,48 @@ public class LogIndexSearcherImpl implements LogIndexSearcher<LogMessage> {
    * value can be set to equal howMany to allow early exiting (ScoreMode.TOP_SCORES), but should
    * only be done when all collectors are tolerant of an early exit.
    */
-  private TopFieldCollector buildTopFieldCollector(int howMany, int totalHitsThreshold)
+  private TopFieldCollector buildTopFieldCollector(
+      int howMany, int totalHitsThreshold, List<SearchQuery.SortFieldSpec> sortFieldSpecs)
       throws IOException {
-    SortField sortField = new SortField(SystemField.TIME_SINCE_EPOCH.fieldName, Type.LONG, true);
-    return TopFieldCollector.create(new Sort(sortField), howMany, null, totalHitsThreshold);
+    return TopFieldCollector.create(
+        new Sort(buildSortFields(sortFieldSpecs)), howMany, null, totalHitsThreshold);
+  }
+
+  private SortField[] buildSortFields(List<SearchQuery.SortFieldSpec> sortFieldSpecs) {
+    List<SearchQuery.SortFieldSpec> effectiveSortFieldSpecs =
+        sortFieldSpecs == null || sortFieldSpecs.isEmpty()
+            ? List.of(
+                new SearchQuery.SortFieldSpec(
+                    SystemField.TIME_SINCE_EPOCH.fieldName, SearchQuery.SortDirection.DESC))
+            : sortFieldSpecs;
+
+    return effectiveSortFieldSpecs.stream().map(this::buildSortField).toArray(SortField[]::new);
+  }
+
+  private SortField buildSortField(SearchQuery.SortFieldSpec sortFieldSpec) {
+    String fieldName = sortFieldSpec.field();
+    if (SystemField.TIME_SINCE_EPOCH.fieldName.equals(fieldName)) {
+      return new SortField(fieldName, Type.LONG, sortFieldSpec.descending());
+    }
+
+    LuceneFieldDef fieldDef = chunkSchema.get(fieldName);
+    if (fieldDef == null) {
+      throw new IllegalArgumentException("Unsupported sort field: " + fieldName);
+    }
+    ensureTrue(fieldDef.storeDocValue, "Sort field must have doc values: " + fieldName);
+    return new SortField(
+        fieldName, toLuceneSortFieldType(fieldDef.fieldType), sortFieldSpec.descending());
+  }
+
+  private Type toLuceneSortFieldType(FieldType fieldType) {
+    return switch (fieldType) {
+      case DATE, LONG, SCALED_LONG -> Type.LONG;
+      case BOOLEAN, INTEGER, SHORT, BYTE -> Type.INT;
+      case FLOAT -> Type.FLOAT;
+      case DOUBLE -> Type.DOUBLE;
+      case KEYWORD, STRING, ID, IP -> Type.STRING;
+      default -> throw new IllegalArgumentException("Unsupported sort field type: " + fieldType);
+    };
   }
 
   @Override

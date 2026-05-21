@@ -1270,6 +1270,364 @@ public class ElasticsearchApiServiceTest {
   }
 
   @Test
+  public void testSingleSearchReturnsMultiTermsAggregation() throws Exception {
+    Instant start = Instant.parse("2026-05-18T03:00:00Z");
+    addMessagesToChunkManager(
+        List.of(
+            makeWindowSpan(1, start.plusSeconds(1), 62, 1024, 768, false, false),
+            makeWindowSpan(2, start.plusSeconds(2), 62, 1024, 768, false, false),
+            makeWindowSpan(3, start.plusSeconds(3), 62, 1440, 900, false, false),
+            makeWindowSpan(4, start.plusSeconds(4), 62, 800, 600, false, false),
+            makeWindowSpan(5, start.plusSeconds(5), 62, 1600, 900, false, true),
+            makeWindowSpan(6, start.plusSeconds(6), 61, 2560, 1440, false, false),
+            makeWindowSpan(7, start.plusSeconds(7), 62, 1024, 768, false, false),
+            makeWindowSpan(8, start.plusSeconds(8), 62, 1024, 768, false, false),
+            makeWindowSpan(9, start.plusSeconds(9), 62, 1440, 900, false, false),
+            makeWindowSpan(10, start.plusSeconds(10), 62, 1440, 900, false, false),
+            makeWindowSpan(11, start.plusSeconds(11), 62, 800, 600, false, false),
+            makeWindowSpan(12, start.plusSeconds(12), 62, 1920, 1080, true, false)));
+
+    String postBody =
+        """
+        {
+          "size": 0,
+          "query": {
+            "bool": {
+              "filter": [
+                {
+                  "term": {
+                    "CounterID": 62
+                  }
+                }
+              ],
+              "must_not": [
+                {
+                  "term": {
+                    "DontCountHits": true
+                  }
+                },
+                {
+                  "term": {
+                    "IsRefresh": true
+                  }
+                }
+              ]
+            }
+          },
+          "aggs": {
+            "window_sizes": {
+              "multi_terms": {
+                "terms": [
+                  {
+                    "field": "WindowClientWidth"
+                  },
+                  {
+                    "field": "WindowClientHeight"
+                  }
+                ],
+                "size": 4,
+                "order": {
+                  "_count": "desc"
+                }
+              }
+            }
+          }
+        }
+        """;
+    HttpResponse response = elasticsearchApiService.search(TEST_DATASET_NAME, postBody);
+
+    AggregatedHttpResponse aggregatedRes = response.aggregate().join();
+    String body = aggregatedRes.content(StandardCharsets.UTF_8);
+    JsonNode jsonNode = OBJECT_MAPPER.readTree(body);
+    Map<List<Integer>, Integer> bucketCounts = new java.util.HashMap<>();
+    for (JsonNode bucket : jsonNode.get("aggregations").get("window_sizes").get("buckets")) {
+      bucketCounts.put(
+          List.of(bucket.get("key").get(0).asInt(), bucket.get("key").get(1).asInt()),
+          bucket.get("doc_count").asInt());
+    }
+
+    assertThat(aggregatedRes.status().code()).isEqualTo(200);
+    assertThat(jsonNode.get("aggregations").get("window_sizes").get("buckets").size()).isEqualTo(3);
+    assertThat(bucketCounts)
+        .containsEntry(List.of(1024, 768), 4)
+        .containsEntry(List.of(1440, 900), 3)
+        .containsEntry(List.of(800, 600), 2);
+  }
+
+  @Test
+  public void testSingleSearchReturnsHitsSortedByRequestedField() throws Exception {
+    Instant start = Instant.parse("2026-05-18T04:00:00Z");
+    addMessagesToChunkManager(
+        List.of(
+            makeWindowSpan(1, start.plusSeconds(1), 62, 1024, 768, false, false, "bravo"),
+            makeWindowSpan(2, start.plusSeconds(2), 62, 800, 600, false, false, "charlie"),
+            makeWindowSpan(3, start.plusSeconds(3), 62, 1440, 900, false, false, "alpha")));
+
+    String postBody =
+        """
+        {
+          "size": 3,
+          "query": {
+            "term": {
+              "CounterID": 62
+            }
+          },
+          "sort": [
+            {
+              "WindowClientWidth": {
+                "order": "asc"
+              }
+            }
+          ]
+        }
+        """;
+    JsonNode jsonNode = searchJson(postBody);
+
+    assertThat(jsonNode.findValue("hits").get("hits").size()).isEqualTo(3);
+    assertThat(
+            jsonNode
+                .findValue("hits")
+                .get("hits")
+                .get(0)
+                .get("_source")
+                .get("WindowClientWidth")
+                .asInt())
+        .isEqualTo(800);
+    assertThat(jsonNode.findValue("hits").get("hits").get(0).get("sort").get(0).asInt())
+        .isEqualTo(800);
+    assertThat(
+            jsonNode
+                .findValue("hits")
+                .get("hits")
+                .get(1)
+                .get("_source")
+                .get("WindowClientWidth")
+                .asInt())
+        .isEqualTo(1024);
+    assertThat(
+            jsonNode
+                .findValue("hits")
+                .get("hits")
+                .get(2)
+                .get("_source")
+                .get("WindowClientWidth")
+                .asInt())
+        .isEqualTo(1440);
+
+    String stringSortPostBody =
+        """
+        {
+          "size": 3,
+          "query": {
+            "term": {
+              "CounterID": 62
+            }
+          },
+          "sort": [
+            {
+              "SearchPhrase": {
+                "order": "asc"
+              }
+            }
+          ]
+        }
+        """;
+    JsonNode stringSortJsonNode = searchJson(stringSortPostBody);
+
+    assertThat(
+            stringSortJsonNode
+                .findValue("hits")
+                .get("hits")
+                .get(0)
+                .get("_source")
+                .get("SearchPhrase")
+                .asText())
+        .isEqualTo("alpha");
+    assertThat(stringSortJsonNode.findValue("hits").get("hits").get(0).get("sort").get(0).asText())
+        .isEqualTo("alpha");
+    assertThat(
+            stringSortJsonNode
+                .findValue("hits")
+                .get("hits")
+                .get(1)
+                .get("_source")
+                .get("SearchPhrase")
+                .asText())
+        .isEqualTo("bravo");
+    assertThat(
+            stringSortJsonNode
+                .findValue("hits")
+                .get("hits")
+                .get(2)
+                .get("_source")
+                .get("SearchPhrase")
+                .asText())
+        .isEqualTo("charlie");
+
+    String pagedStringSortPostBody =
+        """
+        {
+          "from": 1,
+          "size": 1,
+          "query": {
+            "term": {
+              "CounterID": 62
+            }
+          },
+          "sort": [
+            {
+              "SearchPhrase": {
+                "order": "asc"
+              }
+            }
+          ]
+        }
+        """;
+    JsonNode pagedStringSortJsonNode = searchJson(pagedStringSortPostBody);
+
+    assertThat(pagedStringSortJsonNode.findValue("hits").get("hits").size()).isEqualTo(1);
+    assertThat(
+            pagedStringSortJsonNode
+                .findValue("hits")
+                .get("hits")
+                .get(0)
+                .get("_source")
+                .get("SearchPhrase")
+                .asText())
+        .isEqualTo("bravo");
+  }
+
+  @Test
+  public void testSingleSearchSupportsClickBenchHitSortQueries() throws Exception {
+    Instant start = Instant.parse("2026-05-18T05:00:00Z");
+    addMessagesToChunkManager(
+        List.of(
+            makeClickBenchHitSpan(1, start.plusSeconds(3), "https://mail.google.example", "zulu"),
+            makeClickBenchHitSpan(2, start.plusSeconds(1), "https://slack.example", ""),
+            makeClickBenchHitSpan(
+                3, start.plusSeconds(2), "https://google.example/search", "delta"),
+            makeClickBenchHitSpan(4, start.plusSeconds(4), "https://astra.example", "bravo"),
+            makeClickBenchHitSpan(5, start.plusSeconds(5), "https://google.example/maps", ""),
+            makeClickBenchHitSpan(6, start.plusSeconds(2), "https://astra.example/docs", "alpha")));
+
+    JsonNode q24 =
+        searchJson(
+            """
+            {
+              "size": 10,
+              "query": {
+                "wildcard": {
+                  "URL": {
+                    "value": "*google*"
+                  }
+                }
+              },
+              "sort": [
+                {
+                  "@timestamp": {
+                    "order": "asc"
+                  }
+                }
+              ]
+            }
+            """);
+    assertThat(sourceValues(q24, "URL"))
+        .containsExactly(
+            "https://google.example/search",
+            "https://mail.google.example",
+            "https://google.example/maps");
+
+    JsonNode q25 =
+        searchJson(
+            """
+            {
+              "size": 10,
+              "query": {
+                "bool": {
+                  "must_not": [
+                    {
+                      "term": {
+                        "SearchPhrase": ""
+                      }
+                    }
+                  ]
+                }
+              },
+              "sort": [
+                {
+                  "@timestamp": {
+                    "order": "asc"
+                  }
+                }
+              ]
+            }
+            """);
+    assertThat(sourceValues(q25, "SearchPhrase"))
+        .containsExactly("delta", "alpha", "zulu", "bravo");
+
+    JsonNode q26 =
+        searchJson(
+            """
+            {
+              "size": 10,
+              "query": {
+                "bool": {
+                  "must_not": [
+                    {
+                      "term": {
+                        "SearchPhrase": ""
+                      }
+                    }
+                  ]
+                }
+              },
+              "sort": [
+                {
+                  "SearchPhrase": {
+                    "order": "asc"
+                  }
+                }
+              ]
+            }
+            """);
+    assertThat(sourceValues(q26, "SearchPhrase"))
+        .containsExactly("alpha", "bravo", "delta", "zulu");
+
+    JsonNode q27 =
+        searchJson(
+            """
+            {
+              "size": 10,
+              "query": {
+                "bool": {
+                  "must_not": [
+                    {
+                      "term": {
+                        "SearchPhrase": ""
+                      }
+                    }
+                  ]
+                }
+              },
+              "sort": [
+                {
+                  "@timestamp": {
+                    "order": "asc"
+                  }
+                },
+                {
+                  "SearchPhrase": {
+                    "order": "asc"
+                  }
+                }
+              ]
+            }
+            """);
+    assertThat(sourceValues(q27, "SearchPhrase"))
+        .containsExactly("alpha", "delta", "zulu", "bravo");
+  }
+
+  @Test
   public void testLargeSetOfQueries() throws Exception {
     addMessagesToChunkManager(SpanUtil.makeSpansWithTimeDifference(1, 100, 1, Instant.now()));
     String postBody = readResource("elasticsearchApi/multisearch_query_10results.ndjson");
@@ -1607,8 +1965,104 @@ public class ElasticsearchApiServiceTest {
     return Resources.toString(Resources.getResource(resourcePath), StandardCharsets.UTF_8);
   }
 
+  private JsonNode searchJson(String postBody) throws Exception {
+    HttpResponse response = elasticsearchApiService.search(TEST_DATASET_NAME, postBody);
+    AggregatedHttpResponse aggregatedRes = response.aggregate().join();
+
+    assertThat(aggregatedRes.status().code()).isEqualTo(200);
+    return OBJECT_MAPPER.readTree(aggregatedRes.content(StandardCharsets.UTF_8));
+  }
+
+  private List<String> sourceValues(JsonNode searchResponse, String field) {
+    return searchResponse.findValue("hits").get("hits").findValuesAsText(field);
+  }
+
   private static DatasetMetadata datasetMetadata(String name) {
     return new DatasetMetadata(name, "test-owner", 0, List.of(), name);
+  }
+
+  private Trace.Span makeWindowSpan(
+      int id,
+      Instant timestamp,
+      int counterId,
+      int windowClientWidth,
+      int windowClientHeight,
+      boolean dontCountHits,
+      boolean isRefresh) {
+    return makeWindowSpan(
+        id,
+        timestamp,
+        counterId,
+        windowClientWidth,
+        windowClientHeight,
+        dontCountHits,
+        isRefresh,
+        "search-phrase-" + id);
+  }
+
+  private Trace.Span makeWindowSpan(
+      int id,
+      Instant timestamp,
+      int counterId,
+      int windowClientWidth,
+      int windowClientHeight,
+      boolean dontCountHits,
+      boolean isRefresh,
+      String searchPhrase) {
+    return SpanUtil.makeSpan(
+        id,
+        "window-message-" + id,
+        timestamp,
+        List.of(
+            Trace.KeyValue.newBuilder()
+                .setKey("CounterID")
+                .setFieldType(Schema.SchemaFieldType.INTEGER)
+                .setVInt32(counterId)
+                .build(),
+            Trace.KeyValue.newBuilder()
+                .setKey("WindowClientWidth")
+                .setFieldType(Schema.SchemaFieldType.INTEGER)
+                .setVInt32(windowClientWidth)
+                .build(),
+            Trace.KeyValue.newBuilder()
+                .setKey("WindowClientHeight")
+                .setFieldType(Schema.SchemaFieldType.INTEGER)
+                .setVInt32(windowClientHeight)
+                .build(),
+            Trace.KeyValue.newBuilder()
+                .setKey("DontCountHits")
+                .setFieldType(Schema.SchemaFieldType.BOOLEAN)
+                .setVBool(dontCountHits)
+                .build(),
+            Trace.KeyValue.newBuilder()
+                .setKey("IsRefresh")
+                .setFieldType(Schema.SchemaFieldType.BOOLEAN)
+                .setVBool(isRefresh)
+                .build(),
+            Trace.KeyValue.newBuilder()
+                .setKey("SearchPhrase")
+                .setFieldType(Schema.SchemaFieldType.KEYWORD)
+                .setVStr(searchPhrase)
+                .build()));
+  }
+
+  private Trace.Span makeClickBenchHitSpan(
+      int id, Instant timestamp, String url, String searchPhrase) {
+    return SpanUtil.makeSpan(
+        id,
+        "clickbench-message-" + id,
+        timestamp,
+        List.of(
+            Trace.KeyValue.newBuilder()
+                .setKey("URL")
+                .setFieldType(Schema.SchemaFieldType.KEYWORD)
+                .setVStr(url)
+                .build(),
+            Trace.KeyValue.newBuilder()
+                .setKey("SearchPhrase")
+                .setFieldType(Schema.SchemaFieldType.KEYWORD)
+                .setVStr(searchPhrase)
+                .build()));
   }
 
   private static final class CompatibilityServer implements AutoCloseable {
