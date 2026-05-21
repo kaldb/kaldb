@@ -95,6 +95,7 @@ MAPPING = {
             "MobilePhone": {"type": "integer"},
             "MobilePhoneModel": {"type": "keyword"},
             "Referer": {"type": "keyword"},
+            "RefererHash": {"type": "long"},
             "RegionID": {"type": "integer"},
             "ResolutionWidth": {"type": "integer"},
             "RunID": {"type": "keyword"},
@@ -123,7 +124,14 @@ def fixture_documents(run_id: str) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     next_id = 1
 
-    def add_rows(url: str, count: int, search_phrase: str, model: str, minute: int) -> None:
+    def add_rows(
+        url: str,
+        count: int,
+        search_phrase: str,
+        model: str,
+        minute: int,
+        title: str | None = None,
+    ) -> None:
         nonlocal next_id
         for i in range(count):
             event_time = timestamp(minute, i)
@@ -143,12 +151,20 @@ def fixture_documents(run_id: str) -> list[dict[str, Any]]:
                     "MobilePhone": next_id % 3,
                     "MobilePhoneModel": model,
                     "Referer": f"https://ref{next_id % 3}.example/path",
+                    # Q40 filters on RefererHash = 3594120000172545465. Seed that literal
+                    # onto the docs whose TraficSourceID is -1 (next_id % 3 == 0), so they
+                    # also satisfy Q40's TraficSourceID IN (-1, 6) and page-view filters.
+                    # All values must exceed Integer.MAX_VALUE: Astra infers numeric width
+                    # per-value from JSON (int-range -> INTEGER, else LONG) and the field's
+                    # type is fixed by the first doc, so a small first value would register
+                    # RefererHash as INTEGER and make the 64-bit term query overflow.
+                    "RefererHash": 3594120000172545465 if next_id % 3 == 0 else 5_000_000_000 + next_id,
                     "RegionID": next_id % 5,
                     "ResolutionWidth": 1000 + next_id,
                     "RunID": run_id,
                     "SearchEngineID": next_id % 2,
                     "SearchPhrase": search_phrase,
-                    "Title": f"title {search_phrase}",
+                    "Title": title if title is not None else f"title {search_phrase}",
                     "TraficSourceID": (next_id % 3) - 1,
                     "URL": url,
                     "URLHash": 2868770270353813622 if url.endswith("/a") else 1000 + next_id,
@@ -162,8 +178,11 @@ def fixture_documents(run_id: str) -> list[dict[str, Any]]:
 
     add_rows("https://google.example/a", 5, "alpha", "iPhone", 0)
     add_rows("https://google.example/b", 4, "beta", "Android", 1)
-    add_rows("https://slack.example/c", 3, "gamma", "Android", 2)
-    add_rows("https://example.com/d", 2, "delta", "Pixel", 3)
+    # Q22 needs Title LIKE '%Google%' on docs whose URL is NOT on a google domain
+    # (no ".google." substring) and whose SearchPhrase is non-empty. These two
+    # non-google groups carry "Google" in the Title to make that query non-empty.
+    add_rows("https://slack.example/c", 3, "gamma", "Android", 2, title="About Google Search")
+    add_rows("https://example.com/d", 2, "delta", "Pixel", 3, title="Google News roundup")
     add_rows("https://example.com/e", 1, "", "", 4)
 
     rows.append(
@@ -182,6 +201,7 @@ def fixture_documents(run_id: str) -> list[dict[str, Any]]:
             "MobilePhone": 9,
             "MobilePhoneModel": "Filtered",
             "Referer": "https://ref.filtered.example/x",
+            "RefererHash": 5_000_000_999,
             "RegionID": 9,
             "ResolutionWidth": 1600,
             "RunID": run_id,
@@ -470,9 +490,13 @@ def benchmark_queries(run_id: str) -> list[ClickBenchQuery]:
                 }
             },
         },
+        # ClickBench's literal UserID (435090932899640449) is from the real 100M-row
+        # hits table; our synthetic fixture only has UserIDs {9999, 100000..100003}.
+        # Use 9999 (held by exactly one fixture doc) so this point lookup actually
+        # returns a hit and exercises term-match + _source projection on both backends.
         "Q19": {
             "size": 10,
-            "query": {"term": {"UserID": 435090932899640449}},
+            "query": {"term": {"UserID": 9999}},
             "_source": ["UserID"],
         },
         "Q20": {
@@ -713,7 +737,8 @@ def benchmark_queries(run_id: str) -> list[ClickBenchQuery]:
                         "terms": [
                             {"field": "UserID"},
                             {
-                                "script": {"source": "doc['EventTime'].value.getMinute()"},
+                                "script": {"source": "doc['@timestamp'].value.getMinute()"},
+                                "value_type": "long",
                             },
                             {"field": "SearchPhrase"},
                         ],
