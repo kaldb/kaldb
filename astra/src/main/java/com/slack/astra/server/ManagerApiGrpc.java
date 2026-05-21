@@ -2,12 +2,13 @@ package com.slack.astra.server;
 
 import static com.slack.astra.metadata.dataset.DatasetMetadataSerializer.toDatasetMetadataProto;
 import static com.slack.astra.metadata.fieldredaction.FieldRedactionMetadataSerializer.toRedactedFieldMetadataProto;
+import static com.slack.astra.metadata.partition.PartitionMetadataSerializer.toPartitionMetadataProto;
 
 import com.google.common.base.Preconditions;
-import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Sets;
 import com.slack.astra.chunk.ChunkInfo;
 import com.slack.astra.clusterManager.ReplicaRestoreService;
+import com.slack.astra.metadata.core.InternalMetadataStoreException;
 import com.slack.astra.metadata.dataset.DatasetMetadata;
 import com.slack.astra.metadata.dataset.DatasetMetadataSerializer;
 import com.slack.astra.metadata.dataset.DatasetMetadataStore;
@@ -15,53 +16,74 @@ import com.slack.astra.metadata.dataset.DatasetPartitionMetadata;
 import com.slack.astra.metadata.fieldredaction.FieldRedactionMetadata;
 import com.slack.astra.metadata.fieldredaction.FieldRedactionMetadataSerializer;
 import com.slack.astra.metadata.fieldredaction.FieldRedactionMetadataStore;
+import com.slack.astra.metadata.partition.PartitionMetadata;
+import com.slack.astra.metadata.partition.PartitionMetadataStore;
 import com.slack.astra.metadata.snapshot.SnapshotMetadata;
 import com.slack.astra.metadata.snapshot.SnapshotMetadataStore;
 import com.slack.astra.proto.manager_api.ManagerApi;
 import com.slack.astra.proto.manager_api.ManagerApiServiceGrpc;
 import com.slack.astra.proto.metadata.Metadata;
+import com.slack.astra.server.partitionassignment.InvalidPartitionAssignmentStateException;
+import com.slack.astra.server.partitionassignment.LivePartitionState;
+import com.slack.astra.server.partitionassignment.PartitionAssignmentUpdateService;
+import com.slack.astra.server.partitionassignment.PartitionAssignmentUpdateService.DedicatedPartitionModeOverride;
+import com.slack.astra.server.partitionassignment.PartitionIdOrdering;
+import com.slack.astra.server.partitionassignment.PartitionOccupancy;
 import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import javax.naming.SizeLimitExceededException;
+import org.apache.zookeeper.KeeperException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
  * Administration API for managing dataset configurations, including throughput and partition
  * assignments. This API is available only on the cluster manager service, and the data created is
- * consumed primarily by the pre-processor and query services.
+ * consumed primarily by the pre-processor and query services. Mutating RPCs are synchronized to
+ * serialize dataset and partition-assignment changes within the singleton manager process.
  */
 public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplBase {
   private static final Logger LOG = LoggerFactory.getLogger(ManagerApiGrpc.class);
   private final DatasetMetadataStore datasetMetadataStore;
   private final SnapshotMetadataStore snapshotMetadataStore;
-  public static final long MAX_TIME = Long.MAX_VALUE;
+
+  /** Open-ended upper bound for manager query windows and snapshot scans. */
+  public static final long MAX_TIME = ChunkInfo.MAX_FUTURE_TIME;
+
   private final ReplicaRestoreService replicaRestoreService;
   private final FieldRedactionMetadataStore fieldRedactionMetadataStore;
+  private final PartitionMetadataStore partitionMetadataStore;
+  private final PartitionAssignmentUpdateService partitionAssignmentUpdateService;
 
   public ManagerApiGrpc(
       DatasetMetadataStore datasetMetadataStore,
+      PartitionMetadataStore partitionMetadataStore,
       SnapshotMetadataStore snapshotMetadataStore,
       ReplicaRestoreService replicaRestoreService,
-      FieldRedactionMetadataStore fieldRedactionMetadataStore) {
+      FieldRedactionMetadataStore fieldRedactionMetadataStore,
+      int minNumberOfPartitions) {
     this.datasetMetadataStore = datasetMetadataStore;
     this.snapshotMetadataStore = snapshotMetadataStore;
     this.replicaRestoreService = replicaRestoreService;
     this.fieldRedactionMetadataStore = fieldRedactionMetadataStore;
+    this.partitionMetadataStore =
+        Objects.requireNonNull(partitionMetadataStore, "partitionMetadataStore");
+    this.partitionAssignmentUpdateService =
+        new PartitionAssignmentUpdateService(
+            datasetMetadataStore, this.partitionMetadataStore, minNumberOfPartitions);
   }
 
   /** Initializes a new dataset in the metadata store with no initial allocated capacity */
   @Override
-  public void createDatasetMetadata(
+  public synchronized void createDatasetMetadata(
       ManagerApi.CreateDatasetMetadataRequest request,
       StreamObserver<Metadata.DatasetMetadata> responseObserver) {
 
@@ -72,7 +94,8 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
               request.getOwner(),
               0L,
               Collections.emptyList(),
-              request.getServiceNamePattern()));
+              request.getServiceNamePattern(),
+              false));
       responseObserver.onNext(
           toDatasetMetadataProto(datasetMetadataStore.getSync(request.getName())));
       responseObserver.onCompleted();
@@ -84,7 +107,7 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
 
   /** Updates an existing dataset with new metadata */
   @Override
-  public void updateDatasetMetadata(
+  public synchronized void updateDatasetMetadata(
       ManagerApi.UpdateDatasetMetadataRequest request,
       StreamObserver<Metadata.DatasetMetadata> responseObserver) {
 
@@ -97,7 +120,8 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
               request.getOwner(),
               existingDatasetMetadata.getThroughputBytes(),
               existingDatasetMetadata.getPartitionConfigs(),
-              request.getServiceNamePattern());
+              request.getServiceNamePattern(),
+              existingDatasetMetadata.isUsingDedicatedPartitions());
       datasetMetadataStore.updateSync(updatedDatasetMetadata);
       responseObserver.onNext(toDatasetMetadataProto(updatedDatasetMetadata));
       responseObserver.onCompleted();
@@ -125,7 +149,7 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
 
   /** Deletes an existing dataset by name, rejecting if snapshots still reference its partitions */
   @Override
-  public void deleteDatasetMetadata(
+  public synchronized void deleteDatasetMetadata(
       ManagerApi.DeleteDatasetMetadataRequest request,
       StreamObserver<Metadata.DatasetMetadata> responseObserver) {
 
@@ -190,49 +214,39 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
   }
 
   /**
-   * Allocates a new partition assignment for a dataset. If a rate and a list of partition IDs are
-   * provided, it will use it use the list of partition ids as the current allocation and
-   * invalidates the existing assignment.
+   * Allocates a new partition assignment for a dataset. If partition IDs are provided, it uses
+   * those IDs as the current allocation. If no partition IDs are provided, it auto-assigns from the
+   * partition catalog using the requested throughput and dedication requirement.
    */
   @Override
-  public void updatePartitionAssignment(
+  public synchronized void updatePartitionAssignment(
       ManagerApi.UpdatePartitionAssignmentRequest request,
       StreamObserver<ManagerApi.UpdatePartitionAssignmentResponse> responseObserver) {
-    // todo - In the future if only a rate is provided with an empty list the allocation
-    //  will be automatically assigned.
 
     try {
-      // todo - add additional validation to ensure the provided allocation makes sense for the
-      //  configured throughput values. If no partitions are provided, auto-allocate.
-      Preconditions.checkArgument(
-          request.getPartitionIdsList().stream().noneMatch(String::isBlank),
-          "PartitionIds list must not contain blank strings");
-
-      DatasetMetadata datasetMetadata = datasetMetadataStore.getSync(request.getName());
-      ImmutableList<DatasetPartitionMetadata> updatedDatasetPartitionMetadata =
-          addNewPartition(datasetMetadata.getPartitionConfigs(), request.getPartitionIdsList());
-
-      // if the user provided a non-negative value for throughput set it, otherwise default to the
-      // existing value
-      long updatedThroughputBytes =
-          request.getThroughputBytes() < 0
-              ? datasetMetadata.getThroughputBytes()
-              : request.getThroughputBytes();
-
-      DatasetMetadata updatedDatasetMetadata =
-          new DatasetMetadata(
-              datasetMetadata.getName(),
-              datasetMetadata.getOwner(),
-              updatedThroughputBytes,
-              updatedDatasetPartitionMetadata,
-              datasetMetadata.getServiceNamePattern());
-      datasetMetadataStore.updateSync(updatedDatasetMetadata);
+      List<String> assignedPartitionIds =
+          partitionAssignmentUpdateService.applyAssignmentUpdate(
+              request.getName(),
+              request.getThroughputBytes(),
+              request.getPartitionIdsList(),
+              toDedicatedPartitionModeOverride(request));
 
       responseObserver.onNext(
           ManagerApi.UpdatePartitionAssignmentResponse.newBuilder()
-              .addAllAssignedPartitionIds(request.getPartitionIdsList())
+              .addAllAssignedPartitionIds(assignedPartitionIds)
               .build());
       responseObserver.onCompleted();
+    } catch (InvalidPartitionAssignmentStateException e) {
+      LOG.error("Error updating partition assignment", e);
+      responseObserver.onError(
+          Status.FAILED_PRECONDITION.withDescription(e.getMessage()).asException());
+    } catch (IllegalArgumentException e) {
+      LOG.error("Error updating partition assignment", e);
+      responseObserver.onError(
+          Status.INVALID_ARGUMENT.withDescription(e.getMessage()).asException());
+    } catch (StatusRuntimeException e) {
+      LOG.error("Error updating partition assignment", e);
+      responseObserver.onError(e);
     } catch (Exception e) {
       LOG.error("Error updating partition assignment", e);
       responseObserver.onError(Status.UNKNOWN.withDescription(e.getMessage()).asException());
@@ -372,56 +386,6 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
         && partitionIdsWithQueriedData.contains(snapshot.partitionId);
   }
 
-  /**
-   * Returns a new list of dataset partition metadata, with the provided partition IDs as the
-   * current active assignment. This finds the current active assignment (end time of max long),
-   * sets it to the current time, and then appends a new dataset partition assignment starting from
-   * current time + 1 to max long.
-   */
-  private static ImmutableList<DatasetPartitionMetadata> addNewPartition(
-      List<DatasetPartitionMetadata> existingPartitions, List<String> newPartitionIdsList) {
-    if (newPartitionIdsList.isEmpty()) {
-      return ImmutableList.copyOf(existingPartitions);
-    }
-
-    Optional<DatasetPartitionMetadata> previousActiveDatasetPartition =
-        existingPartitions.stream()
-            .filter(
-                datasetPartitionMetadata ->
-                    datasetPartitionMetadata.getEndTimeEpochMs() == MAX_TIME)
-            .findFirst();
-
-    List<DatasetPartitionMetadata> remainingDatasetPartitions =
-        existingPartitions.stream()
-            .filter(
-                datasetPartitionMetadata ->
-                    datasetPartitionMetadata.getEndTimeEpochMs() != MAX_TIME)
-            .collect(Collectors.toList());
-
-    // todo - consider adding some padding to this value; this may complicate
-    //   validation as you would need to consider what happens when there's a future
-    //   cut-over already scheduled
-    // todo - if introducing an optional padding this should be added as a method parameter
-    //   see https://github.com/slackhq/astra/pull/244#discussion_r835424863
-    long partitionCutoverTime = Instant.now().toEpochMilli();
-
-    ImmutableList.Builder<DatasetPartitionMetadata> builder =
-        ImmutableList.<DatasetPartitionMetadata>builder().addAll(remainingDatasetPartitions);
-
-    if (previousActiveDatasetPartition.isPresent()) {
-      DatasetPartitionMetadata updatedPreviousActivePartition =
-          new DatasetPartitionMetadata(
-              previousActiveDatasetPartition.get().getStartTimeEpochMs(),
-              partitionCutoverTime,
-              previousActiveDatasetPartition.get().getPartitions());
-      builder.add(updatedPreviousActivePartition);
-    }
-
-    DatasetPartitionMetadata newPartitionMetadata =
-        new DatasetPartitionMetadata(partitionCutoverTime + 1, MAX_TIME, newPartitionIdsList);
-    return builder.add(newPartitionMetadata).build();
-  }
-
   @Override
   public void resetPartitionData(
       ManagerApi.ResetPartitionDataRequest request,
@@ -458,6 +422,177 @@ public class ManagerApiGrpc extends ManagerApiServiceGrpc.ManagerApiServiceImplB
     }
 
     responseObserver.onCompleted();
+  }
+
+  @Override
+  public synchronized void createPartition(
+      ManagerApi.CreatePartitionRequest request,
+      StreamObserver<Metadata.PartitionMetadata> responseObserver) {
+    try {
+      Preconditions.checkArgument(
+          !request.getPartitionId().isBlank(), "Partition ID must not be blank");
+      PartitionIdOrdering.parseNumericPartitionId(request.getPartitionId());
+      Preconditions.checkArgument(
+          request.getMaxCapacity() > 0, "Max capacity must be set when creating a new partition");
+
+      if (partitionMetadataStore.hasSync(request.getPartitionId())) {
+        String msg = "Partition with id '%s' already exists".formatted(request.getPartitionId());
+        LOG.warn(msg);
+        responseObserver.onError(Status.ALREADY_EXISTS.withDescription(msg).asException());
+        return;
+      }
+
+      PartitionMetadata newPartitionMetadata =
+          new PartitionMetadata(request.getPartitionId(), request.getMaxCapacity());
+      partitionMetadataStore.createSync(newPartitionMetadata);
+      responseObserver.onNext(toPartitionMetadataProto(newPartitionMetadata));
+      responseObserver.onCompleted();
+      LOG.info(
+          "Created partition: {}, max capacity: {}",
+          request.getPartitionId(),
+          request.getMaxCapacity());
+    } catch (IllegalArgumentException e) {
+      LOG.error("Error creating new partition", e);
+      responseObserver.onError(
+          Status.INVALID_ARGUMENT.withDescription(e.getMessage()).asException());
+    } catch (InternalMetadataStoreException e) {
+      LOG.error("Error creating new partition", e);
+      if (containsNodeExistsCause(e)) {
+        String msg = "Partition with id '%s' already exists".formatted(request.getPartitionId());
+        responseObserver.onError(Status.ALREADY_EXISTS.withDescription(msg).asException());
+      } else {
+        responseObserver.onError(Status.INTERNAL.withDescription(e.getMessage()).asException());
+      }
+    } catch (Exception e) {
+      LOG.error("Error creating new partition", e);
+      responseObserver.onError(Status.UNKNOWN.withDescription(e.getMessage()).asException());
+    }
+  }
+
+  @Override
+  public synchronized void deletePartition(
+      ManagerApi.DeletePartitionRequest request,
+      StreamObserver<ManagerApi.DeletePartitionResponse> responseObserver) {
+    try {
+      Preconditions.checkArgument(
+          !request.getPartitionId().isBlank(), "Partition ID must not be blank");
+      PartitionIdOrdering.parseNumericPartitionId(request.getPartitionId());
+      if (!partitionMetadataStore.hasSync(request.getPartitionId())) {
+        String msg = "Partition with id '%s' does not exist".formatted(request.getPartitionId());
+        responseObserver.onError(Status.NOT_FOUND.withDescription(msg).asException());
+        return;
+      }
+      // TODO(shard-autoassignment): this destructive check currently trusts the cache-backed
+      // dataset list. After a rapid assignment update, a stale listSync() here can falsely allow
+      // deletion of a partition that is still referenced. Switch this check to a direct read or
+      // another source of truth before relying on it for strict safety. See
+      // docs/topics/Shard-assignment-consistency.md for the broader consistency model.
+      boolean partitionIsReferenced =
+          datasetMetadataStore.listSync().stream()
+              .flatMap(dataset -> dataset.getPartitionConfigs().stream())
+              .flatMap(partitionConfig -> partitionConfig.getPartitions().stream())
+              .anyMatch(request.getPartitionId()::equals);
+      if (partitionIsReferenced) {
+        String msg =
+            "Partition with id '%s' is still referenced by a dataset assignment"
+                .formatted(request.getPartitionId());
+        responseObserver.onError(Status.FAILED_PRECONDITION.withDescription(msg).asException());
+        return;
+      }
+
+      partitionMetadataStore.deleteSync(request.getPartitionId());
+      responseObserver.onNext(
+          ManagerApi.DeletePartitionResponse.newBuilder()
+              .setStatus(
+                  String.format("Deleted partition %s successfully", request.getPartitionId()))
+              .build());
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException e) {
+      LOG.error("Error deleting partition", e);
+      responseObserver.onError(
+          Status.INVALID_ARGUMENT.withDescription(e.getMessage()).asException());
+    } catch (StatusRuntimeException e) {
+      LOG.error("Error deleting partition", e);
+      responseObserver.onError(e);
+    } catch (Exception e) {
+      LOG.error("Error deleting partition", e);
+      responseObserver.onError(Status.UNKNOWN.withDescription(e.getMessage()).asException());
+    }
+  }
+
+  @Override
+  public void listPartitionMetadata(
+      ManagerApi.ListPartitionRequest request,
+      StreamObserver<ManagerApi.ListPartitionMetadataResponse> responseObserver) {
+    try {
+      responseObserver.onNext(
+          ManagerApi.ListPartitionMetadataResponse.newBuilder()
+              .addAllPartitionMetadata(
+                  partitionAssignmentUpdateService.listLivePartitionStates().stream()
+                      .map(ManagerApiGrpc::toLivePartitionStateProto)
+                      .toList())
+              .build());
+      responseObserver.onCompleted();
+    } catch (InvalidPartitionAssignmentStateException e) {
+      LOG.error("Error fetching partition list", e);
+      responseObserver.onError(
+          Status.FAILED_PRECONDITION.withDescription(e.getMessage()).asException());
+    } catch (StatusRuntimeException e) {
+      LOG.error("Error fetching partition list", e);
+      responseObserver.onError(e);
+    } catch (Exception e) {
+      LOG.error("Error fetching partition list", e);
+      responseObserver.onError(Status.UNKNOWN.withDescription(e.getMessage()).asException());
+    }
+  }
+
+  private static ManagerApi.LivePartitionState toLivePartitionStateProto(
+      LivePartitionState metadata) {
+    ManagerApi.LivePartitionState.Builder builder =
+        ManagerApi.LivePartitionState.newBuilder()
+            .setPartitionId(metadata.partitionId())
+            .setProvisionedCapacity(metadata.provisionedCapacity())
+            .setMaxCapacity(metadata.maxCapacity());
+
+    return switch (metadata.occupancy()) {
+      case PartitionOccupancy.Empty ignored ->
+          builder.setEmpty(ManagerApi.EmptyPartitionOccupancy.newBuilder().build()).build();
+      case PartitionOccupancy.Shared shared ->
+          builder
+              .setShared(
+                  ManagerApi.SharedPartitionOccupancy.newBuilder()
+                      .addAllDatasets(shared.datasets())
+                      .build())
+              .build();
+      case PartitionOccupancy.Dedicated dedicated ->
+          builder
+              .setDedicated(
+                  ManagerApi.DedicatedPartitionOccupancy.newBuilder()
+                      .setDataset(dedicated.dataset())
+                      .build())
+              .build();
+    };
+  }
+
+  private static boolean containsNodeExistsCause(Throwable throwable) {
+    Throwable current = throwable;
+    while (current != null) {
+      if (current instanceof KeeperException.NodeExistsException) {
+        return true;
+      }
+      current = current.getCause();
+    }
+    return false;
+  }
+
+  private static DedicatedPartitionModeOverride toDedicatedPartitionModeOverride(
+      ManagerApi.UpdatePartitionAssignmentRequest request) {
+    if (!request.hasRequireDedicatedPartition()) {
+      return DedicatedPartitionModeOverride.PRESERVE_EXISTING;
+    }
+    return request.getRequireDedicatedPartition()
+        ? DedicatedPartitionModeOverride.REQUIRE_DEDICATED
+        : DedicatedPartitionModeOverride.REQUIRE_SHARED;
   }
 
   /** Creates a new field redaction */

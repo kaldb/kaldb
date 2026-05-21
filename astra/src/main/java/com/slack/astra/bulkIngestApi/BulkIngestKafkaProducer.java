@@ -3,7 +3,6 @@ package com.slack.astra.bulkIngestApi;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.slack.astra.metadata.dataset.DatasetMetadata.MATCH_ALL_SERVICE;
 import static com.slack.astra.metadata.dataset.DatasetMetadata.MATCH_STAR_SERVICE;
-import static com.slack.astra.server.ManagerApiGrpc.MAX_TIME;
 
 import com.google.common.util.concurrent.AbstractExecutionThreadService;
 import com.slack.astra.metadata.core.AstraMetadataStoreChangeListener;
@@ -387,9 +386,7 @@ public class BulkIngestKafkaProducer extends AbstractExecutionThreadService {
   /** Gets the active list of partitions from the provided dataset metadata */
   private static List<Integer> getActivePartitionList(DatasetMetadata datasetMetadata) {
     Optional<DatasetPartitionMetadata> datasetPartitionMetadata =
-        datasetMetadata.getPartitionConfigs().stream()
-            .filter(partitionMetadata -> partitionMetadata.getEndTimeEpochMs() == MAX_TIME)
-            .findFirst();
+        datasetMetadata.getActivePartitionMetadata();
 
     if (datasetPartitionMetadata.isEmpty()) {
       return Collections.emptyList();

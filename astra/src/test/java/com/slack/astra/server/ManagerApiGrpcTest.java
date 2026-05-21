@@ -5,9 +5,14 @@ import static com.slack.astra.server.ManagerApiGrpc.MAX_TIME;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.awaitility.Awaitility.await;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 import brave.Tracing;
 import com.slack.astra.clusterManager.ReplicaRestoreService;
@@ -19,6 +24,8 @@ import com.slack.astra.metadata.dataset.DatasetMetadataStore;
 import com.slack.astra.metadata.dataset.DatasetPartitionMetadata;
 import com.slack.astra.metadata.fieldredaction.FieldRedactionMetadata;
 import com.slack.astra.metadata.fieldredaction.FieldRedactionMetadataStore;
+import com.slack.astra.metadata.partition.PartitionMetadata;
+import com.slack.astra.metadata.partition.PartitionMetadataStore;
 import com.slack.astra.metadata.replica.ReplicaMetadataStore;
 import com.slack.astra.metadata.snapshot.SnapshotMetadata;
 import com.slack.astra.metadata.snapshot.SnapshotMetadataStore;
@@ -39,8 +46,16 @@ import java.time.Instant;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import org.apache.curator.test.TestingServer;
 import org.apache.curator.x.async.AsyncCuratorFramework;
 import org.junit.jupiter.api.AfterEach;
@@ -58,6 +73,7 @@ public class ManagerApiGrpcTest {
 
   private AsyncCuratorFramework curatorFramework;
   private DatasetMetadataStore datasetMetadataStore;
+  private PartitionMetadataStore partitionMetadataStore;
   private SnapshotMetadataStore snapshotMetadataStore;
   private ReplicaMetadataStore replicaMetadataStore;
   private ReplicaRestoreService replicaRestoreService;
@@ -88,6 +104,8 @@ public class ManagerApiGrpcTest {
         CuratorBuilder.build(meterRegistry, metadataStoreConfig.getZookeeperConfig());
     datasetMetadataStore =
         spy(new DatasetMetadataStore(curatorFramework, metadataStoreConfig, meterRegistry, true));
+    partitionMetadataStore =
+        spy(new PartitionMetadataStore(curatorFramework, metadataStoreConfig, meterRegistry, true));
     snapshotMetadataStore =
         spy(new SnapshotMetadataStore(curatorFramework, metadataStoreConfig, meterRegistry));
     replicaMetadataStore =
@@ -113,22 +131,7 @@ public class ManagerApiGrpcTest {
     replicaRestoreService =
         new ReplicaRestoreService(replicaMetadataStore, meterRegistry, managerConfig);
 
-    grpcCleanup.register(
-        InProcessServerBuilder.forName(this.getClass().toString())
-            .directExecutor()
-            .addService(
-                new ManagerApiGrpc(
-                    datasetMetadataStore,
-                    snapshotMetadataStore,
-                    replicaRestoreService,
-                    fieldRedactionMetadataStore))
-            .build()
-            .start());
-    ManagedChannel channel =
-        grpcCleanup.register(
-            InProcessChannelBuilder.forName(this.getClass().toString()).directExecutor().build());
-
-    managerApiStub = ManagerApiServiceGrpc.newBlockingStub(channel);
+    managerApiStub = createManagerApiStub(nextServerName("default"), 2);
   }
 
   @AfterEach
@@ -139,11 +142,57 @@ public class ManagerApiGrpcTest {
     replicaMetadataStore.close();
     snapshotMetadataStore.close();
     datasetMetadataStore.close();
+    partitionMetadataStore.close();
     fieldRedactionMetadataStore.close();
     curatorFramework.unwrap().close();
 
     testingServer.close();
     meterRegistry.close();
+  }
+
+  private Metadata.PartitionMetadata createPartition(String partitionId, long maxCapacity) {
+    Metadata.PartitionMetadata createdPartition =
+        managerApiStub.createPartition(
+            ManagerApi.CreatePartitionRequest.newBuilder()
+                .setPartitionId(partitionId)
+                .setMaxCapacity(maxCapacity)
+                .build());
+    await()
+        .untilAsserted(
+            () ->
+                assertThat(partitionMetadataStore.listSync())
+                    .extracting(PartitionMetadata::getPartitionId)
+                    .contains(partitionId));
+    return createdPartition;
+  }
+
+  private void createPartitions(List<String> partitionIds) {
+    partitionIds.forEach(partitionId -> createPartition(partitionId, 100));
+  }
+
+  private String nextServerName(String suffix) {
+    return getClass().getName() + "-" + suffix + "-" + System.nanoTime();
+  }
+
+  private ManagerApiServiceGrpc.ManagerApiServiceBlockingStub createManagerApiStub(
+      String serverName, int minNumberOfPartitions) throws Exception {
+    grpcCleanup.register(
+        InProcessServerBuilder.forName(serverName)
+            .directExecutor()
+            .addService(
+                new ManagerApiGrpc(
+                    datasetMetadataStore,
+                    partitionMetadataStore,
+                    snapshotMetadataStore,
+                    replicaRestoreService,
+                    fieldRedactionMetadataStore,
+                    minNumberOfPartitions))
+            .build()
+            .start());
+    ManagedChannel channel =
+        grpcCleanup.register(InProcessChannelBuilder.forName(serverName).directExecutor().build());
+
+    return ManagerApiServiceGrpc.newBlockingStub(channel);
   }
 
   @Test
@@ -364,6 +413,8 @@ public class ManagerApiGrpcTest {
                 .build());
     assertThat(initialDatasetRequest.getPartitionConfigsList().size()).isEqualTo(0);
 
+    createPartitions(List.of("1", "2", "3", "4", "5"));
+
     long nowMs = Instant.now().toEpochMilli();
     long throughputBytes = 10;
     managerApiStub.updatePartitionAssignment(
@@ -398,11 +449,11 @@ public class ManagerApiGrpcTest {
     assertThat(firstDatasetMetadata.getThroughputBytes()).isEqualTo(throughputBytes);
     assertThat(firstDatasetMetadata.getPartitionConfigs().size()).isEqualTo(1);
 
-    // only update the partition assignment, leaving throughput
+    // update the partition assignment while re-sending the current throughput
     managerApiStub.updatePartitionAssignment(
         ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
             .setName(datasetName)
-            .setThroughputBytes(-1)
+            .setThroughputBytes(throughputBytes)
             .addAllPartitionIds(List.of("3", "4", "5"))
             .build());
 
@@ -438,12 +489,13 @@ public class ManagerApiGrpcTest {
     assertThat(secondDatasetMetadata.getThroughputBytes()).isEqualTo(throughputBytes);
     assertThat(secondDatasetMetadata.getPartitionConfigs().size()).isEqualTo(2);
 
-    // only update the throughput, leaving the partition assignments
+    // update the throughput while explicitly re-sending the current partition assignment
     long updatedThroughputBytes = 12;
     managerApiStub.updatePartitionAssignment(
         ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
             .setName(datasetName)
             .setThroughputBytes(updatedThroughputBytes)
+            .addAllPartitionIds(List.of("3", "4", "5"))
             .build());
 
     AtomicReference<Metadata.DatasetMetadata> thirdAssignment = new AtomicReference<>();
@@ -480,6 +532,911 @@ public class ManagerApiGrpcTest {
   }
 
   @Test
+  public void shouldCreateListAndDeletePartitions() {
+    Metadata.PartitionMetadata createdPartition = createPartition("1", 250);
+    assertThat(createdPartition.getPartitionId()).isEqualTo("1");
+    assertThat(createdPartition.getMaxCapacity()).isEqualTo(250);
+
+    ManagerApi.ListPartitionMetadataResponse listPartitionResponse =
+        managerApiStub.listPartitionMetadata(ManagerApi.ListPartitionRequest.newBuilder().build());
+    assertThat(listPartitionResponse.getPartitionMetadataList()).hasSize(1);
+    assertThat(listPartitionResponse.getPartitionMetadata(0).getPartitionId()).isEqualTo("1");
+    assertThat(listPartitionResponse.getPartitionMetadata(0).getMaxCapacity()).isEqualTo(250);
+    assertThat(listPartitionResponse.getPartitionMetadata(0).getProvisionedCapacity()).isZero();
+    assertThat(listPartitionResponse.getPartitionMetadata(0).hasEmpty()).isTrue();
+
+    ManagerApi.DeletePartitionResponse deletePartitionResponse =
+        managerApiStub.deletePartition(
+            ManagerApi.DeletePartitionRequest.newBuilder().setPartitionId("1").build());
+    assertThat(deletePartitionResponse.getStatus()).isEqualTo("Deleted partition 1 successfully");
+
+    await()
+        .untilAsserted(
+            () -> {
+              ManagerApi.ListPartitionMetadataResponse listAfterDeleteResponse =
+                  managerApiStub.listPartitionMetadata(
+                      ManagerApi.ListPartitionRequest.newBuilder().build());
+              assertThat(listAfterDeleteResponse.getPartitionMetadataList()).isEmpty();
+            });
+  }
+
+  @Test
+  public void shouldRejectCreatingPartitionWithNonNumericId() {
+    StatusRuntimeException throwable =
+        (StatusRuntimeException)
+            catchThrowable(
+                () ->
+                    managerApiStub.createPartition(
+                        ManagerApi.CreatePartitionRequest.newBuilder()
+                            .setPartitionId("partition-a")
+                            .setMaxCapacity(250)
+                            .build()));
+
+    assertThat(throwable.getStatus().getCode()).isEqualTo(Status.INVALID_ARGUMENT.getCode());
+    assertThat(throwable.getStatus().getDescription())
+        .contains("Partition ID must be a canonical non-negative integer: partition-a");
+  }
+
+  @Test
+  public void shouldRejectCreatingDuplicatePartitionWhenStoreCreateRaces() {
+    doThrow(
+            new InternalMetadataStoreException(
+                "duplicate partition",
+                new org.apache.zookeeper.KeeperException.NodeExistsException()))
+        .when(partitionMetadataStore)
+        .createSync(eq(new PartitionMetadata("1", 250)));
+
+    StatusRuntimeException throwable =
+        (StatusRuntimeException)
+            catchThrowable(
+                () ->
+                    managerApiStub.createPartition(
+                        ManagerApi.CreatePartitionRequest.newBuilder()
+                            .setPartitionId("1")
+                            .setMaxCapacity(250)
+                            .build()));
+
+    assertThat(throwable.getStatus().getCode()).isEqualTo(Status.ALREADY_EXISTS.getCode());
+    assertThat(throwable.getStatus().getDescription())
+        .contains("Partition with id '1' already exists");
+  }
+
+  @Test
+  public void shouldReturnInternalWhenPartitionCreateStoreFailsUnexpectedly() {
+    doThrow(new InternalMetadataStoreException("store failure", new RuntimeException("boom")))
+        .when(partitionMetadataStore)
+        .createSync(eq(new PartitionMetadata("1", 250)));
+
+    StatusRuntimeException throwable =
+        (StatusRuntimeException)
+            catchThrowable(
+                () ->
+                    managerApiStub.createPartition(
+                        ManagerApi.CreatePartitionRequest.newBuilder()
+                            .setPartitionId("1")
+                            .setMaxCapacity(250)
+                            .build()));
+
+    assertThat(throwable.getStatus().getCode()).isEqualTo(Status.INTERNAL.getCode());
+    assertThat(throwable.getStatus().getDescription()).contains("store failure");
+  }
+
+  @Test
+  public void shouldRejectManualAssignmentWithUnknownPartitionIds() {
+    String datasetName = "manualInvalidPartitionDataset";
+    managerApiStub.createDatasetMetadata(
+        ManagerApi.CreateDatasetMetadataRequest.newBuilder()
+            .setName(datasetName)
+            .setOwner("owner")
+            .build());
+    createPartition("1", 100);
+
+    StatusRuntimeException throwable =
+        (StatusRuntimeException)
+            catchThrowable(
+                () ->
+                    managerApiStub.updatePartitionAssignment(
+                        ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
+                            .setName(datasetName)
+                            .setThroughputBytes(50)
+                            .addAllPartitionIds(List.of("1", "999"))
+                            .build()));
+
+    assertThat(throwable.getStatus().getCode()).isEqualTo(Status.INVALID_ARGUMENT.getCode());
+    assertThat(throwable.getStatus().getDescription())
+        .contains("Requested partition IDs do not exist: [999]");
+  }
+
+  @Test
+  public void shouldRejectManualAssignmentWithDuplicatePartitionIds() {
+    String datasetName = "manualDuplicatePartitionDataset";
+    managerApiStub.createDatasetMetadata(
+        ManagerApi.CreateDatasetMetadataRequest.newBuilder()
+            .setName(datasetName)
+            .setOwner("owner")
+            .build());
+    createPartition("1", 100);
+
+    StatusRuntimeException throwable =
+        (StatusRuntimeException)
+            catchThrowable(
+                () ->
+                    managerApiStub.updatePartitionAssignment(
+                        ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
+                            .setName(datasetName)
+                            .setThroughputBytes(50)
+                            .addAllPartitionIds(List.of("1", "1"))
+                            .build()));
+
+    assertThat(throwable.getStatus().getCode()).isEqualTo(Status.INVALID_ARGUMENT.getCode());
+    assertThat(throwable.getStatus().getDescription())
+        .contains("Requested partition IDs must be unique: [1]");
+  }
+
+  @Test
+  public void shouldRejectManualAssignmentWhenBelowMinimumPartitionCount() {
+    String datasetName = "manualBelowMinimumDataset";
+    managerApiStub.createDatasetMetadata(
+        ManagerApi.CreateDatasetMetadataRequest.newBuilder()
+            .setName(datasetName)
+            .setOwner("owner")
+            .build());
+    createPartitions(List.of("1", "2"));
+
+    StatusRuntimeException throwable =
+        (StatusRuntimeException)
+            catchThrowable(
+                () ->
+                    managerApiStub.updatePartitionAssignment(
+                        ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
+                            .setName(datasetName)
+                            .setThroughputBytes(20)
+                            .addPartitionIds("1")
+                            .build()));
+
+    assertThat(throwable.getStatus().getCode()).isEqualTo(Status.FAILED_PRECONDITION.getCode());
+    assertThat(throwable.getStatus().getDescription())
+        .contains("Needed at least 2 partitions, found 1: [1]");
+  }
+
+  @Test
+  public void shouldRejectManualSharedAssignmentWhenSelectedPartitionLacksCapacity() {
+    String existingDatasetName = "existingSharedDataset";
+    String datasetName = "manualSharedOverCapacityDataset";
+    createPartitions(List.of("1", "2", "3"));
+
+    managerApiStub.createDatasetMetadata(
+        ManagerApi.CreateDatasetMetadataRequest.newBuilder()
+            .setName(existingDatasetName)
+            .setOwner("owner")
+            .build());
+    managerApiStub.updatePartitionAssignment(
+        ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
+            .setName(existingDatasetName)
+            .setThroughputBytes(100)
+            .addAllPartitionIds(List.of("1", "3"))
+            .build());
+    await()
+        .until(
+            () ->
+                datasetMetadataStore.listSync().stream()
+                    .filter(dataset -> dataset.getName().equals(existingDatasetName))
+                    .findFirst()
+                    .flatMap(DatasetMetadata::getActivePartitionMetadata)
+                    .isPresent());
+
+    managerApiStub.createDatasetMetadata(
+        ManagerApi.CreateDatasetMetadataRequest.newBuilder()
+            .setName(datasetName)
+            .setOwner("owner")
+            .build());
+
+    StatusRuntimeException throwable =
+        (StatusRuntimeException)
+            catchThrowable(
+                () ->
+                    managerApiStub.updatePartitionAssignment(
+                        ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
+                            .setName(datasetName)
+                            .setThroughputBytes(150)
+                            .addAllPartitionIds(List.of("1", "2"))
+                            .build()));
+
+    assertThat(throwable.getStatus().getCode()).isEqualTo(Status.FAILED_PRECONDITION.getCode());
+    assertThat(throwable.getStatus().getDescription())
+        .contains("Shared assignment requires each selected partition to be eligible")
+        .contains("[1]");
+  }
+
+  @Test
+  public void shouldRejectManualDedicatedAssignmentWhenSelectedPartitionIsNotDedicatedEligible() {
+    String existingDatasetName = "existingDedicatedConflictDataset";
+    String datasetName = "manualDedicatedConflictDataset";
+    createPartitions(List.of("1", "2", "3"));
+
+    managerApiStub.createDatasetMetadata(
+        ManagerApi.CreateDatasetMetadataRequest.newBuilder()
+            .setName(existingDatasetName)
+            .setOwner("owner")
+            .build());
+    managerApiStub.updatePartitionAssignment(
+        ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
+            .setName(existingDatasetName)
+            .setThroughputBytes(100)
+            .addAllPartitionIds(List.of("1", "2"))
+            .build());
+    await()
+        .until(
+            () ->
+                datasetMetadataStore.listSync().stream()
+                    .filter(dataset -> dataset.getName().equals(existingDatasetName))
+                    .findFirst()
+                    .flatMap(DatasetMetadata::getActivePartitionMetadata)
+                    .isPresent());
+
+    managerApiStub.createDatasetMetadata(
+        ManagerApi.CreateDatasetMetadataRequest.newBuilder()
+            .setName(datasetName)
+            .setOwner("owner")
+            .build());
+
+    StatusRuntimeException throwable =
+        (StatusRuntimeException)
+            catchThrowable(
+                () ->
+                    managerApiStub.updatePartitionAssignment(
+                        ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
+                            .setName(datasetName)
+                            .setThroughputBytes(20)
+                            .addAllPartitionIds(List.of("1", "3"))
+                            .setRequireDedicatedPartition(true)
+                            .build()));
+
+    assertThat(throwable.getStatus().getCode()).isEqualTo(Status.FAILED_PRECONDITION.getCode());
+    assertThat(throwable.getStatus().getDescription())
+        .contains("Dedicated assignment requires each selected partition to be eligible")
+        .contains("[1]");
+  }
+
+  @Test
+  public void shouldAllowManualDedicatedUpgradeOnSelfOwnedSharedPartitions() {
+    String datasetName = "manualDedicatedUpgradeDataset";
+    createPartitions(List.of("1", "2", "3"));
+
+    managerApiStub.createDatasetMetadata(
+        ManagerApi.CreateDatasetMetadataRequest.newBuilder()
+            .setName(datasetName)
+            .setOwner("owner")
+            .build());
+    managerApiStub.updatePartitionAssignment(
+        ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
+            .setName(datasetName)
+            .setThroughputBytes(100)
+            .addAllPartitionIds(List.of("1", "2"))
+            .build());
+    await()
+        .until(
+            () ->
+                datasetMetadataStore.listSync().stream()
+                    .filter(dataset -> dataset.getName().equals(datasetName))
+                    .findFirst()
+                    .flatMap(DatasetMetadata::getActivePartitionMetadata)
+                    .isPresent());
+
+    ManagerApi.UpdatePartitionAssignmentResponse response =
+        managerApiStub.updatePartitionAssignment(
+            ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
+                .setName(datasetName)
+                .setThroughputBytes(100)
+                .addAllPartitionIds(List.of("1", "2"))
+                .setRequireDedicatedPartition(true)
+                .build());
+
+    assertThat(response.getAssignedPartitionIdsList()).containsExactly("1", "2");
+    await()
+        .until(
+            () ->
+                datasetMetadataStore.getSync(datasetName).isUsingDedicatedPartitions()
+                    && datasetMetadataStore
+                        .getSync(datasetName)
+                        .getActivePartitionMetadata()
+                        .map(DatasetPartitionMetadata::getPartitions)
+                        .orElseGet(com.google.common.collect.ImmutableList::of)
+                        .equals(List.of("1", "2")));
+  }
+
+  @Test
+  public void shouldAutoAssignSharedPartitions() {
+    String datasetName = "sharedAutoDataset";
+    createPartitions(List.of("1", "2", "3"));
+    managerApiStub.createDatasetMetadata(
+        ManagerApi.CreateDatasetMetadataRequest.newBuilder()
+            .setName(datasetName)
+            .setOwner("owner")
+            .build());
+
+    ManagerApi.UpdatePartitionAssignmentResponse response =
+        managerApiStub.updatePartitionAssignment(
+            ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
+                .setName(datasetName)
+                .setThroughputBytes(100)
+                .build());
+
+    assertThat(response.getAssignedPartitionIdsList()).containsExactly("1", "2");
+    AtomicReference<DatasetMetadata> datasetMetadata = new AtomicReference<>();
+    await()
+        .until(
+            () -> {
+              datasetMetadata.set(datasetMetadataStore.getSync(datasetName));
+              return datasetMetadata.get().getThroughputBytes() == 100
+                  && datasetMetadata.get().getActivePartitionMetadata().isPresent();
+            });
+    assertThat(datasetMetadata.get().isUsingDedicatedPartitions()).isFalse();
+    assertThat(datasetMetadata.get().getActivePerPartitionThroughput()).isEqualTo(50);
+
+    ManagerApi.ListPartitionMetadataResponse listPartitionResponse =
+        managerApiStub.listPartitionMetadata(ManagerApi.ListPartitionRequest.newBuilder().build());
+    Map<String, ManagerApi.LivePartitionState> partitionsById =
+        livePartitionStateById(listPartitionResponse);
+    assertThat(partitionsById.keySet()).containsExactlyInAnyOrder("1", "2", "3");
+    assertThat(partitionsById.get("1").getProvisionedCapacity()).isEqualTo(50);
+    assertThat(partitionsById.get("1").getShared().getDatasetsList()).containsExactly(datasetName);
+    assertThat(partitionsById.get("2").getProvisionedCapacity()).isEqualTo(50);
+    assertThat(partitionsById.get("2").getShared().getDatasetsList()).containsExactly(datasetName);
+    assertThat(partitionsById.get("3").getProvisionedCapacity()).isZero();
+  }
+
+  @Test
+  public void shouldHonorConfiguredMinimumPartitionCountDuringAutoAssignment() throws Exception {
+    ManagerApiServiceGrpc.ManagerApiServiceBlockingStub managerApiStubWithMinThree =
+        createManagerApiStub(nextServerName("min-three"), 3);
+    String datasetName = "minPartitionCountDataset";
+    createPartitions(List.of("1", "2", "3"));
+
+    managerApiStubWithMinThree.createDatasetMetadata(
+        ManagerApi.CreateDatasetMetadataRequest.newBuilder()
+            .setName(datasetName)
+            .setOwner("owner")
+            .build());
+
+    ManagerApi.UpdatePartitionAssignmentResponse response =
+        managerApiStubWithMinThree.updatePartitionAssignment(
+            ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
+                .setName(datasetName)
+                .setThroughputBytes(20)
+                .build());
+
+    assertThat(response.getAssignedPartitionIdsList()).containsExactly("1", "2", "3");
+    AtomicReference<DatasetMetadata> datasetMetadata = new AtomicReference<>();
+    await()
+        .until(
+            () -> {
+              datasetMetadata.set(datasetMetadataStore.getSync(datasetName));
+              return datasetMetadata.get().getActivePartitionMetadata().isPresent();
+            });
+    assertThat(datasetMetadata.get().getActivePerPartitionThroughput()).isEqualTo(7);
+  }
+
+  @Test
+  public void shouldPreserveAutoAssignmentOrderingWhenPersistingAndReturningPartitions() {
+    String datasetName = "numericOrderingDataset";
+    createPartitions(List.of("10", "2"));
+    managerApiStub.createDatasetMetadata(
+        ManagerApi.CreateDatasetMetadataRequest.newBuilder()
+            .setName(datasetName)
+            .setOwner("owner")
+            .build());
+
+    ManagerApi.UpdatePartitionAssignmentResponse response =
+        managerApiStub.updatePartitionAssignment(
+            ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
+                .setName(datasetName)
+                .setThroughputBytes(100)
+                .build());
+
+    assertThat(response.getAssignedPartitionIdsList()).containsExactly("2", "10");
+    AtomicReference<DatasetMetadata> datasetMetadata = new AtomicReference<>();
+    await()
+        .until(
+            () -> {
+              datasetMetadata.set(datasetMetadataStore.getSync(datasetName));
+              return datasetMetadata.get().getActivePartitionMetadata().isPresent();
+            });
+    assertThat(datasetMetadata.get().getActivePartitionMetadata().orElseThrow().getPartitions())
+        .containsExactly("2", "10");
+  }
+
+  @Test
+  public void shouldAutoAssignDedicatedPartitions() {
+    String sharedDatasetName = "sharedDataset";
+    String dedicatedDatasetName = "dedicatedDataset";
+    createPartitions(List.of("1", "2", "3", "4"));
+
+    managerApiStub.createDatasetMetadata(
+        ManagerApi.CreateDatasetMetadataRequest.newBuilder()
+            .setName(sharedDatasetName)
+            .setOwner("owner")
+            .build());
+    managerApiStub.updatePartitionAssignment(
+        ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
+            .setName(sharedDatasetName)
+            .setThroughputBytes(100)
+            .build());
+    await()
+        .until(
+            () ->
+                datasetMetadataStore
+                    .getSync(sharedDatasetName)
+                    .getActivePartitionMetadata()
+                    .isPresent());
+
+    managerApiStub.createDatasetMetadata(
+        ManagerApi.CreateDatasetMetadataRequest.newBuilder()
+            .setName(dedicatedDatasetName)
+            .setOwner("owner")
+            .build());
+    ManagerApi.UpdatePartitionAssignmentResponse dedicatedResponse =
+        managerApiStub.updatePartitionAssignment(
+            ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
+                .setName(dedicatedDatasetName)
+                .setThroughputBytes(150)
+                .setRequireDedicatedPartition(true)
+                .build());
+
+    assertThat(dedicatedResponse.getAssignedPartitionIdsList()).containsExactly("3", "4");
+    AtomicReference<DatasetMetadata> dedicatedDatasetMetadata = new AtomicReference<>();
+    await()
+        .until(
+            () -> {
+              dedicatedDatasetMetadata.set(datasetMetadataStore.getSync(dedicatedDatasetName));
+              return dedicatedDatasetMetadata.get().isUsingDedicatedPartitions()
+                  && dedicatedDatasetMetadata.get().getActivePartitionMetadata().isPresent();
+            });
+    assertThat(dedicatedDatasetMetadata.get().getActivePerPartitionThroughput()).isEqualTo(75);
+
+    ManagerApi.ListPartitionMetadataResponse listPartitionResponse =
+        managerApiStub.listPartitionMetadata(ManagerApi.ListPartitionRequest.newBuilder().build());
+    Map<String, ManagerApi.LivePartitionState> partitionsById =
+        livePartitionStateById(listPartitionResponse);
+    assertThat(partitionsById.get("3").getDedicated().getDataset()).isEqualTo(dedicatedDatasetName);
+    assertThat(partitionsById.get("4").getDedicated().getDataset()).isEqualTo(dedicatedDatasetName);
+  }
+
+  @Test
+  public void shouldRejectDedicatedAutoAssignmentWhenEqualShareWouldOverloadPartition() {
+    String datasetName = "dedicatedPooledCapacityDataset";
+    createPartition("1", 1);
+    createPartition("2", 100);
+    managerApiStub.createDatasetMetadata(
+        ManagerApi.CreateDatasetMetadataRequest.newBuilder()
+            .setName(datasetName)
+            .setOwner("owner")
+            .build());
+
+    StatusRuntimeException throwable =
+        (StatusRuntimeException)
+            catchThrowable(
+                () ->
+                    managerApiStub.updatePartitionAssignment(
+                        ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
+                            .setName(datasetName)
+                            .setThroughputBytes(101)
+                            .setRequireDedicatedPartition(true)
+                            .build()));
+
+    assertThat(throwable.getStatus().getCode()).isEqualTo(Status.FAILED_PRECONDITION.getCode());
+    assertThat(throwable.getStatus().getDescription())
+        .contains("Needed 2 partitions with enough capacity")
+        .contains("found 1: [2]");
+  }
+
+  @Test
+  public void shouldUseMoreDedicatedPartitionsWhenEqualShareNeedsCapacity() {
+    String datasetName = "dedicatedEqualShareDataset";
+    createPartition("1", 50);
+    createPartition("2", 55);
+    createPartition("3", 70);
+    managerApiStub.createDatasetMetadata(
+        ManagerApi.CreateDatasetMetadataRequest.newBuilder()
+            .setName(datasetName)
+            .setOwner("owner")
+            .build());
+
+    ManagerApi.UpdatePartitionAssignmentResponse response =
+        managerApiStub.updatePartitionAssignment(
+            ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
+                .setName(datasetName)
+                .setThroughputBytes(120)
+                .setRequireDedicatedPartition(true)
+                .build());
+
+    assertThat(response.getAssignedPartitionIdsList()).containsExactly("1", "2", "3");
+    AtomicReference<DatasetMetadata> datasetMetadata = new AtomicReference<>();
+    await()
+        .until(
+            () -> {
+              datasetMetadata.set(datasetMetadataStore.getSync(datasetName));
+              return datasetMetadata.get().isUsingDedicatedPartitions()
+                  && datasetMetadata.get().getActivePartitionMetadata().isPresent();
+            });
+    assertThat(datasetMetadata.get().getActivePerPartitionThroughput()).isEqualTo(40);
+  }
+
+  @Test
+  public void shouldReturnFailedPreconditionWhenDedicatedOwnershipConflicts() {
+    createPartition("1", 100);
+    datasetMetadataStore.createSync(
+        new DatasetMetadata(
+            "dataset-a",
+            "owner",
+            100,
+            List.of(new DatasetPartitionMetadata(1, MAX_TIME, List.of("1"))),
+            "",
+            true));
+    datasetMetadataStore.createSync(
+        new DatasetMetadata(
+            "dataset-b",
+            "owner",
+            100,
+            List.of(new DatasetPartitionMetadata(1, MAX_TIME, List.of("1"))),
+            "",
+            true));
+
+    StatusRuntimeException throwable =
+        (StatusRuntimeException)
+            catchThrowable(
+                () ->
+                    managerApiStub.listPartitionMetadata(
+                        ManagerApi.ListPartitionRequest.newBuilder().build()));
+
+    assertThat(throwable.getStatus().getCode()).isEqualTo(Status.FAILED_PRECONDITION.getCode());
+    assertThat(throwable.getStatus().getDescription())
+        .contains("partition 1 cannot be dedicated to multiple datasets");
+  }
+
+  @Test
+  public void shouldSerializeConcurrentAutoPartitionAssignments() throws Exception {
+    String firstDatasetName = "serializedAutoDatasetA";
+    String secondDatasetName = "serializedAutoDatasetB";
+    createPartitions(List.of("1", "2", "3", "4"));
+
+    managerApiStub.createDatasetMetadata(
+        ManagerApi.CreateDatasetMetadataRequest.newBuilder()
+            .setName(firstDatasetName)
+            .setOwner("owner")
+            .build());
+    managerApiStub.createDatasetMetadata(
+        ManagerApi.CreateDatasetMetadataRequest.newBuilder()
+            .setName(secondDatasetName)
+            .setOwner("owner")
+            .build());
+
+    CountDownLatch firstDatasetUpdateStarted = new CountDownLatch(1);
+    CountDownLatch releaseFirstDatasetUpdate = new CountDownLatch(1);
+    CountDownLatch secondDatasetUpdateStarted = new CountDownLatch(1);
+    doAnswer(
+            invocation -> {
+              DatasetMetadata updatedDatasetMetadata = invocation.getArgument(0);
+              if (updatedDatasetMetadata.getName().equals(firstDatasetName)) {
+                firstDatasetUpdateStarted.countDown();
+                if (!releaseFirstDatasetUpdate.await(5, TimeUnit.SECONDS)) {
+                  throw new AssertionError(
+                      "Timed out waiting to release first partition assignment update");
+                }
+              }
+              if (updatedDatasetMetadata.getName().equals(secondDatasetName)) {
+                secondDatasetUpdateStarted.countDown();
+              }
+              return invocation.callRealMethod();
+            })
+        .when(datasetMetadataStore)
+        .updateSync(any(DatasetMetadata.class));
+
+    ExecutorService executorService = Executors.newFixedThreadPool(2);
+    try {
+      Future<ManagerApi.UpdatePartitionAssignmentResponse> firstAssignment =
+          executorService.submit(
+              () ->
+                  managerApiStub.updatePartitionAssignment(
+                      ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
+                          .setName(firstDatasetName)
+                          .setThroughputBytes(100)
+                          .setRequireDedicatedPartition(true)
+                          .build()));
+      assertThat(firstDatasetUpdateStarted.await(5, TimeUnit.SECONDS)).isTrue();
+
+      Future<ManagerApi.UpdatePartitionAssignmentResponse> secondAssignment =
+          executorService.submit(
+              () ->
+                  managerApiStub.updatePartitionAssignment(
+                      ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
+                          .setName(secondDatasetName)
+                          .setThroughputBytes(100)
+                          .setRequireDedicatedPartition(true)
+                          .build()));
+
+      await()
+          .untilAsserted(
+              () -> {
+                verify(datasetMetadataStore, times(1)).updateSync(any(DatasetMetadata.class));
+                verify(datasetMetadataStore)
+                    .updateSync(argThat(dataset -> dataset.getName().equals(firstDatasetName)));
+                verify(datasetMetadataStore, times(0))
+                    .updateSync(argThat(dataset -> dataset.getName().equals(secondDatasetName)));
+              });
+      releaseFirstDatasetUpdate.countDown();
+
+      assertThat(firstAssignment.get(5, TimeUnit.SECONDS).getAssignedPartitionIdsList())
+          .containsExactly("1", "2");
+      assertThat(secondDatasetUpdateStarted.await(5, TimeUnit.SECONDS)).isTrue();
+      assertThat(secondAssignment.get(5, TimeUnit.SECONDS).getAssignedPartitionIdsList())
+          .hasSize(2)
+          .allMatch(partitionId -> List.of("1", "2", "3", "4").contains(partitionId));
+    } finally {
+      releaseFirstDatasetUpdate.countDown();
+      executorService.shutdownNow();
+    }
+  }
+
+  @Test
+  public void shouldNotSerializeConcurrentAutoAssignmentsAcrossManagerInstances() throws Exception {
+    // Current behavior is intentionally asserted here: synchronized manager RPCs only serialize
+    // updates within one ManagerApiGrpc instance. If cross-process coordination is added later,
+    // this test should be updated to reflect the new behavior.
+    ManagerApiServiceGrpc.ManagerApiServiceBlockingStub secondManagerApiStub =
+        createManagerApiStub(nextServerName("secondary-manager"), 2);
+    String firstDatasetName = "crossManagerDatasetA";
+    String secondDatasetName = "crossManagerDatasetB";
+    createPartitions(List.of("1", "2", "3", "4"));
+
+    managerApiStub.createDatasetMetadata(
+        ManagerApi.CreateDatasetMetadataRequest.newBuilder()
+            .setName(firstDatasetName)
+            .setOwner("owner")
+            .build());
+    managerApiStub.createDatasetMetadata(
+        ManagerApi.CreateDatasetMetadataRequest.newBuilder()
+            .setName(secondDatasetName)
+            .setOwner("owner")
+            .build());
+
+    CountDownLatch firstDatasetUpdateStarted = new CountDownLatch(1);
+    CountDownLatch releaseFirstDatasetUpdate = new CountDownLatch(1);
+    CountDownLatch secondDatasetUpdateStarted = new CountDownLatch(1);
+    doAnswer(
+            invocation -> {
+              DatasetMetadata updatedDatasetMetadata = invocation.getArgument(0);
+              if (updatedDatasetMetadata.getName().equals(firstDatasetName)) {
+                firstDatasetUpdateStarted.countDown();
+                if (!releaseFirstDatasetUpdate.await(5, TimeUnit.SECONDS)) {
+                  throw new AssertionError(
+                      "Timed out waiting to release first cross-manager update");
+                }
+              }
+              if (updatedDatasetMetadata.getName().equals(secondDatasetName)) {
+                secondDatasetUpdateStarted.countDown();
+              }
+              return invocation.callRealMethod();
+            })
+        .when(datasetMetadataStore)
+        .updateSync(any(DatasetMetadata.class));
+
+    ExecutorService executorService = Executors.newFixedThreadPool(2);
+    try {
+      Future<ManagerApi.UpdatePartitionAssignmentResponse> firstAssignment =
+          executorService.submit(
+              () ->
+                  managerApiStub.updatePartitionAssignment(
+                      ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
+                          .setName(firstDatasetName)
+                          .setThroughputBytes(100)
+                          .setRequireDedicatedPartition(true)
+                          .build()));
+      assertThat(firstDatasetUpdateStarted.await(5, TimeUnit.SECONDS)).isTrue();
+
+      Future<ManagerApi.UpdatePartitionAssignmentResponse> secondAssignment =
+          executorService.submit(
+              () ->
+                  secondManagerApiStub.updatePartitionAssignment(
+                      ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
+                          .setName(secondDatasetName)
+                          .setThroughputBytes(100)
+                          .setRequireDedicatedPartition(true)
+                          .build()));
+
+      assertThat(secondDatasetUpdateStarted.await(5, TimeUnit.SECONDS)).isTrue();
+      releaseFirstDatasetUpdate.countDown();
+
+      assertThat(firstAssignment.get(5, TimeUnit.SECONDS).getAssignedPartitionIdsList())
+          .containsExactly("1", "2");
+      assertThat(secondAssignment.get(5, TimeUnit.SECONDS).getAssignedPartitionIdsList())
+          .containsExactly("1", "2");
+    } finally {
+      releaseFirstDatasetUpdate.countDown();
+      executorService.shutdownNow();
+    }
+  }
+
+  @Test
+  public void shouldPreserveAndExplicitlyClearDedicatedPartitionRequirement() {
+    String datasetName = "preserveDedicatedRequirementDataset";
+    createPartitions(List.of("1", "2", "3"));
+    managerApiStub.createDatasetMetadata(
+        ManagerApi.CreateDatasetMetadataRequest.newBuilder()
+            .setName(datasetName)
+            .setOwner("owner")
+            .build());
+
+    ManagerApi.UpdatePartitionAssignmentResponse initialResponse =
+        managerApiStub.updatePartitionAssignment(
+            ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
+                .setName(datasetName)
+                .setThroughputBytes(100)
+                .setRequireDedicatedPartition(true)
+                .build());
+    assertThat(initialResponse.getAssignedPartitionIdsList()).containsExactly("1", "2");
+
+    AtomicReference<DatasetMetadata> datasetMetadata = new AtomicReference<>();
+    await()
+        .until(
+            () -> {
+              datasetMetadata.set(datasetMetadataStore.getSync(datasetName));
+              return datasetMetadata.get().isUsingDedicatedPartitions()
+                  && datasetMetadata.get().getActivePartitionMetadata().isPresent();
+            });
+
+    ManagerApi.UpdatePartitionAssignmentResponse preservedResponse =
+        managerApiStub.updatePartitionAssignment(
+            ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
+                .setName(datasetName)
+                .setThroughputBytes(80)
+                .build());
+    assertThat(preservedResponse.getAssignedPartitionIdsList()).containsExactly("1", "2");
+
+    await()
+        .until(
+            () -> {
+              datasetMetadata.set(datasetMetadataStore.getSync(datasetName));
+              return datasetMetadata.get().getThroughputBytes() == 80
+                  && datasetMetadata.get().isUsingDedicatedPartitions();
+            });
+    assertThat(datasetMetadata.get().getActivePartitionMetadata().orElseThrow().getPartitions())
+        .containsExactly("1", "2");
+
+    ManagerApi.UpdatePartitionAssignmentResponse clearedResponse =
+        managerApiStub.updatePartitionAssignment(
+            ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
+                .setName(datasetName)
+                .setThroughputBytes(80)
+                .setRequireDedicatedPartition(false)
+                .build());
+    assertThat(clearedResponse.getAssignedPartitionIdsList()).containsExactly("1", "2");
+
+    await()
+        .until(
+            () -> {
+              datasetMetadata.set(datasetMetadataStore.getSync(datasetName));
+              return !datasetMetadata.get().isUsingDedicatedPartitions();
+            });
+  }
+
+  @Test
+  public void shouldNotAutoAssignSharedDatasetToOtherDatasetDedicatedPartitions() {
+    String dedicatedDatasetName = "payments";
+    String sharedDatasetName = "search";
+    createPartitions(List.of("1", "2", "3", "4"));
+
+    managerApiStub.createDatasetMetadata(
+        ManagerApi.CreateDatasetMetadataRequest.newBuilder()
+            .setName(dedicatedDatasetName)
+            .setOwner("payments-team")
+            .build());
+    managerApiStub.updatePartitionAssignment(
+        ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
+            .setName(dedicatedDatasetName)
+            .setThroughputBytes(150)
+            .setRequireDedicatedPartition(true)
+            .build());
+    await()
+        .until(
+            () -> datasetMetadataStore.getSync(dedicatedDatasetName).isUsingDedicatedPartitions());
+
+    managerApiStub.createDatasetMetadata(
+        ManagerApi.CreateDatasetMetadataRequest.newBuilder()
+            .setName(sharedDatasetName)
+            .setOwner("search-team")
+            .build());
+    ManagerApi.UpdatePartitionAssignmentResponse sharedResponse =
+        managerApiStub.updatePartitionAssignment(
+            ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
+                .setName(sharedDatasetName)
+                .setThroughputBytes(100)
+                .build());
+
+    assertThat(sharedResponse.getAssignedPartitionIdsList()).containsExactly("3", "4");
+  }
+
+  @Test
+  public void shouldReturnFailedPreconditionWhenAutoAssignmentLacksPartitions() {
+    String datasetName = "notEnoughPartitionsDataset";
+    createPartition("1", 100);
+    managerApiStub.createDatasetMetadata(
+        ManagerApi.CreateDatasetMetadataRequest.newBuilder()
+            .setName(datasetName)
+            .setOwner("owner")
+            .build());
+
+    StatusRuntimeException throwable =
+        (StatusRuntimeException)
+            catchThrowable(
+                () ->
+                    managerApiStub.updatePartitionAssignment(
+                        ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
+                            .setName(datasetName)
+                            .setThroughputBytes(50)
+                            .build()));
+
+    assertThat(throwable.getStatus().getCode()).isEqualTo(Status.FAILED_PRECONDITION.getCode());
+    assertThat(throwable.getStatus().getDescription())
+        .contains("proposal not enough candidate partitions: needed 2, available 1: [1]");
+  }
+
+  @Test
+  public void shouldRejectDeletingReferencedPartition() {
+    String datasetName = "referencedPartitionDataset";
+    createPartition("7", 100);
+    createPartition("8", 100);
+    managerApiStub.createDatasetMetadata(
+        ManagerApi.CreateDatasetMetadataRequest.newBuilder()
+            .setName(datasetName)
+            .setOwner("owner")
+            .build());
+    managerApiStub.updatePartitionAssignment(
+        ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
+            .setName(datasetName)
+            .setThroughputBytes(50)
+            .addAllPartitionIds(List.of("7", "8"))
+            .build());
+    await()
+        .until(
+            () ->
+                datasetMetadataStore
+                    .getSync(datasetName)
+                    .getActivePartitionMetadata()
+                    .map(partitionMetadata -> partitionMetadata.getPartitions().contains("7"))
+                    .orElse(false));
+
+    StatusRuntimeException throwable =
+        (StatusRuntimeException)
+            catchThrowable(
+                () ->
+                    managerApiStub.deletePartition(
+                        ManagerApi.DeletePartitionRequest.newBuilder()
+                            .setPartitionId("7")
+                            .build()));
+
+    assertThat(throwable.getStatus().getCode()).isEqualTo(Status.FAILED_PRECONDITION.getCode());
+    assertThat(throwable.getStatus().getDescription())
+        .contains("Partition with id '7' is still referenced");
+  }
+
+  @Test
+  public void shouldRejectDeletingPartitionWithNonNumericId() {
+    StatusRuntimeException throwable =
+        (StatusRuntimeException)
+            catchThrowable(
+                () ->
+                    managerApiStub.deletePartition(
+                        ManagerApi.DeletePartitionRequest.newBuilder()
+                            .setPartitionId("partition-a")
+                            .build()));
+
+    assertThat(throwable.getStatus().getCode()).isEqualTo(Status.INVALID_ARGUMENT.getCode());
+    assertThat(throwable.getStatus().getDescription())
+        .contains("Partition ID must be a canonical non-negative integer: partition-a");
+  }
+
+  @Test
   public void shouldErrorUpdatingPartitionAssignmentNonexistentDataset() {
     String datasetName = "testDataset";
     List<String> partitionList = List.of("1", "2");
@@ -491,7 +1448,7 @@ public class ManagerApiGrpcTest {
                     managerApiStub.updatePartitionAssignment(
                         ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
                             .setName(datasetName)
-                            .setThroughputBytes(-1)
+                            .setThroughputBytes(0)
                             .addAllPartitionIds(partitionList)
                             .build()));
     assertThat(throwable1.getStatus().getCode()).isEqualTo(Status.UNKNOWN.getCode());
@@ -551,6 +1508,92 @@ public class ManagerApiGrpcTest {
   }
 
   @Test
+  public void shouldRejectNegativeThroughputValues() {
+    String datasetName = "negativeThroughputDataset";
+    managerApiStub.createDatasetMetadata(
+        ManagerApi.CreateDatasetMetadataRequest.newBuilder()
+            .setName(datasetName)
+            .setOwner("owner")
+            .build());
+    createPartitions(List.of("1", "2"));
+
+    StatusRuntimeException throwable =
+        (StatusRuntimeException)
+            catchThrowable(
+                () ->
+                    managerApiStub.updatePartitionAssignment(
+                        ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
+                            .setName(datasetName)
+                            .setThroughputBytes(-2)
+                            .addAllPartitionIds(List.of("1", "2"))
+                            .build()));
+
+    assertThat(throwable.getStatus().getCode()).isEqualTo(Status.INVALID_ARGUMENT.getCode());
+    assertThat(throwable.getStatus().getDescription())
+        .contains("throughputBytes must be non-negative, got -2");
+  }
+
+  @Test
+  public void shouldTreatOmittedThroughputAsZero() {
+    String datasetName = "defaultThroughputDataset";
+    managerApiStub.createDatasetMetadata(
+        ManagerApi.CreateDatasetMetadataRequest.newBuilder()
+            .setName(datasetName)
+            .setOwner("owner")
+            .build());
+    createPartitions(List.of("1", "2"));
+
+    managerApiStub.updatePartitionAssignment(
+        ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
+            .setName(datasetName)
+            .addAllPartitionIds(List.of("1", "2"))
+            .build());
+
+    AtomicReference<Metadata.DatasetMetadata> assignment = new AtomicReference<>();
+    await()
+        .until(
+            () -> {
+              assignment.set(
+                  managerApiStub.getDatasetMetadata(
+                      ManagerApi.GetDatasetMetadataRequest.newBuilder()
+                          .setName(datasetName)
+                          .build()));
+              return assignment.get().getPartitionConfigsList().size() == 1;
+            });
+
+    assertThat(assignment.get().getThroughputBytes()).isZero();
+    assertThat(assignment.get().getPartitionConfigsList().get(0).getPartitionsList())
+        .isEqualTo(List.of("1", "2"));
+  }
+
+  @Test
+  public void shouldRejectManualAssignmentWithInvalidPartitionIds() {
+    String datasetName = "manualNonNumericPartitionDataset";
+    managerApiStub.createDatasetMetadata(
+        ManagerApi.CreateDatasetMetadataRequest.newBuilder()
+            .setName(datasetName)
+            .setOwner("owner")
+            .build());
+    createPartition("1", 100);
+
+    StatusRuntimeException throwable =
+        (StatusRuntimeException)
+            catchThrowable(
+                () ->
+                    managerApiStub.updatePartitionAssignment(
+                        ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
+                            .setName(datasetName)
+                            .setThroughputBytes(50)
+                            .addAllPartitionIds(List.of("1", "01", "partition-a"))
+                            .build()));
+
+    assertThat(throwable.getStatus().getCode()).isEqualTo(Status.INVALID_ARGUMENT.getCode());
+    assertThat(throwable.getStatus().getDescription())
+        .contains(
+            "Requested partition IDs must be canonical non-negative integers: [01, partition-a]");
+  }
+
+  @Test
   public void shouldDeleteDatasetWithMultipleDatasetsAndUnrelatedSnapshots() {
     String datasetNameToDelete = "datasetToDelete";
     String datasetNameWithSnapshots = "datasetWithSnapshots";
@@ -572,22 +1615,24 @@ public class ManagerApiGrpcTest {
             .setOwner("ownerNoPartitions")
             .build());
 
+    createPartitions(List.of("1", "2", "3", "4"));
+
     managerApiStub.updatePartitionAssignment(
         ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
             .setName(datasetNameToDelete)
             .setThroughputBytes(100)
-            .addAllPartitionIds(List.of("delete-1", "delete-2"))
+            .addAllPartitionIds(List.of("1", "2"))
             .build());
     managerApiStub.updatePartitionAssignment(
         ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
             .setName(datasetNameWithSnapshots)
             .setThroughputBytes(200)
-            .addAllPartitionIds(List.of("snapshot-1"))
+            .addAllPartitionIds(List.of("3", "4"))
             .build());
 
     long nowMs = Instant.now().toEpochMilli();
     snapshotMetadataStore.createSync(
-        new SnapshotMetadata("snapshot-a", nowMs, nowMs + 1, 0, "snapshot-1", 123));
+        new SnapshotMetadata("snapshot-a", nowMs, nowMs + 1, 0, "3", 123));
     await().until(() -> snapshotMetadataStore.listSync().size() == 1);
 
     Metadata.DatasetMetadata deletedDataset =
@@ -707,26 +1752,28 @@ public class ManagerApiGrpcTest {
             .setOwner("ownerOther")
             .build());
 
+    createPartitions(List.of("1", "2", "3", "4"));
+
     managerApiStub.updatePartitionAssignment(
         ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
             .setName(datasetNameToDelete)
-            .setThroughputBytes(300)
-            .addAllPartitionIds(List.of("referenced-1", "referenced-2"))
+            .setThroughputBytes(200)
+            .addAllPartitionIds(List.of("1", "2"))
             .build());
     managerApiStub.updatePartitionAssignment(
         ManagerApi.UpdatePartitionAssignmentRequest.newBuilder()
             .setName(otherDatasetName)
-            .setThroughputBytes(400)
-            .addAllPartitionIds(List.of("other-1"))
+            .setThroughputBytes(200)
+            .addAllPartitionIds(List.of("3", "4"))
             .build());
 
     long nowMs = Instant.now().toEpochMilli();
     snapshotMetadataStore.createSync(
-        new SnapshotMetadata("snapshot-1", nowMs, nowMs + 1, 0, "referenced-1", 111));
+        new SnapshotMetadata("snapshot-1", nowMs, nowMs + 1, 0, "1", 111));
     snapshotMetadataStore.createSync(
-        new SnapshotMetadata("snapshot-2", nowMs, nowMs + 1, 0, "referenced-2", 222));
+        new SnapshotMetadata("snapshot-2", nowMs, nowMs + 1, 0, "2", 222));
     snapshotMetadataStore.createSync(
-        new SnapshotMetadata("snapshot-3", nowMs, nowMs + 1, 0, "other-1", 333));
+        new SnapshotMetadata("snapshot-3", nowMs, nowMs + 1, 0, "3", 333));
     await().until(() -> snapshotMetadataStore.listSync().size() == 3);
 
     StatusRuntimeException deleteDatasetError =
@@ -759,7 +1806,7 @@ public class ManagerApiGrpcTest {
     // this test should be updated to expect successful deletion.
     String datasetNameToDelete = "datasetWithReassignedPartition";
     String otherDatasetName = "datasetWithCurrentPartitionOwner";
-    String reassignedPartitionId = "shared-partition";
+    String reassignedPartitionId = "7";
 
     datasetMetadataStore.createSync(
         new DatasetMetadata(
@@ -859,36 +1906,36 @@ public class ManagerApiGrpcTest {
     long end = startTime + 10;
 
     SnapshotMetadata overlapsStartTimeIncluded =
-        new SnapshotMetadata("a", startTime, startTime + 6, 0, "a", 0);
+        new SnapshotMetadata("a", startTime, startTime + 6, 0, "1", 0);
     SnapshotMetadata overlapsStartTimeExcluded =
-        new SnapshotMetadata("b", startTime, startTime + 6, 0, "b", 0);
+        new SnapshotMetadata("b", startTime, startTime + 6, 0, "2", 0);
 
     SnapshotMetadata fullyOverlapsStartEndTimeIncluded =
-        new SnapshotMetadata("c", startTime + 4, startTime + 11, 0, "a", 0);
+        new SnapshotMetadata("c", startTime + 4, startTime + 11, 0, "1", 0);
     SnapshotMetadata fullyOverlapsStartEndTimeExcluded =
-        new SnapshotMetadata("d", startTime + 4, startTime + 11, 0, "b", 0);
+        new SnapshotMetadata("d", startTime + 4, startTime + 11, 0, "2", 0);
 
     SnapshotMetadata partiallyOverlapsStartEndTimeIncluded =
-        new SnapshotMetadata("e", startTime + 4, startTime + 5, 0, "a", 0);
+        new SnapshotMetadata("e", startTime + 4, startTime + 5, 0, "1", 0);
     SnapshotMetadata partiallyOverlapsStartEndTimeExcluded =
-        new SnapshotMetadata("f", startTime + 4, startTime + 5, 0, "b", 0);
+        new SnapshotMetadata("f", startTime + 4, startTime + 5, 0, "2", 0);
 
     SnapshotMetadata overlapsEndTimeIncluded =
-        new SnapshotMetadata("g", startTime + 10, startTime + 15, 0, "a", 0);
+        new SnapshotMetadata("g", startTime + 10, startTime + 15, 0, "1", 0);
     SnapshotMetadata overlapsEndTimeExcluded =
-        new SnapshotMetadata("h", startTime + 10, startTime + 15, 0, "b", 0);
+        new SnapshotMetadata("h", startTime + 10, startTime + 15, 0, "2", 0);
 
     SnapshotMetadata notWithinStartEndTimeExcluded1 =
-        new SnapshotMetadata("i", startTime, startTime + 4, 0, "a", 0);
+        new SnapshotMetadata("i", startTime, startTime + 4, 0, "1", 0);
     SnapshotMetadata notWithinStartEndTimeExcluded2 =
-        new SnapshotMetadata("j", startTime + 11, startTime + 15, 0, "a", 0);
+        new SnapshotMetadata("j", startTime + 11, startTime + 15, 0, "1", 0);
 
     DatasetMetadata datasetWithDataInPartitionA =
         new DatasetMetadata(
             "foo",
             "a",
             1,
-            List.of(new DatasetPartitionMetadata(startTime + 5, startTime + 6, List.of("a"))),
+            List.of(new DatasetPartitionMetadata(startTime + 5, startTime + 6, List.of("1"))),
             "fooService");
 
     datasetMetadataStore.createSync(datasetWithDataInPartitionA);
@@ -925,15 +1972,50 @@ public class ManagerApiGrpcTest {
   }
 
   @Test
+  public void shouldResolveHistoricalSnapshotsWithoutPartitionCatalogEntries() {
+    long queryStartTime = 1000;
+    long queryEndTime = 2000;
+    String datasetName = "historicalDataset";
+    String historicalPartitionId = "42";
+    SnapshotMetadata historicalSnapshot =
+        new SnapshotMetadata("historical-snapshot", 1200, 1300, 0, historicalPartitionId, 111);
+
+    datasetMetadataStore.createSync(
+        new DatasetMetadata(
+            datasetName,
+            "owner",
+            100,
+            List.of(
+                new DatasetPartitionMetadata(
+                    queryStartTime, MAX_TIME, List.of(historicalPartitionId))),
+            datasetName));
+    snapshotMetadataStore.createSync(historicalSnapshot);
+
+    await().until(() -> datasetMetadataStore.listSync().size() == 1);
+    await().until(() -> snapshotMetadataStore.listSync().size() == 1);
+    assertThat(partitionMetadataStore.listSync()).isEmpty();
+
+    List<SnapshotMetadata> snapshotsWithData =
+        ManagerApiGrpc.calculateRequiredSnapshots(
+            snapshotMetadataStore.listSync(),
+            datasetMetadataStore,
+            queryStartTime,
+            queryEndTime,
+            datasetName);
+
+    assertThat(snapshotsWithData).containsExactly(historicalSnapshot);
+  }
+
+  @Test
   public void shouldRestoreReplicaSinglePartition() {
     long startTime = Instant.now().toEpochMilli();
     long start = startTime + 5;
     long end = startTime + 10;
 
     SnapshotMetadata snapshotIncluded =
-        new SnapshotMetadata("g", startTime + 10, startTime + 15, 0, "a", 0);
+        new SnapshotMetadata("g", startTime + 10, startTime + 15, 0, "1", 0);
     SnapshotMetadata snapshotExcluded =
-        new SnapshotMetadata("h", startTime + 10, startTime + 15, 0, "b", 0);
+        new SnapshotMetadata("h", startTime + 10, startTime + 15, 0, "2", 0);
 
     snapshotMetadataStore.createSync(snapshotIncluded);
     snapshotMetadataStore.createSync(snapshotExcluded);
@@ -943,7 +2025,7 @@ public class ManagerApiGrpcTest {
             "foo",
             "a",
             1,
-            List.of(new DatasetPartitionMetadata(startTime + 5, startTime + 6, List.of("a"))),
+            List.of(new DatasetPartitionMetadata(startTime + 5, startTime + 6, List.of("1"))),
             "fooService");
 
     datasetMetadataStore.createSync(serviceWithDataInPartitionA);
@@ -973,11 +2055,11 @@ public class ManagerApiGrpcTest {
     long end = startTime + 10;
 
     SnapshotMetadata snapshotIncluded =
-        new SnapshotMetadata("a", startTime + 10, startTime + 15, 0, "a", 0);
+        new SnapshotMetadata("a", startTime + 10, startTime + 15, 0, "1", 0);
     SnapshotMetadata snapshotIncluded2 =
-        new SnapshotMetadata("b", startTime + 10, startTime + 15, 0, "b", 0);
+        new SnapshotMetadata("b", startTime + 10, startTime + 15, 0, "2", 0);
     SnapshotMetadata snapshotExcluded =
-        new SnapshotMetadata("c", startTime + 10, startTime + 15, 0, "c", 0);
+        new SnapshotMetadata("c", startTime + 10, startTime + 15, 0, "3", 0);
 
     snapshotMetadataStore.createSync(snapshotIncluded);
     snapshotMetadataStore.createSync(snapshotIncluded2);
@@ -988,7 +2070,7 @@ public class ManagerApiGrpcTest {
             "foo",
             "a",
             1,
-            List.of(new DatasetPartitionMetadata(startTime + 5, startTime + 6, List.of("a", "b"))),
+            List.of(new DatasetPartitionMetadata(startTime + 5, startTime + 6, List.of("1", "2"))),
             "fooService");
 
     datasetMetadataStore.createSync(serviceWithDataInPartitionA);
@@ -1020,11 +2102,11 @@ public class ManagerApiGrpcTest {
     long startTime = Instant.now().toEpochMilli();
 
     SnapshotMetadata snapshotFoo =
-        new SnapshotMetadata("foo", startTime + 10, startTime + 15, 0, "a", 0);
+        new SnapshotMetadata("foo", startTime + 10, startTime + 15, 0, "1", 0);
     SnapshotMetadata snapshotBar =
-        new SnapshotMetadata("bar", startTime + 10, startTime + 15, 0, "b", 0);
+        new SnapshotMetadata("bar", startTime + 10, startTime + 15, 0, "2", 0);
     SnapshotMetadata snapshotBaz =
-        new SnapshotMetadata("baz", startTime + 10, startTime + 15, 0, "c", 0);
+        new SnapshotMetadata("baz", startTime + 10, startTime + 15, 0, "3", 0);
 
     snapshotMetadataStore.createSync(snapshotFoo);
     snapshotMetadataStore.createSync(snapshotBar);
@@ -1281,5 +2363,12 @@ public class ManagerApiGrpcTest {
 
     assertThat(AstraMetadataTestUtils.listSyncUncached(fieldRedactionMetadataStore).size())
         .isEqualTo(0);
+  }
+
+  private static Map<String, ManagerApi.LivePartitionState> livePartitionStateById(
+      ManagerApi.ListPartitionMetadataResponse response) {
+    return response.getPartitionMetadataList().stream()
+        .collect(
+            Collectors.toMap(ManagerApi.LivePartitionState::getPartitionId, Function.identity()));
   }
 }

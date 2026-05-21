@@ -73,6 +73,8 @@ managerConfig:
   serverConfig:
     serverPort: 8083
     serverAddress: localhost
+  partitionAssignmentConfig:
+    minNumberOfPartitions: 2
   replicaCreationServiceConfig:
     schedulePeriodMins: 15
     replicaLifespanMins: 1440

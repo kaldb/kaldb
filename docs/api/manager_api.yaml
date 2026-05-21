@@ -195,9 +195,9 @@ paths:
       tags:
         - ManagerApiService
       description: |-
-        UpdatePartitionAssignment allocates a new partition assignment for a dataset. If a rate and a list of
-         partition_ids are provided, it will use it use the list of partition ids as the current allocation
-         and invalidates the existing assignment.
+        UpdatePartitionAssignment records an explicit partition assignment when partitionIds is
+         non-empty. If partitionIds is empty, the manager automatically assigns partitions from the
+         partition catalog using throughput, minimum partition count, and dedication mode.
       operationId: ManagerApiService_UpdatePartitionAssignment
       parameters:
         - name: name
@@ -207,16 +207,21 @@ paths:
             type: string
         - name: throughputBytes
           in: query
-          description: Optional maximum throughput of the dataset - if set to -1 the existing value will not be updated
+          description: Dataset throughput in bytes. Clients should always set it. Zero is valid, negative values are rejected, and omitted proto3 fields are observed as 0 by the server.
           schema:
             type: string
         - name: partitionIds
           in: query
-          description: Optional desired partition IDs - if empty will be automatically assigned
+          description: Optional desired numeric partition IDs - if empty will be automatically assigned
           schema:
             type: array
             items:
               type: string
+        - name: requireDedicatedPartition
+          in: query
+          description: Optional dedicated-partition override. If omitted, the existing dataset mode is preserved. New datasets default to shared partitions.
+          schema:
+            type: boolean
       responses:
         "200":
           description: OK
@@ -224,6 +229,83 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/UpdatePartitionAssignmentResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /slack.proto.astra.ManagerApiService/CreatePartition:
+    post:
+      summary: CreatePartition
+      tags:
+        - ManagerApiService
+      description: CreatePartition adds a new entry to the partition catalog.
+      operationId: ManagerApiService_CreatePartition
+      parameters:
+        - name: partitionId
+          in: query
+          description: Numeric-only partition identifier
+          schema:
+            type: string
+        - name: maxCapacity
+          in: query
+          description: Maximum provisionable throughput for this partition, in bytes per second. Required and must be greater than 0. Used as a hard capacity limit during assignment planning and validation.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartitionMetadata'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /slack.proto.astra.ManagerApiService/DeletePartition:
+    post:
+      summary: DeletePartition
+      tags:
+        - ManagerApiService
+      description: DeletePartition removes a partition from the partition catalog if it is no longer referenced by any dataset assignment history.
+      operationId: ManagerApiService_DeletePartition
+      parameters:
+        - name: partitionId
+          in: query
+          description: Numeric-only partition identifier
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeletePartitionResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /slack.proto.astra.ManagerApiService/ListPartitionMetadata:
+    post:
+      summary: ListPartitionMetadata
+      tags:
+        - ManagerApiService
+      description: ListPartitionMetadata returns the current calculated partition view, including max capacity, provisioned capacity, and occupancy.
+      operationId: ManagerApiService_ListPartitionMetadata
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListPartitionMetadataResponse'
         default:
           description: Default error response
           content:
@@ -252,6 +334,9 @@ components:
         serviceNamePattern:
           type: string
           description: either same as name or a special value _all or * which matches all services
+        usingDedicatedPartitions:
+          type: boolean
+          description: True if this dataset requires dedicated partitions when auto assigning. This field may be omitted from JSON responses when false.
       description: Describes ownership, throughput, and partition mapping for a given dataset
     DatasetPartitionMetadata:
       type: object
@@ -313,5 +398,72 @@ components:
             type: string
           description: The assigned partition IDs
       description: UpdatePartitionAssignmentResponse represents the response after assigning a new set of partitions
+    PartitionMetadata:
+      type: object
+      properties:
+        partitionId:
+          type: string
+          description: Numeric-only partition identifier; allocator ordering compares this as an integer
+        maxCapacity:
+          type: string
+          description: Maximum provisionable throughput for this partition, in bytes per second. Used as a hard capacity limit during assignment planning and validation.
+      description: PartitionMetadata describes an assignable partition and its maximum provisionable throughput
+    DeletePartitionResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          description: Human-readable success message returned after the partition is removed.
+      description: DeletePartitionResponse represents the response after removing a partition from the catalog
+    ListPartitionMetadataResponse:
+      type: object
+      properties:
+        partitionMetadata:
+          type: array
+          items:
+            $ref: '#/components/schemas/LivePartitionState'
+          description: Calculated live capacity and occupancy state for each partition in the catalog.
+      description: ListPartitionMetadataResponse represents the calculated live partition view
+    LivePartitionState:
+      type: object
+      properties:
+        partitionId:
+          type: string
+          description: Numeric-only partition identifier.
+        maxCapacity:
+          type: string
+          description: Maximum provisionable throughput for this partition, in bytes per second. Used as a hard capacity limit during assignment planning and validation.
+        provisionedCapacity:
+          type: string
+          description: Sum of the active datasets' per-partition throughput currently assigned to this partition, in bytes per second. This field may be omitted from JSON responses when the value is 0.
+        empty:
+          $ref: '#/components/schemas/EmptyPartitionOccupancy'
+          description: Indicates that no dataset currently uses this partition.
+        shared:
+          $ref: '#/components/schemas/SharedPartitionOccupancy'
+          description: Indicates that multiple shared datasets currently use this partition.
+        dedicated:
+          $ref: '#/components/schemas/DedicatedPartitionOccupancy'
+          description: Indicates that exactly one dataset exclusively uses this partition.
+      description: LivePartitionState describes the current calculated capacity and occupancy for one partition
+    EmptyPartitionOccupancy:
+      type: object
+      description: EmptyPartitionOccupancy indicates that no dataset currently uses the partition
+    SharedPartitionOccupancy:
+      type: object
+      properties:
+        datasets:
+          type: array
+          items:
+            type: string
+          description: Dataset names currently sharing this partition.
+      description: SharedPartitionOccupancy lists the datasets currently sharing the partition
+    DedicatedPartitionOccupancy:
+      type: object
+      properties:
+        dataset:
+          type: string
+          description: Dataset name that exclusively uses this partition.
+      description: DedicatedPartitionOccupancy names the dataset that exclusively uses the partition
 tags:
   - name: ManagerApiService
