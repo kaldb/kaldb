@@ -1278,15 +1278,38 @@ def search(base_url: str, index: str, query: dict[str, Any]) -> Response:
     return request("POST", f"{base_url}/{index}/_search", query)
 
 
+def write_response_file(out_dir: str, query_id: str, backend: str, response: Response) -> None:
+    """Persist one backend's response for a query: HTTP status, raw body, and the
+    normalized form used for the diff. One file per backend so the pair is easy to
+    diff directly (e.g. `diff out/Q18.opensearch.json out/Q18.astra.json`)."""
+    path = Path(out_dir) / f"{query_id}.{backend}.json"
+    path.write_text(
+        json.dumps(
+            {
+                "query_id": query_id,
+                "backend": backend,
+                "status": response.status,
+                "body": response.body,
+                "normalized": normalize(response.body),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+
+
 def compare(
     open_search_url: str,
     astra_url: str | None,
     index: str,
     run_id: str,
     verbose: bool = False,
+    out_dir: str | None = None,
 ) -> int:
     failures = 0
     results: list[tuple[str, str, int | None, int | None]] = []
+    if out_dir is not None:
+        Path(out_dir).mkdir(parents=True, exist_ok=True)
     for clickbench_query in benchmark_queries(run_id):
         print(f"\n== {clickbench_query.query_id} ==")
         print(clickbench_query.sql)
@@ -1294,6 +1317,8 @@ def compare(
         os_response = search(open_search_url, index, clickbench_query.dsl)
         os_normalized = normalize(os_response.body)
         print(f"opensearch status={os_response.status}")
+        if out_dir is not None:
+            write_response_file(out_dir, clickbench_query.query_id, "opensearch", os_response)
 
         if astra_url is None:
             if os_response.status != 200:
@@ -1305,6 +1330,8 @@ def compare(
 
         astra_response = search(astra_url.rstrip("/"), index, clickbench_query.dsl)
         astra_normalized = normalize(astra_response.body)
+        if out_dir is not None:
+            write_response_file(out_dir, clickbench_query.query_id, "astra", astra_response)
         # A non-200 from either side is a failure even if the bodies happen to
         # match (e.g. both error) — an error pair must never read as green.
         is_match = (
@@ -1338,6 +1365,8 @@ def compare(
             print(json.dumps(astra_normalized, indent=2, sort_keys=True))
 
     print("\n== summary ==")
+    if out_dir is not None:
+        print(f"per-backend responses written to {out_dir}/<Qn>.opensearch.json and <Qn>.astra.json")
     matches = sum(1 for _, status, _, _ in results if status == "match")
     print(f"matches={matches} failures={failures} total={len(results)}")
     for query_id, status, os_status, astra_status in results:
@@ -1389,6 +1418,12 @@ def main() -> int:
         action="store_true",
         help="Print each backend's normalized response for every query, not just on mismatch.",
     )
+    parser.add_argument(
+        "--out-dir",
+        default=None,
+        help="Write each backend's full response (status + raw body + normalized) to "
+        "<out-dir>/<Qn>.opensearch.json and <Qn>.astra.json, one file per backend per query.",
+    )
     args = parser.parse_args()
 
     started_container = False
@@ -1407,7 +1442,9 @@ def main() -> int:
             args.astra_url = args.astra_url or DEFAULT_ASTRA_QUERY_URL
             astra_url = start_and_load_astra(args, docs)
 
-        failures = compare(open_search_url, astra_url, args.index, args.run_id, args.verbose)
+        failures = compare(
+            open_search_url, astra_url, args.index, args.run_id, args.verbose, args.out_dir
+        )
         return 1 if failures else 0
     finally:
         if started_container and not args.keep_container:
