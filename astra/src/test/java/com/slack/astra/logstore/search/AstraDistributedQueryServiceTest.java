@@ -1574,6 +1574,89 @@ public class AstraDistributedQueryServiceTest {
     distributedQueryService.close();
   }
 
+  @Test
+  public void testDistributedSearchSupportsScriptedMultiTermsWithValueTypeHint() throws Exception {
+    Instant start = Instant.parse("2026-05-18T05:53:00Z");
+    Instant node1End = start.plusSeconds(10);
+    Instant node2Start = node1End.plusMillis(1);
+    Instant end = node2Start.plusSeconds(10);
+
+    datasetMetadataStore.createSync(
+        new DatasetMetadata(
+            MessageUtil.TEST_DATASET_NAME,
+            "testOwner",
+            1,
+            List.of(
+                new DatasetPartitionMetadata(
+                    start.toEpochMilli(), end.toEpochMilli(), List.of("1", "2"))),
+            MessageUtil.TEST_DATASET_NAME));
+    await().until(() -> AstraMetadataTestUtils.listSyncUncached(datasetMetadataStore).size() == 1);
+
+    createIndexerZKMetadata(start, node1End, "1", indexer1SearchContext);
+    createIndexerZKMetadata(node2Start, end, "2", indexer2SearchContext);
+    await().until(() -> AstraMetadataTestUtils.listSyncUncached(snapshotMetadataStore).size() == 4);
+    await().until(() -> AstraMetadataTestUtils.listSyncUncached(searchMetadataStore).size() == 2);
+
+    List<Trace.Span> node1Spans =
+        List.of(makeScriptedMultiTermsSpan(1, start.plusSeconds(1), 100001L, "alpha"));
+    List<Trace.Span> node2Spans =
+        List.of(
+            makeScriptedMultiTermsSpan(2, node2Start.plusSeconds(1), 100001L, "alpha"),
+            makeScriptedMultiTermsSpan(3, node2Start.plusSeconds(2), 100002L, "beta"));
+
+    AstraDistributedQueryService distributedQueryService = createDistributedQueryService();
+    distributedQueryService.stubs.put(
+        indexer1SearchContext.toString(), mockSearchFutureStub(node1Spans));
+    distributedQueryService.stubs.put(
+        indexer2SearchContext.toString(), mockSearchFutureStub(node2Spans));
+
+    AstraSearch.SearchRequest request =
+        new OpenSearchRequest()
+            .parseSingleSearchRequest(
+                MessageUtil.TEST_DATASET_NAME,
+                """
+                {
+                  "size": 0,
+                  "aggs": {
+                    "groups": {
+                      "multi_terms": {
+                        "terms": [
+                          {
+                            "field": "UserID"
+                          },
+                          {
+                            "script": {
+                              "source": "doc['EventTime'].value.getMinute()"
+                            },
+                            "value_type": "long"
+                          },
+                          {
+                            "field": "SearchPhrase"
+                          }
+                        ],
+                        "size": 10,
+                        "order": {
+                          "_count": "desc"
+                        }
+                      }
+                    }
+                  }
+                }
+                """);
+
+    InternalAggregations aggregations =
+        SearchResultUtils.fromSearchResultProto(distributedQueryService.doSearch(request))
+            .internalAggregations;
+    InternalMultiTerms groups = (InternalMultiTerms) aggregations.get("groups");
+
+    assertThat(groups.getBuckets()).hasSize(2);
+    assertThat(groups.getBuckets().get(0).getKey()).containsExactly(100001L, 53L, "alpha");
+    assertThat(groups.getBuckets().get(0).getDocCount()).isEqualTo(2);
+    assertThat(groups.getBuckets().get(1).getKey()).containsExactly(100002L, 53L, "beta");
+    assertThat(groups.getBuckets().get(1).getDocCount()).isEqualTo(1);
+    distributedQueryService.close();
+  }
+
   private String createIndexerZKMetadata(
       Instant chunkCreationTime,
       Instant chunkEndTime,
@@ -1760,4 +1843,30 @@ public class AstraDistributedQueryServiceTest {
                 .build()));
   }
 
+  private Trace.Span makeScriptedMultiTermsSpan(
+      int id, Instant eventTime, long userId, String searchPhrase) {
+    return SpanUtil.makeSpan(
+        id,
+        "scripted-multi-terms-" + id,
+        eventTime,
+        List.of(
+            Trace.KeyValue.newBuilder()
+                .setKey("UserID")
+                .setFieldType(Schema.SchemaFieldType.LONG)
+                .setVInt64(userId)
+                .build(),
+            Trace.KeyValue.newBuilder()
+                .setKey("EventTime")
+                .setFieldType(Schema.SchemaFieldType.DATE)
+                .setVDate(
+                    com.google.protobuf.Timestamp.newBuilder()
+                        .setSeconds(eventTime.getEpochSecond())
+                        .setNanos(eventTime.getNano()))
+                .build(),
+            Trace.KeyValue.newBuilder()
+                .setKey("SearchPhrase")
+                .setFieldType(Schema.SchemaFieldType.KEYWORD)
+                .setVStr(searchPhrase)
+                .build()));
+  }
 }
