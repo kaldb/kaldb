@@ -2,7 +2,7 @@
 
 ## Status
 
-Current state: `Draft`
+Current state: `Accepted`
 
 Discussion thread: `n/a`
 
@@ -84,49 +84,43 @@ sort list, so it cannot implement this response window correctly.
 - `size` is the number of hits to return. If omitted, it keeps the current
   default of `10`.
 - If `sort` is omitted, hits are returned by timestamp descending.
-- The first supported explicit sort fields should include `@timestamp` and
-  `_timesinceepoch`, in ascending or descending order.
+- Supported explicit sort fields include `@timestamp`, `_timesinceepoch`, and
+  schema fields that are stored with Lucene doc values and map cleanly to a
+  Lucene `SortField` type.
 - Unsupported sort fields or sort options should fail with a clear user-facing
   error instead of being silently ignored.
-- The internal gRPC `SearchRequest` and `SearchQuery` representations need to
-  carry hit offset and hit sort information.
+- The internal gRPC `SearchRequest` and `SearchQuery` representations carry hit
+  offset and hit sort information.
 
 ## Proposed Changes
 
 ### Summary
 
 Represent root hit pagination and hit sorting explicitly in KalDB's internal
-search request, collect enough sorted hits on each worker, and apply the final
-offset and limit after distributed hit merge.
+search request, collect enough sorted hits on each worker, merge hits globally
+using the same sort comparator, and apply the final offset and limit after
+distributed hit merge.
 
 ### Detailed Design
 
-The implementation should add internal request fields for:
+`OpenSearchRequest` parses root `from`, `size`, and `sort` from the request
+body. `size` continues to map to the existing `how_many` request field. `from`
+is carried as `start_from`, and the requested sort is carried as serialized
+sort JSON that is parsed into `SearchQuery.SortFieldSpec` records.
 
-- `hit_from`: the zero-based hit offset.
-- `hit_size`: the number of hits requested.
-- `hit_sort`: the ordered list of hit sort keys.
+`SearchQuery` carries the parsed offset, size, and ordered sort list. It
+validates that `from >= 0`, `size >= 0`, and `from + size` fits in an integer.
+If the client omits `sort`, `SearchQuery` preserves KalDB's existing default:
+`_timesinceepoch` descending.
 
-The current `how_many` field can either be renamed in a compatibility-aware way
-or treated as `hit_size` while adding new fields for offset and sort. Any proto
-change must reserve old field numbers correctly and preserve compatibility for
-existing callers.
-
-`OpenSearchRequest` should parse root `from`, `size`, and `sort` from the
-request body. It should translate supported sort entries into the internal
-request form and reject unsupported sort entries.
-
-`SearchQuery` should carry the parsed offset, size, and sort list. It should
-validate that `from >= 0` and `size >= 0`.
-
-`LogIndexSearcherImpl` should build the Lucene `Sort` from the requested sort
-list instead of always constructing:
+`LogIndexSearcherImpl` builds the Lucene `Sort` from the requested sort list
+instead of always constructing:
 
 ```java
 new SortField("_timesinceepoch", SortField.Type.LONG, true)
 ```
 
-Workers should collect `from + size` hits, not just `size` hits. That is
+Workers collect `from + size` hits, not just `size` hits. That is
 required for distributed correctness. A hit that belongs on the final page may
 be ranked after the first `size` hits on its worker.
 
@@ -143,28 +137,42 @@ each worker should return up to `30` sorted candidates. The final query node
 then merges all worker candidates, skips the first `20`, and returns the next
 `10`.
 
-`SearchResultAggregatorImpl` should merge hits using the requested sort order,
-then apply:
+`SearchResultAggregatorImpl` merges hits using the requested sort order, then
+applies:
 
 ```text
 skip(from)
 limit(size)
 ```
 
-The final merge should use a stable tie-breaker so distributed results are
-deterministic when multiple hits have the same sort values. A practical
-tie-breaker is the document timestamp followed by a stable identifier such as
-the log message ID, provided the selected tie-breaker is available in all
-returned hits.
+The final merge uses a deterministic tie-breaker when multiple hits have the
+same requested sort values. The implemented comparator falls back to timestamp
+descending and then log message ID.
+
+`SearchResponseHit` serializes the sort values corresponding to the requested
+sort fields. This mirrors OpenSearch's response shape for sorted hit queries
+and lets clients inspect the values that determined each hit's position.
 
 ### Supported Sort Scope
 
-The initial implementation should keep the supported surface intentionally
-small:
+The implementation supports an ordered list of sort fields. Multi-key sort is
+lexicographic: KalDB compares the first requested field, then the second if the
+first is equal, and so on before applying the internal tie-breaker.
+
+Supported sort fields:
 
 - `@timestamp` ascending and descending.
 - `_timesinceepoch` ascending and descending.
-- Multi-key sort only after compatibility tests define the expected behavior.
+- Schema fields stored with doc values whose field type maps to a Lucene
+  `SortField` type:
+  - date, long, and scaled long as `LONG`;
+  - boolean, integer, short, and byte as `INT`;
+  - float as `FLOAT`;
+  - double as `DOUBLE`;
+  - keyword, string, ID, and IP as `STRING`.
+
+Unsupported fields are rejected instead of silently ignored. Fields without doc
+values are rejected because Lucene cannot sort hits by them through this path.
 
 The following should remain out of scope for the first implementation unless
 compatibility tests require them:
@@ -176,8 +184,22 @@ compatibility tests require them:
 - custom `missing` handling.
 - `unmapped_type`.
 - script-based sorts.
+- sorting on analyzed text fields without a sortable whole-value doc-values
+  representation.
 - geo-distance sorts.
 - nested sorts.
+
+### Offset Cost
+
+This design intentionally applies `from` after the final distributed merge. That
+is the correct OpenSearch-style global offset behavior, but it has a cost:
+workers need to return up to `from + size` candidates.
+
+For example, `from = 1_000_000` and `size = 2` may require each worker to
+collect and return up to `1_000_002` sorted candidates. That can increase heap
+usage, CPU time, and network transfer. This ADR does not introduce a different
+deep-pagination mechanism such as `search_after`; it preserves the standard
+`from`/`size` semantics and leaves deep-pagination optimization for future work.
 
 ## Compatibility, Deprecation, And Migration Plan
 
@@ -188,24 +210,29 @@ Clients that already send root `from` or `sort` would move from ignored or
 partially honored behavior to explicit supported or explicitly rejected
 behavior.
 
-No stored metadata migration is required. If the internal gRPC request changes,
-the rollout must be compatible with mixed binaries or coordinated so workers and
-query nodes understand the same request fields.
+No stored metadata migration is required. The internal gRPC request grows to
+carry `start_from` and sort JSON, so rollout must be compatible with mixed
+binaries or coordinated so workers and query nodes understand the same request
+fields.
 
 Rollback is safe at the storage layer because no persisted data format changes.
 After rollback, root `from` and explicit `sort` would no longer be honored.
 
 ## Test Plan
 
-- Parser tests for root `from`, `size`, and supported `sort` forms.
+- Parser tests for root `from`, `size`, and supported single-field and
+  multi-field `sort` forms.
 - Parser tests proving unsupported sort options fail clearly.
 - Unit tests for local hit collection using timestamp ascending and descending.
+- Unit tests for sortable doc-value fields such as keyword and numeric fields.
 - Unit tests proving `from` is applied after sorting.
 - Distributed tests where each worker returns `from + size` candidates and the
   final query node applies the global offset.
 - Tie-breaker tests for hits with equal sort values.
 - Compatibility tests for omitted `sort`, proving timestamp descending remains
   the default.
+- ClickBench-shaped coverage for Q23 through Q26, including Q26's multi-field
+  hit sort by `@timestamp` and `SearchPhrase`.
 
 ## Documentation Plan
 
@@ -249,6 +276,8 @@ Costs:
 - Distributed hit merging must use the requested sort order rather than the
   current hard-coded timestamp descending comparator.
 - The internal request contract must grow to carry offset and sort information.
+- Deep offsets can be expensive because this design implements `from`/`size`
+  literally and does not add `search_after`.
 
 Risks:
 
