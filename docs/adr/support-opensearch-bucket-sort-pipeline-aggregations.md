@@ -2,7 +2,7 @@
 
 ## Status
 
-Current state: `Draft`
+Current state: `Accepted`
 
 Discussion thread: `n/a`
 

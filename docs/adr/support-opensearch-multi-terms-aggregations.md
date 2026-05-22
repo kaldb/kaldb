@@ -2,7 +2,7 @@
 
 ## Status
 
-Current state: `Draft`
+Current state: `Accepted`
 
 Discussion thread: `n/a`
 
@@ -34,7 +34,7 @@ into clients and make migration from OpenSearch harder.
 
 This ADR is limited to `multi_terms` itself: creating compound-key buckets,
 reducing those buckets across chunks and nodes, and returning the
-OpenSearch-compatible response shape. 
+OpenSearch-compatible response shape.
 
 ## Questions
 
@@ -59,12 +59,23 @@ OpenSearch-compatible response shape.
   workload. Ordering should be delegated to OpenSearch's aggregation
   implementation rather than reimplemented in Astra.
 
+- Question: Should scripted `multi_terms` sources be in scope?
+  Answer: Yes. ClickBench-style expression group keys, such as extracting a
+  minute from a timestamp or grouping by arithmetic over a numeric field, map
+  naturally to OpenSearch script sources inside the `multi_terms.terms` list.
+  KalDB should support the OpenSearch-compatible script source forms for the
+  installed OpenSearch version, including explicit value-type hints when
+  OpenSearch requires them to resolve the script's values-source type.
+
 ## Public Interfaces
 
 - OpenSearch-compatible search requests may include a `multi_terms`
   aggregation under `aggs` or `aggregations`.
 - A `multi_terms` request contains a `terms` array, where each entry identifies
   one field participating in the compound bucket key.
+- A `terms` entry may identify either a concrete field or an OpenSearch script
+  source where the installed OpenSearch aggregation implementation supports
+  that source shape.
 - Responses include one bucket per compound key. Each bucket's `key` is an
   ordered array matching the request's `terms` array.
 - The aggregation may use OpenSearch-compatible `size` and `order` options.
@@ -111,6 +122,12 @@ sorting and aggregations, including keyword/string, integer/long, floating
 point, boolean, and date-compatible fields where OpenSearch's multi-terms
 implementation supports them.
 
+Scripted sources should also go through OpenSearch's values-source resolution.
+KalDB should not invent a separate script execution path for `multi_terms`.
+If the OpenSearch version needs a `value_type` hint for a script source, KalDB
+should preserve and pass that hint through instead of inferring a type from the
+script text.
+
 ### Out Of Scope
 
 - Ingest-time synthetic combined fields.
@@ -128,6 +145,26 @@ required because the change affects query execution only.
 Rollback is safe at the storage layer because no persisted data format changes.
 After rollback, `multi_terms` requests would fail again or return an unsupported
 aggregation error.
+
+## Test Plan
+
+- Parser tests for field-based `multi_terms` requests.
+- Parser tests for scripted `multi_terms` sources, including the value-type
+  hint shape required by the installed OpenSearch version.
+- Local search tests proving compound bucket keys, bucket counts, and
+  sub-aggregations are returned in the OpenSearch-compatible response shape.
+- Distributed search tests proving partial results reduce into the same final
+  compound buckets as a single-node search.
+- Ordering tests for `_count`, `_key`, and sub-aggregation metric ordering.
+- ClickBench-shaped coverage for compound group-by queries such as Q11, Q14,
+  Q18, Q30, Q31, Q32, Q35, and Q39.
+
+## Documentation Plan
+
+- Document supported `multi_terms` field and script source shapes.
+- Document that `multi_terms` is query-time grouping, not an ingest-time
+  synthetic-field requirement.
+- Document unsupported values-source types until they are implemented.
 
 ## Rejected Alternatives
 
