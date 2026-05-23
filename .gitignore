@@ -10,7 +10,6 @@ benchmarks/jmh-output/
 dependency-reduced-pom.xml
 .venv/
 .vscode/
-docs/superpowers/
 tmp/
 
 # Mac
