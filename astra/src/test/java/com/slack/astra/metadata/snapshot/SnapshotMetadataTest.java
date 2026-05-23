@@ -3,6 +3,8 @@ package com.slack.astra.metadata.snapshot;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 
+import com.slack.astra.metadata.snapshot.SnapshotMetadata.IndexType;
+import com.slack.astra.metadata.snapshot.SnapshotMetadata.SnapshotType;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
@@ -26,6 +28,76 @@ public class SnapshotMetadataTest {
     assertThat(snapshotMetadata.endTimeEpochMs).isEqualTo(endTime);
     assertThat(snapshotMetadata.maxOffset).isEqualTo(maxOffset);
     assertThat(snapshotMetadata.partitionId).isEqualTo(partitionId);
+    assertThat(snapshotMetadata.snapshotType).isEqualTo(SnapshotType.LIVE);
+    assertThat(snapshotMetadata.indexType).isEqualTo(IndexType.LUCENE);
+    assertThat(snapshotMetadata.snapshotPath).isEmpty();
+    assertThat(snapshotMetadata.snapshotGeneration).isZero();
+    assertThat(snapshotMetadata.snapshotVersionToken).isEmpty();
+    assertThat(snapshotMetadata.version).isEqualTo(SnapshotMetadata.DEFAULT_VERSION);
+  }
+
+  @Test
+  public void testSealedSnapshotDefaults() {
+    final String name = "testSnapshotId";
+    final long startTime = 1;
+    final long endTime = 100;
+    final long maxOffset = 123;
+    final String partitionId = "1";
+
+    SnapshotMetadata snapshotMetadata =
+        new SnapshotMetadata(name, startTime, endTime, maxOffset, partitionId, 100);
+
+    assertThat(snapshotMetadata.snapshotType).isEqualTo(SnapshotType.SEALED);
+    assertThat(snapshotMetadata.indexType).isEqualTo(IndexType.LUCENE);
+    assertThat(snapshotMetadata.snapshotPath).isEqualTo(name);
+    assertThat(snapshotMetadata.snapshotGeneration).isZero();
+    assertThat(snapshotMetadata.snapshotVersionToken).isEmpty();
+    assertThat(snapshotMetadata.version).isEqualTo(SnapshotMetadata.DEFAULT_VERSION);
+  }
+
+  @Test
+  public void testFullSnapshotMetadataConstructor() {
+    SnapshotMetadata snapshotMetadata =
+        new SnapshotMetadata(
+            "snapshot-1",
+            1,
+            100,
+            123,
+            "1",
+            0,
+            SnapshotType.LIVE,
+            IndexType.LUCENE,
+            "nrt/v1/partitions/1/chunks/snapshot-1/manifest.json",
+            7,
+            "version-token",
+            "2");
+
+    assertThat(snapshotMetadata.snapshotPath)
+        .isEqualTo("nrt/v1/partitions/1/chunks/snapshot-1/manifest.json");
+    assertThat(snapshotMetadata.snapshotGeneration).isEqualTo(7);
+    assertThat(snapshotMetadata.snapshotVersionToken).isEqualTo("version-token");
+    assertThat(snapshotMetadata.version).isEqualTo("2");
+  }
+
+  @Test
+  public void testExplicitSnapshotTypeControlsDefaultPath() {
+    SnapshotMetadata sealedSnapshot =
+        new SnapshotMetadata(
+            "snapshot-1",
+            1,
+            100,
+            123,
+            "1",
+            0,
+            SnapshotType.SEALED,
+            IndexType.LUCENE,
+            "",
+            0,
+            "",
+            SnapshotMetadata.DEFAULT_VERSION);
+
+    assertThat(sealedSnapshot.snapshotPath).isEqualTo("snapshot-1");
+    assertThat(sealedSnapshot.isLive()).isFalse();
   }
 
   @Test
@@ -83,6 +155,23 @@ public class SnapshotMetadataTest {
 
     assertThatIllegalArgumentException()
         .isThrownBy(() -> new SnapshotMetadata(name, startTime, endTime, maxOffset, "", 0));
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                new SnapshotMetadata(
+                    name,
+                    startTime,
+                    endTime,
+                    maxOffset,
+                    partitionId,
+                    0,
+                    SnapshotType.LIVE,
+                    IndexType.LUCENE,
+                    "",
+                    -1,
+                    "",
+                    SnapshotMetadata.DEFAULT_VERSION));
   }
 
   @Test

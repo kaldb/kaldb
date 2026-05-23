@@ -7,6 +7,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.temporal.ChronoField;
+import java.util.Objects;
 
 /**
  * The SnapshotMetadata class contains all the metadata related to a snapshot.
@@ -22,12 +23,46 @@ import java.time.temporal.ChronoField;
  * here.
  */
 public class SnapshotMetadata extends AstraPartitionedMetadata {
+  public static final String DEFAULT_VERSION = "1";
+
+  public enum SnapshotType {
+    LIVE,
+    SEALED
+  }
+
+  public enum IndexType {
+    LUCENE,
+    DUCKDB,
+    ROCKSDB
+  }
+
   public final String snapshotId;
+  public final String snapshotPath;
+  public final SnapshotType snapshotType;
+  public final IndexType indexType;
   public final long startTimeEpochMs;
   public final long endTimeEpochMs;
   public final String partitionId;
   public long maxOffset;
   public long sizeInBytesOnDisk;
+  public final long snapshotGeneration;
+  public final String snapshotVersionToken;
+  public final String version;
+
+  private static String normalizeSnapshotPath(
+      String snapshotPath, String snapshotId, SnapshotType snapshotType) {
+    if (snapshotPath != null && !snapshotPath.isBlank()) {
+      return snapshotPath;
+    }
+    return snapshotType == SnapshotType.LIVE ? "" : snapshotId;
+  }
+
+  private static String normalizeVersion(String version) {
+    if (version == null || version.isBlank()) {
+      return DEFAULT_VERSION;
+    }
+    return version;
+  }
 
   public SnapshotMetadata(
       String snapshotId,
@@ -38,23 +73,33 @@ public class SnapshotMetadata extends AstraPartitionedMetadata {
       long sizeInBytesOnDisk) {
     this(
         snapshotId,
-        snapshotId,
         startTimeEpochMs,
         endTimeEpochMs,
         maxOffset,
         partitionId,
-        sizeInBytesOnDisk);
+        sizeInBytesOnDisk,
+        sizeInBytesOnDisk == 0 ? SnapshotType.LIVE : SnapshotType.SEALED,
+        IndexType.LUCENE,
+        sizeInBytesOnDisk == 0 ? "" : snapshotId,
+        0,
+        "",
+        DEFAULT_VERSION);
   }
 
-  private SnapshotMetadata(
-      String name,
+  public SnapshotMetadata(
       String snapshotId,
       long startTimeEpochMs,
       long endTimeEpochMs,
       long maxOffset,
       String partitionId,
-      long sizeInBytesOnDisk) {
-    super(name);
+      long sizeInBytesOnDisk,
+      SnapshotType snapshotType,
+      IndexType indexType,
+      String snapshotPath,
+      long snapshotGeneration,
+      String snapshotVersionToken,
+      String version) {
+    super(snapshotId);
     checkArgument(snapshotId != null && !snapshotId.isEmpty(), "snapshotId can't be null or empty");
     checkArgument(startTimeEpochMs > 0, "start time should be greater than zero.");
     checkArgument(endTimeEpochMs > 0, "end time should be greater than zero.");
@@ -64,13 +109,20 @@ public class SnapshotMetadata extends AstraPartitionedMetadata {
     checkArgument(maxOffset >= 0, "max offset should be greater than or equal to zero.");
     checkArgument(
         partitionId != null && !partitionId.isEmpty(), "partitionId can't be null or empty");
+    checkArgument(snapshotGeneration >= 0, "snapshotGeneration must be greater than or equal to 0");
 
     this.snapshotId = snapshotId;
+    this.snapshotType = Objects.requireNonNull(snapshotType, "snapshotType");
+    this.indexType = Objects.requireNonNull(indexType, "indexType");
+    this.snapshotPath = normalizeSnapshotPath(snapshotPath, snapshotId, this.snapshotType);
     this.startTimeEpochMs = startTimeEpochMs;
     this.endTimeEpochMs = endTimeEpochMs;
     this.maxOffset = maxOffset;
     this.partitionId = partitionId;
     this.sizeInBytesOnDisk = sizeInBytesOnDisk;
+    this.snapshotGeneration = snapshotGeneration;
+    this.snapshotVersionToken = Objects.requireNonNullElse(snapshotVersionToken, "");
+    this.version = normalizeVersion(version);
   }
 
   @Override
@@ -83,19 +135,31 @@ public class SnapshotMetadata extends AstraPartitionedMetadata {
         && endTimeEpochMs == that.endTimeEpochMs
         && maxOffset == that.maxOffset
         && sizeInBytesOnDisk == that.sizeInBytesOnDisk
+        && snapshotGeneration == that.snapshotGeneration
         && snapshotId.equals(that.snapshotId)
-        && partitionId.equals(that.partitionId);
+        && snapshotPath.equals(that.snapshotPath)
+        && snapshotType == that.snapshotType
+        && indexType == that.indexType
+        && partitionId.equals(that.partitionId)
+        && snapshotVersionToken.equals(that.snapshotVersionToken)
+        && version.equals(that.version);
   }
 
   @Override
   public int hashCode() {
     int result = super.hashCode();
     result = 31 * result + snapshotId.hashCode();
+    result = 31 * result + snapshotPath.hashCode();
+    result = 31 * result + snapshotType.hashCode();
+    result = 31 * result + indexType.hashCode();
     result = 31 * result + Long.hashCode(startTimeEpochMs);
     result = 31 * result + Long.hashCode(endTimeEpochMs);
     result = 31 * result + Long.hashCode(maxOffset);
     result = 31 * result + partitionId.hashCode();
     result = 31 * result + Long.hashCode(sizeInBytesOnDisk);
+    result = 31 * result + Long.hashCode(snapshotGeneration);
+    result = 31 * result + snapshotVersionToken.hashCode();
+    result = 31 * result + version.hashCode();
     return result;
   }
 
@@ -105,6 +169,13 @@ public class SnapshotMetadata extends AstraPartitionedMetadata {
         + "snapshotId='"
         + snapshotId
         + '\''
+        + ", snapshotPath='"
+        + snapshotPath
+        + '\''
+        + ", snapshotType="
+        + snapshotType
+        + ", indexType="
+        + indexType
         + ", startTimeEpochMs="
         + startTimeEpochMs
         + ", endTimeEpochMs="
@@ -116,6 +187,14 @@ public class SnapshotMetadata extends AstraPartitionedMetadata {
         + '\''
         + ", sizeInBytesOnDisk="
         + sizeInBytesOnDisk
+        + ", snapshotGeneration="
+        + snapshotGeneration
+        + ", snapshotVersionToken='"
+        + snapshotVersionToken
+        + '\''
+        + ", version='"
+        + version
+        + '\''
         + ", name='"
         + name
         + '\''
@@ -138,10 +217,7 @@ public class SnapshotMetadata extends AstraPartitionedMetadata {
     }
   }
 
-  // todo - this is better than the previous version of storing a static "LIVE" string to a path
-  //  variable but not by a lot. The "isLive" functionality should be reconsidered more broadly.
-  //  The ideal way is likely to reconsider the ZK type for "LIVE" snapshots
   public boolean isLive() {
-    return this.sizeInBytesOnDisk == 0;
+    return this.snapshotType == SnapshotType.LIVE;
   }
 }

@@ -11,11 +11,17 @@ public class SnapshotMetadataSerializer implements MetadataSerializer<SnapshotMe
     return Metadata.SnapshotMetadata.newBuilder()
         .setName(snapshotMetadata.name)
         .setSnapshotId(snapshotMetadata.snapshotId)
+        .setSnapshotPath(snapshotMetadata.snapshotPath)
         .setStartTimeEpochMs(snapshotMetadata.startTimeEpochMs)
         .setEndTimeEpochMs(snapshotMetadata.endTimeEpochMs)
         .setPartitionId(snapshotMetadata.partitionId)
         .setMaxOffset(snapshotMetadata.maxOffset)
         .setSizeInBytes(snapshotMetadata.sizeInBytesOnDisk)
+        .setSnapshotType(toProtoSnapshotType(snapshotMetadata.snapshotType))
+        .setIndexType(toProtoIndexType(snapshotMetadata.indexType))
+        .setSnapshotGeneration(snapshotMetadata.snapshotGeneration)
+        .setSnapshotVersionToken(snapshotMetadata.snapshotVersionToken)
+        .setVersion(snapshotMetadata.version)
         .build();
   }
 
@@ -27,7 +33,53 @@ public class SnapshotMetadataSerializer implements MetadataSerializer<SnapshotMe
         protoSnapshotMetadata.getEndTimeEpochMs(),
         protoSnapshotMetadata.getMaxOffset(),
         protoSnapshotMetadata.getPartitionId(),
-        protoSnapshotMetadata.getSizeInBytes());
+        protoSnapshotMetadata.getSizeInBytes(),
+        fromProtoSnapshotType(
+            protoSnapshotMetadata.getSnapshotType(), protoSnapshotMetadata.getSizeInBytes()),
+        fromProtoIndexType(protoSnapshotMetadata.getIndexType()),
+        protoSnapshotMetadata.getSnapshotPath(),
+        protoSnapshotMetadata.getSnapshotGeneration(),
+        protoSnapshotMetadata.getSnapshotVersionToken(),
+        protoSnapshotMetadata.getVersion());
+  }
+
+  private static Metadata.SnapshotMetadata.SnapshotType toProtoSnapshotType(
+      SnapshotMetadata.SnapshotType snapshotType) {
+    return switch (snapshotType) {
+      case LIVE -> Metadata.SnapshotMetadata.SnapshotType.LIVE;
+      case SEALED -> Metadata.SnapshotMetadata.SnapshotType.SEALED;
+    };
+  }
+
+  private static SnapshotMetadata.SnapshotType fromProtoSnapshotType(
+      Metadata.SnapshotMetadata.SnapshotType snapshotType, long sizeInBytes) {
+    return switch (snapshotType) {
+      case LIVE -> SnapshotMetadata.SnapshotType.LIVE;
+      case SEALED -> SnapshotMetadata.SnapshotType.SEALED;
+      case SNAPSHOT_TYPE_UNSPECIFIED, UNRECOGNIZED ->
+          sizeInBytes == 0
+              ? SnapshotMetadata.SnapshotType.LIVE
+              : SnapshotMetadata.SnapshotType.SEALED;
+    };
+  }
+
+  private static Metadata.SnapshotMetadata.IndexType toProtoIndexType(
+      SnapshotMetadata.IndexType indexType) {
+    return switch (indexType) {
+      case LUCENE -> Metadata.SnapshotMetadata.IndexType.LUCENE;
+      case DUCKDB -> Metadata.SnapshotMetadata.IndexType.DUCKDB;
+      case ROCKSDB -> Metadata.SnapshotMetadata.IndexType.ROCKSDB;
+    };
+  }
+
+  private static SnapshotMetadata.IndexType fromProtoIndexType(
+      Metadata.SnapshotMetadata.IndexType indexType) {
+    return switch (indexType) {
+      case LUCENE -> SnapshotMetadata.IndexType.LUCENE;
+      case DUCKDB -> SnapshotMetadata.IndexType.DUCKDB;
+      case ROCKSDB -> SnapshotMetadata.IndexType.ROCKSDB;
+      case INDEX_TYPE_UNSPECIFIED, UNRECOGNIZED -> SnapshotMetadata.IndexType.LUCENE;
+    };
   }
 
   @Override
