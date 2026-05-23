@@ -20,6 +20,10 @@ the existing OpenSearch bulk ingest API. The new service will:
 This keeps OTLP parsing and mapping isolated from OpenSearch bulk parsing while preserving the
 existing Kafka and indexing path.
 
+The implementation will add a preprocessor config field for the logical OTLP trace dataset name.
+The default will be `traces`, and operators can override it when they provision a differently named
+trace dataset.
+
 ## Request Formats
 
 The endpoint will support these content types:
@@ -32,17 +36,19 @@ payloads will return `400 Bad Request`.
 
 ## Dataset Selection
 
-Each OTLP span is assigned to a dataset using the resource attribute `service.name`. This matches the
-OpenTelemetry demo collector output and the current KalDB convention that the Kafka map key is the
-dataset/index name.
+All OTLP trace spans are assigned to the configured logical trace dataset name. The default name is
+`traces`, but the name is configurable so deployments can use any dataset name.
 
-If a resource does not contain `service.name`, the endpoint will place its spans in the `unknown`
-dataset. Existing producer behavior will skip writes for datasets that are not provisioned.
+The configured logical trace dataset must be provisioned with `serviceNamePattern: _all`. That
+lets the existing producer map the logical trace dataset key to the dataset partitions without
+routing spans by the OpenTelemetry resource `service.name`.
 
-If one OTLP request contains spans from multiple services, the endpoint will group spans by
-`service.name` and rate-limit each dataset independently. Unlike the OpenSearch bulk endpoint, OTLP
-trace ingestion will not reject multi-dataset requests because OTLP batches commonly contain spans
-from several services.
+OpenTelemetry `service.name` remains searchable metadata, but it is not used for dataset selection.
+The converter stores it under `resource.service.name`.
+
+OTLP trace ingestion will always submit a single Kafka producer entry keyed by the configured trace
+dataset name. This differs from OpenSearch bulk ingestion, where each bulk index key can represent a
+different dataset.
 
 ## Span Mapping
 
@@ -68,8 +74,12 @@ same fields it already expects:
 
 Resource attributes, scope attributes, and span attributes will also become KalDB tags. Attribute
 names are preserved, except resource attributes are prefixed with `resource.` and scope attributes
-are prefixed with `scope.` to avoid collisions with span attributes. The unprefixed `service_name`
-reserved tag is always set from resource `service.name`.
+are prefixed with `scope.` to avoid collisions with span attributes.
+
+The reserved `service_name` tag is set to the configured logical trace dataset name. KalDB currently
+uses `service_name` as the logical index field for scoped OpenSearch-compatible searches, so this
+keeps searches against the trace dataset name working. The original OpenTelemetry service name is
+preserved as `resource.service.name`.
 
 OTLP attribute values map to KalDB schema field types as follows:
 
@@ -88,9 +98,8 @@ used so field type and multi-field behavior stays consistent with OpenSearch bul
 On success, the endpoint will return `200 OK` with an empty OTLP
 `ExportTraceServiceResponse` body encoded using the same response format as the request.
 
-If any dataset in the request exceeds its rate limit, the endpoint will return the configured
-preprocessor rate-limit status code and will not write the request. This preserves current
-all-or-nothing request behavior.
+If the configured trace dataset exceeds its rate limit, the endpoint will return the configured
+preprocessor rate-limit status code and will not write the request.
 
 If the Kafka producer reports a write failure, the endpoint will return `500 Internal Server Error`.
 
@@ -111,7 +120,8 @@ Unit tests will cover:
 
 - binary protobuf request parsing.
 - JSON protobuf request parsing.
-- resource `service.name` dataset grouping.
+- configured trace dataset selection.
+- resource `service.name` preservation as `resource.service.name`.
 - trace id, span id, parent id, timestamp, duration, and name mapping.
 - resource, scope, and span attribute tag mapping.
 - malformed payload and unsupported content type errors.
@@ -120,10 +130,13 @@ API-level tests will cover:
 
 - successful `/v1/traces` ingestion through the preprocessor service.
 - rate-limit rejection behavior.
-- multi-service requests grouped into multiple Kafka producer index entries.
+- multi-service requests written under one configured trace dataset entry.
 
 ## Operational Follow-Up
 
 The OpenTelemetry demo collector can be pointed at KalDB by adding an OTLP/HTTP exporter with an
 endpoint such as `http://astra_preprocessor:8086` and adding that exporter to the traces pipeline.
 The collector will send trace export requests to `/v1/traces`.
+
+The KalDB deployment must also provision a trace dataset using the configured trace dataset name
+and `serviceNamePattern: _all`.
