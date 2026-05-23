@@ -135,6 +135,7 @@ preprocessorConfig:
   useBulkApi: true
   rateLimitExceededErrorCode: 429
   schemaFile: "schema/test_schema.yaml"
+  otlpTraceDatasetName: custom_otel_traces
 
 clusterConfig:
   clusterName: "test_astra_cluster"

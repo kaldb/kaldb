@@ -307,4 +307,9 @@ message PreprocessorConfig {
   // refresh of the dataset rate limits, whether or not a ZK event
   // has triggered it
   int32 dataset_rate_limit_period_secs = 14;
+
+  // Logical dataset name used by the OTLP/HTTP /v1/traces endpoint.
+  // All spans received through OTLP traces are written using this dataset key.
+  // Provision this dataset with serviceNamePattern: _all so it can accept spans from every service.
+  string otlp_trace_dataset_name = 15;
 }

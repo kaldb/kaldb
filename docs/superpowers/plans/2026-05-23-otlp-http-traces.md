@@ -85,7 +85,7 @@ Logical dataset name used by the OTLP/HTTP `/v1/traces` endpoint. The dataset mu
 Add a property and dependency to `astra/pom.xml`:
 
 ```xml
-<opentelemetry.proto.version>1.10.0</opentelemetry.proto.version>
+<opentelemetry.proto.version>1.3.2-alpha</opentelemetry.proto.version>
 ```
 
 ```xml
