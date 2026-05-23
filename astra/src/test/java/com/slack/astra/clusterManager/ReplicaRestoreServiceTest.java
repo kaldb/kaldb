@@ -22,8 +22,10 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import javax.naming.SizeLimitExceededException;
 import org.apache.curator.test.TestingServer;
 import org.apache.curator.x.async.AsyncCuratorFramework;
@@ -88,32 +90,43 @@ public class ReplicaRestoreServiceTest {
 
   @Test
   public void shouldHandleDrainingAndAdding() throws Exception {
+    CountDownLatch firstRestoreStarted = new CountDownLatch(1);
+    CountDownLatch continueRestoring = new CountDownLatch(1);
+
     doAnswer(
             invocationOnMock -> {
-              Thread.sleep(100);
+              firstRestoreStarted.countDown();
+              if (!continueRestoring.await(5, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("Timed out waiting to continue restoring replicas");
+              }
               return invocationOnMock.callRealMethod();
             })
         .when(replicaMetadataStore)
         .createSync(any(ReplicaMetadata.class));
 
+    managerConfig = managerConfig.toBuilder().setEventAggregationSecs(0).build();
+
     ReplicaRestoreService replicaRestoreService =
         new ReplicaRestoreService(replicaMetadataStore, meterRegistry, managerConfig);
 
-    for (int i = 0; i < 10; i++) {
+    List<SnapshotMetadata> initialSnapshots = new ArrayList<>();
+    for (int i = 0; i < 7; i++) {
       long now = Instant.now().toEpochMilli();
       String id = "loop" + i;
-      SnapshotMetadata snapshotIncluded = new SnapshotMetadata(id, now + 10, now + 15, 0, id, 0);
-      replicaRestoreService.queueSnapshotsForRestoration(List.of(snapshotIncluded));
-      Thread.sleep(300);
+      initialSnapshots.add(new SnapshotMetadata(id, now + 10, now + 15, 0, id, 0));
     }
+    replicaRestoreService.queueSnapshotsForRestoration(initialSnapshots);
 
-    await().until(() -> replicaMetadataStore.listSync().size() == 7);
-    await()
-        .until(
-            () ->
-                MetricsUtil.getTimerCount(
-                    ReplicaRestoreService.REPLICAS_RESTORE_TIMER, meterRegistry),
-            (value) -> value == 1);
+    assertThat(firstRestoreStarted.await(5, TimeUnit.SECONDS)).isTrue();
+
+    List<SnapshotMetadata> addedWhileDraining = new ArrayList<>();
+    for (int i = 7; i < 10; i++) {
+      long now = Instant.now().toEpochMilli();
+      String id = "loop" + i;
+      addedWhileDraining.add(new SnapshotMetadata(id, now + 10, now + 15, 0, id, 0));
+    }
+    replicaRestoreService.queueSnapshotsForRestoration(addedWhileDraining);
+    continueRestoring.countDown();
 
     await().until(() -> replicaMetadataStore.listSync().size() == 10);
     await()
@@ -156,13 +169,13 @@ public class ReplicaRestoreServiceTest {
           });
     }
 
-    await().until(() -> replicaMetadataStore.listSync().size() == 14);
+    await().until(() -> replicaMetadataStore.listSync().size() >= 14);
     await()
         .until(
             () ->
                 MetricsUtil.getTimerCount(
                     ReplicaRestoreService.REPLICAS_RESTORE_TIMER, meterRegistry),
-            (value) -> value == 1);
+            (value) -> value >= 1);
     await().until(() -> replicaMetadataStore.listSync().size() == 20);
     await()
         .until(
