@@ -21,8 +21,8 @@ This keeps OTLP parsing and mapping isolated from OpenSearch bulk parsing while 
 existing Kafka and indexing path.
 
 The implementation will add a preprocessor config field for the logical OTLP trace dataset name.
-The default will be `traces`, and operators can override it when they provision a differently named
-trace dataset.
+The default will be `otel_traces`, and operators can override it when they provision a differently
+named trace dataset.
 
 ## Request Formats
 
@@ -37,7 +37,7 @@ payloads will return `400 Bad Request`.
 ## Dataset Selection
 
 All OTLP trace spans are assigned to the configured logical trace dataset name. The default name is
-`traces`, but the name is configurable so deployments can use any dataset name.
+`otel_traces`, but the name is configurable so deployments can use any dataset name.
 
 The configured logical trace dataset must be provisioned with `serviceNamePattern: _all`. That
 lets the existing producer map the logical trace dataset key to the dataset partitions without
