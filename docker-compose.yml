@@ -48,6 +48,8 @@ services:
       GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
       GF_PATHS_PLUGINS: "/var/lib/grafana/plugins"
       GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS: "slack-astra-app,slack-astra-app-backend-datasource"
+      GF_PLUGINS_PREINSTALL_SYNC: "grafana-opensearch-datasource"
+      GF_PLUGINS_PREINSTALL_AUTO_UPDATE: "false"
 
   opensearch:
     image: 'opensearchproject/opensearch:2.11.1'
