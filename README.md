@@ -72,6 +72,7 @@ Local endpoints:
 - Manager API: `http://localhost:8083`
 - Preprocessor ingest API: `http://localhost:8086`
 - Grafana: `http://localhost:3000/explore`
+- S3Mock: `http://localhost:19090`
 
 For the manual curl workflow, API examples, and the per-service setup details, see [Getting-started.md](docs/topics/Getting-started.md).
 

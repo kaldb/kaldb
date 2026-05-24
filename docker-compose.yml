@@ -105,7 +105,7 @@ services:
     image: 'adobe/s3mock:2.1.29'
     container_name: dep_s3
     ports:
-      - 9090:9090
+      - "${S3_MOCK_PORT:-19090}:9090"
     environment:
       - initialBuckets=test-s3-bucket
 

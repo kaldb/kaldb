@@ -169,7 +169,9 @@ public class PreprocessorRateLimiter {
         return false;
       }
 
-      int totalBytes = getSpanBytes(docs);
+      // Protobuf messages with only default or unset fields can serialize to zero bytes.
+      // Charge at least one byte so empty spans cannot bypass rate limiting.
+      int totalBytes = Math.max(1, getSpanBytes(docs));
       if (index == null) {
         // index name wasn't provided
         LOG.debug("Message was dropped due to missing index name - '{}'", index);

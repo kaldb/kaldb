@@ -214,6 +214,25 @@ public class PreprocessorRateLimiterTest {
   }
 
   @Test
+  public void shouldAllowZeroSerializedSizeSpans() {
+    MeterRegistry meterRegistry = new SimpleMeterRegistry();
+    PreprocessorRateLimiter rateLimiter = new PreprocessorRateLimiter(meterRegistry, 1, 1, false);
+
+    DatasetMetadata datasetMetadata =
+        new DatasetMetadata(
+            "rateLimiter",
+            "rateLimiter",
+            5,
+            List.of(new DatasetPartitionMetadata(100, Long.MAX_VALUE, List.of("0"))),
+            DatasetMetadata.MATCH_ALL_SERVICE);
+
+    BiPredicate<String, List<Trace.Span>> predicate =
+        rateLimiter.createBulkIngestRateLimiter(List.of(datasetMetadata));
+
+    assertThat(predicate.test("key", List.of(Trace.Span.newBuilder().build()))).isTrue();
+  }
+
+  @Test
   public void shouldSkipMetricsForActiveAssignmentsWithNoPartitions() {
     MeterRegistry meterRegistry = new SimpleMeterRegistry();
     PreprocessorRateLimiter rateLimiter = new PreprocessorRateLimiter(meterRegistry, 1, 1, false);
