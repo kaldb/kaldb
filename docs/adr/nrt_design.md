@@ -466,8 +466,8 @@ Scheduling:
 
 - Run periodically as an `AbstractScheduledService`.
 - Use a low-frequency schedule and rate-limited deletes, similar to `SnapshotDeletionService`.
-- Suggested config: `nrtReplication.blobGcSchedulePeriodMins` and
-  `nrtReplication.cleanupGracePeriodSecs`.
+- Add schedule and grace-period config under the manager-owned NRT blob deletion service when this
+  phase is implemented. Do not put cleanup policy under a generic NRT replication config.
 
 Responsibilities:
 
@@ -521,18 +521,20 @@ Responsibilities:
 
 ## Configuration
 
-Suggested fields:
+No NRT runtime config is required for the metadata and blob manifest foundation. Avoid adding a
+generic `NrtReplicationConfig` until runtime owners consume the fields.
 
-- `nrtReplication.enabled`
-- `nrtReplication.publishIntervalSecs`
-- `nrtReplication.replicaCount`
-- `nrtReplication.maxReplicationLagSecs`
-- `nrtReplication.stagingDirectory`
-- `nrtReplication.cleanupGracePeriodSecs`
-- `nrtReplication.maxBytesPerPublish`
+Future config should be added next to the owner that consumes it:
 
-If these are added to proto config, each field needs a proto comment and the sample config and
-config documentation should be updated in the same change.
+- Indexer publisher cadence should either derive from existing Lucene commit/refresh settings or
+  live under an indexer-owned publisher config if separate tuning is required.
+- Live replica count should reuse existing manager replica creation and assignment policy unless
+  live snapshots need a manager-owned replica policy.
+- Staging directories should derive from indexer/cache data directories unless operators need an
+  explicit disk override.
+- Blob cleanup schedule and grace period belong under the manager-owned NRT blob deletion service
+  when that phase is implemented.
+- Upload throttling should only be configured if the publisher implements explicit backpressure.
 
 ## Metrics And Logs
 
