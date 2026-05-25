@@ -36,6 +36,7 @@ import com.slack.astra.proto.service.AstraSearch;
 import com.slack.astra.testlib.SpanUtil;
 import com.slack.astra.testlib.TemporaryLogStoreAndSearcherExtension;
 import com.slack.astra.util.QueryBuilderUtil;
+import com.slack.astra.writer.SpanFormatter;
 import com.slack.service.murron.trace.Trace;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -57,11 +58,16 @@ import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
+import org.opensearch.index.query.BoolQueryBuilder;
+import org.opensearch.index.query.TermQueryBuilder;
+import org.opensearch.search.aggregations.AggregatorFactories;
 import org.opensearch.search.aggregations.bucket.filter.InternalFilters;
 import org.opensearch.search.aggregations.bucket.histogram.InternalAutoDateHistogram;
 import org.opensearch.search.aggregations.bucket.histogram.InternalDateHistogram;
 import org.opensearch.search.aggregations.bucket.terms.StringTerms;
+import org.opensearch.search.aggregations.metrics.CardinalityAggregationBuilder;
 import org.opensearch.search.aggregations.metrics.InternalAvg;
+import org.opensearch.search.aggregations.metrics.InternalCardinality;
 import org.opensearch.search.aggregations.metrics.InternalExtendedStats;
 import org.opensearch.search.aggregations.metrics.InternalMax;
 import org.opensearch.search.aggregations.metrics.InternalMin;
@@ -1722,6 +1728,66 @@ public class LogIndexSearcherImplTest {
     StringTerms stringTerms = (StringTerms) allIndexItems.internalAggregations.get("1");
     assertThat(stringTerms.getBuckets().size()).isEqualTo(1);
     assertThat(stringTerms.getBuckets().get(0).getKey()).isEqualTo("foo");
+  }
+
+  @Test
+  public void testEmptyStringKeywordIsQueryableLikeOpenSearch() throws IOException {
+    // Ingest THROUGH SpanFormatter.convertKVtoProto (the ingest path the fix lives in) so this
+    // actually exercises the fix: with it, SearchPhrase "" is indexed as a real keyword value;
+    // without it, convertKVtoProto returns null and the "" doc carries no SearchPhrase at all.
+    Instant time = Instant.ofEpochSecond(1593365471);
+    Schema.IngestSchema schema = Schema.IngestSchema.getDefaultInstance();
+    List<String> phrases = List.of("alpha", "beta", "");
+    for (int i = 0; i < phrases.size(); i++) {
+      List<Trace.KeyValue> tags =
+          SpanFormatter.convertKVtoProto("SearchPhrase", phrases.get(i), schema);
+      strictLogStore.logStore.addMessage(
+          SpanUtil.makeSpan(i + 1, "msg", time, tags == null ? List.of() : tags));
+    }
+    strictLogStore.logStore.commit();
+    strictLogStore.logStore.refresh();
+
+    // terms(SearchPhrase): "" is a real bucket alongside the others (Q16/Q17).
+    StringTerms terms =
+        (StringTerms)
+            strictLogStore
+                .logSearcher
+                .search(
+                    TEST_DATASET_NAME,
+                    0,
+                    QueryBuilderUtil.generateQueryBuilder("", 0L, MAX_TIME),
+                    null,
+                    createTermsAggregatorFactoriesBuilder(
+                        "1", List.of(), "SearchPhrase", null, 10, 1, Map.of("_count", "asc")))
+                .internalAggregations
+                .get("1");
+    assertThat(terms.getBuckets().stream().map(b -> (String) b.getKey()).toList())
+        .containsExactlyInAnyOrder("alpha", "beta", "");
+
+    // cardinality(SearchPhrase): "" counts as one distinct value (Q5).
+    InternalCardinality cardinality =
+        (InternalCardinality)
+            strictLogStore
+                .logSearcher
+                .search(
+                    TEST_DATASET_NAME,
+                    0,
+                    QueryBuilderUtil.generateQueryBuilder("", 0L, MAX_TIME),
+                    null,
+                    new AggregatorFactories.Builder()
+                        .addAggregator(
+                            new CardinalityAggregationBuilder("1").field("SearchPhrase")))
+                .internalAggregations
+                .get("1");
+    assertThat(cardinality.getValue()).isEqualTo(3L);
+
+    // must_not term "" excludes the empty-string doc, matching OpenSearch `field <> ''` (Q30/Q31).
+    BoolQueryBuilder nonEmptyQuery =
+        (BoolQueryBuilder) QueryBuilderUtil.generateQueryBuilder("", 0L, MAX_TIME);
+    nonEmptyQuery.mustNot(new TermQueryBuilder("SearchPhrase", ""));
+    SearchResult<LogMessage> nonEmpty =
+        strictLogStore.logSearcher.search(TEST_DATASET_NAME, 1000, nonEmptyQuery, null, null);
+    assertThat(nonEmpty.hits.size()).isEqualTo(2);
   }
 
   @Test
