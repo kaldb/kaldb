@@ -41,7 +41,6 @@ public class SnapshotMetadataSerializerTest {
     assertThat(deserializedSnapshotMetadata.indexType).isEqualTo(IndexType.LUCENE);
     assertThat(deserializedSnapshotMetadata.snapshotPath).isEmpty();
     assertThat(deserializedSnapshotMetadata.snapshotGeneration).isZero();
-    assertThat(deserializedSnapshotMetadata.snapshotVersionToken).isEmpty();
     assertThat(deserializedSnapshotMetadata.version).isEqualTo(SnapshotMetadata.DEFAULT_VERSION);
   }
 
@@ -59,7 +58,6 @@ public class SnapshotMetadataSerializerTest {
             IndexType.LUCENE,
             "nrt/v1/partitions/1/chunks/snapshot-1/manifest.json",
             3,
-            "blob-version-token",
             "2");
 
     String serializedSnapshot = serDe.toJsonStr(snapshotMetadata);
@@ -69,7 +67,6 @@ public class SnapshotMetadataSerializerTest {
     assertThat(deserializedSnapshotMetadata.snapshotPath)
         .isEqualTo("nrt/v1/partitions/1/chunks/snapshot-1/manifest.json");
     assertThat(deserializedSnapshotMetadata.snapshotGeneration).isEqualTo(3);
-    assertThat(deserializedSnapshotMetadata.snapshotVersionToken).isEqualTo("blob-version-token");
     assertThat(deserializedSnapshotMetadata.version).isEqualTo("2");
   }
 
@@ -134,7 +131,6 @@ public class SnapshotMetadataSerializerTest {
     assertThat(deserializedSnapshotMetadata.indexType).isEqualTo(IndexType.LUCENE);
     assertThat(deserializedSnapshotMetadata.snapshotPath).isEqualTo(name);
     assertThat(deserializedSnapshotMetadata.snapshotGeneration).isZero();
-    assertThat(deserializedSnapshotMetadata.snapshotVersionToken).isEmpty();
     assertThat(deserializedSnapshotMetadata.version).isEqualTo(SnapshotMetadata.DEFAULT_VERSION);
   }
 

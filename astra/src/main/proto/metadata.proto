@@ -116,11 +116,11 @@ message SnapshotMetadata {
   // Monotonically increasing NRT generation for live snapshots.
   int64 snapshot_generation = 12;
 
-  // Generic blob-store conditional write token for the object referenced by snapshot_path.
-  string snapshot_version_token = 13;
-
   // Snapshot metadata schema version.
   string version = 14;
+
+  reserved 13;
+  reserved "snapshot_version_token";
 }
 
 message SearchMetadata {

@@ -104,6 +104,16 @@ How long a stale <tooltip term="chunk">chunk</tooltip>, or a chunk no longer bei
 before being deleted. If the [indexerConfig.maxChunksOnDisk](Config-options.md#maxchunksondisk) limit is reached prior to this value the chunk will
 be removed.
 
+### nrtEnabled
+
+```yaml
+indexerConfig:
+  nrtEnabled: false
+```
+
+Enables near-real-time live snapshot manifest publishing from the indexer. This should remain
+disabled until the corresponding cache live replica loading path is enabled.
+
 ### dataDirectory {id=indexer-data-directory}
 
 ```yaml

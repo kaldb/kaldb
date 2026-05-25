@@ -12,6 +12,8 @@ import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListeningExecutorService;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.slack.astra.blobfs.BlobStore;
+import com.slack.astra.blobfs.nrt.NrtBlobStore;
+import com.slack.astra.blobfs.nrt.NrtSnapshotPublisher;
 import com.slack.astra.chunk.Chunk;
 import com.slack.astra.chunk.ChunkInfo;
 import com.slack.astra.chunk.IndexingChunkImpl;
@@ -21,6 +23,7 @@ import com.slack.astra.chunkrollover.ChunkRollOverStrategy;
 import com.slack.astra.chunkrollover.DiskOrMessageCountBasedRolloverStrategy;
 import com.slack.astra.logstore.LogMessage;
 import com.slack.astra.logstore.LogStore;
+import com.slack.astra.logstore.LuceneIndexStoreConfig;
 import com.slack.astra.logstore.LuceneIndexStoreImpl;
 import com.slack.astra.metadata.search.SearchMetadataStore;
 import com.slack.astra.metadata.snapshot.SnapshotMetadataStore;
@@ -35,6 +38,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.OptionalLong;
 import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -66,7 +70,12 @@ public class IndexingChunkManager<T> extends ChunkManagerBase<T> {
   private final SearchContext searchContext;
   private final AstraConfigs.IndexerConfig indexerConfig;
   private final AstraConfigs.MetadataStoreConfig metadataStoreConfig;
+  private final long nrtPublishIntervalMs;
   private ReadWriteChunk<T> activeChunk;
+  private OptionalLong activeNrtStartOffsetInclusive;
+  private NrtSnapshotPublisher nrtSnapshotPublisher;
+  private long lastNrtPublishEpochMs;
+  private long lastNrtPublishedOffset;
 
   private final MeterRegistry meterRegistry;
   private final AtomicLong liveMessagesIndexedGauge;
@@ -141,9 +150,17 @@ public class IndexingChunkManager<T> extends ChunkManagerBase<T> {
     this.searchContext = searchContext;
     this.indexerConfig = indexerConfig;
     this.metadataStoreConfig = metadataStoreConfig;
+    this.nrtPublishIntervalMs =
+        LuceneIndexStoreConfig.getCommitDuration(
+                indexerConfig.getLuceneConfig().getCommitDurationSecs())
+            .toMillis();
 
     stopIngestion = true;
     activeChunk = null;
+    activeNrtStartOffsetInclusive = OptionalLong.empty();
+    nrtSnapshotPublisher = null;
+    lastNrtPublishEpochMs = 0;
+    lastNrtPublishedOffset = -1;
 
     LOG.info(
         "Created a chunk manager with prefix {} and dataDirectory {}",
@@ -179,12 +196,44 @@ public class IndexingChunkManager<T> extends ChunkManagerBase<T> {
     // find the active chunk and add a message to it
     ReadWriteChunk<T> currentChunk = getOrCreateActiveChunk(kafkaPartitionId, indexerConfig);
     currentChunk.addMessage(message, kafkaPartitionId, offset);
+    if (nrtSnapshotPublisher != null && activeNrtStartOffsetInclusive.isEmpty()) {
+      activeNrtStartOffsetInclusive = OptionalLong.of(offset);
+    }
     long currentIndexedMessages = liveMessagesIndexedGauge.incrementAndGet();
     long currentIndexedBytes = liveBytesIndexedGauge.addAndGet(msgSize);
 
     // If active chunk is full roll it over.
     if (chunkRollOverStrategy.shouldRollOver(currentIndexedBytes, currentIndexedMessages)) {
       doRollover(currentChunk);
+    } else {
+      maybePublishNrtSnapshot(currentChunk);
+    }
+  }
+
+  private void maybePublishNrtSnapshot(ReadWriteChunk<T> currentChunk) {
+    if (nrtSnapshotPublisher == null
+        || activeNrtStartOffsetInclusive.isEmpty()
+        || currentChunk.isReadOnly()) {
+      return;
+    }
+
+    long currentMaxOffset = currentChunk.info().getMaxOffset();
+    if (currentMaxOffset <= lastNrtPublishedOffset) {
+      return;
+    }
+
+    long nowEpochMs = Instant.now().toEpochMilli();
+    if (lastNrtPublishEpochMs > 0 && nowEpochMs - lastNrtPublishEpochMs < nrtPublishIntervalMs) {
+      return;
+    }
+
+    try {
+      currentChunk.publishNrtSnapshot(
+          nrtSnapshotPublisher, activeNrtStartOffsetInclusive.getAsLong());
+      lastNrtPublishEpochMs = nowEpochMs;
+      lastNrtPublishedOffset = currentMaxOffset;
+    } catch (RuntimeException e) {
+      LOG.warn("Failed to publish NRT snapshot for chunk={}", currentChunk.info(), e);
     }
   }
 
@@ -195,6 +244,7 @@ public class IndexingChunkManager<T> extends ChunkManagerBase<T> {
   private void doRollover(ReadWriteChunk<T> currentChunk) {
     // Set activeChunk to null first, so we can initiate the roll over.
     activeChunk = null;
+    activeNrtStartOffsetInclusive = OptionalLong.empty();
     liveBytesIndexedGauge.set(0);
     liveMessagesIndexedGauge.set(0);
     // Set the end time of the chunk and start the roll over.
@@ -275,6 +325,7 @@ public class IndexingChunkManager<T> extends ChunkManagerBase<T> {
               searchContext,
               kafkaPartitionId);
       chunkMap.put(newChunk.id(), newChunk);
+      activeNrtStartOffsetInclusive = OptionalLong.empty();
       // Register the chunk, so we can search it.
       newChunk.postCreate();
       activeChunk = newChunk;
@@ -397,6 +448,16 @@ public class IndexingChunkManager<T> extends ChunkManagerBase<T> {
         new SearchMetadataStore(curatorFramework, metadataStoreConfig, meterRegistry, false);
     snapshotMetadataStore =
         new SnapshotMetadataStore(curatorFramework, metadataStoreConfig, meterRegistry);
+    if (indexerConfig.getNrtEnabled()) {
+      String writerNodeId = searchContext.hostname + "-" + searchContext.port;
+      nrtSnapshotPublisher =
+          new NrtSnapshotPublisher(
+              blobStore, new NrtBlobStore(blobStore), snapshotMetadataStore, writerNodeId);
+      LOG.info(
+          "NRT live snapshot publishing enabled with writerNodeId={} intervalMs={}",
+          writerNodeId,
+          nrtPublishIntervalMs);
+    }
 
     stopIngestion = false;
   }

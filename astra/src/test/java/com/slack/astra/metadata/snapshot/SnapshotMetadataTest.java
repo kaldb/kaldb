@@ -32,7 +32,6 @@ public class SnapshotMetadataTest {
     assertThat(snapshotMetadata.indexType).isEqualTo(IndexType.LUCENE);
     assertThat(snapshotMetadata.snapshotPath).isEmpty();
     assertThat(snapshotMetadata.snapshotGeneration).isZero();
-    assertThat(snapshotMetadata.snapshotVersionToken).isEmpty();
     assertThat(snapshotMetadata.version).isEqualTo(SnapshotMetadata.DEFAULT_VERSION);
   }
 
@@ -51,7 +50,6 @@ public class SnapshotMetadataTest {
     assertThat(snapshotMetadata.indexType).isEqualTo(IndexType.LUCENE);
     assertThat(snapshotMetadata.snapshotPath).isEqualTo(name);
     assertThat(snapshotMetadata.snapshotGeneration).isZero();
-    assertThat(snapshotMetadata.snapshotVersionToken).isEmpty();
     assertThat(snapshotMetadata.version).isEqualTo(SnapshotMetadata.DEFAULT_VERSION);
   }
 
@@ -69,13 +67,11 @@ public class SnapshotMetadataTest {
             IndexType.LUCENE,
             "nrt/v1/partitions/1/chunks/snapshot-1/manifest.json",
             7,
-            "version-token",
             "2");
 
     assertThat(snapshotMetadata.snapshotPath)
         .isEqualTo("nrt/v1/partitions/1/chunks/snapshot-1/manifest.json");
     assertThat(snapshotMetadata.snapshotGeneration).isEqualTo(7);
-    assertThat(snapshotMetadata.snapshotVersionToken).isEqualTo("version-token");
     assertThat(snapshotMetadata.version).isEqualTo("2");
   }
 
@@ -93,7 +89,6 @@ public class SnapshotMetadataTest {
             IndexType.LUCENE,
             "",
             0,
-            "",
             SnapshotMetadata.DEFAULT_VERSION);
 
     assertThat(sealedSnapshot.snapshotPath).isEqualTo("snapshot-1");
@@ -170,7 +165,6 @@ public class SnapshotMetadataTest {
                     IndexType.LUCENE,
                     "",
                     -1,
-                    "",
                     SnapshotMetadata.DEFAULT_VERSION));
   }
 

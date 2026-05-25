@@ -33,7 +33,6 @@ import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.ObjectIdentifier;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
-import software.amazon.awssdk.services.s3.model.PutObjectResponse;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.services.s3.paginators.ListObjectsV2Publisher;
 import software.amazon.awssdk.transfer.s3.S3TransferManager;
@@ -55,13 +54,6 @@ public class BlobStore {
   protected final S3AsyncClient s3AsyncClient;
   private final String s3PathPrefix;
   private final S3TransferManager transferManager;
-
-  /** Thrown when a blob-store conditional write fails because the version token is stale. */
-  public static class VersionTokenMismatchException extends RuntimeException {
-    public VersionTokenMismatchException(String key) {
-      super(String.format("Version token did not match for S3 key: %s", key));
-    }
-  }
 
   private static String normalizePathPrefix(String s3PathPrefix) {
     String prefix = CharMatcher.is('/').trimFrom(Strings.nullToEmpty(s3PathPrefix));
@@ -327,55 +319,6 @@ public class BlobStore {
       }
     } catch (IOException | InterruptedException | ExecutionException e) {
       throw new RuntimeException("Failed to upload JSON data", e);
-    }
-  }
-
-  /**
-   * Uploads data and asks the blob store to enforce the supplied version token if one is available.
-   *
-   * @param key full object key inside this blob store
-   * @param jsonData data to upload
-   * @param gzip whether data should be gzip-compressed before upload
-   * @param versionToken expected blob version token, or empty when no token is available
-   * @return new blob-store version token
-   * @throws VersionTokenMismatchException when the blob store rejects the supplied version token
-   */
-  public String uploadDataWithVersionToken(
-      String key, String jsonData, boolean gzip, String versionToken) {
-    assert key != null && !key.isEmpty();
-    assert jsonData != null && !jsonData.isEmpty();
-
-    PutObjectRequest.Builder requestBuilder =
-        PutObjectRequest.builder().bucket(bucketName).key(addPathPrefix(key));
-    if (versionToken != null && !versionToken.isBlank()) {
-      requestBuilder.ifMatch(versionToken);
-    }
-
-    try {
-      PutObjectResponse response;
-      if (gzip) {
-        response =
-            s3AsyncClient
-                .putObject(
-                    requestBuilder.build(), AsyncRequestBody.fromBytes(compressData(jsonData)))
-                .get();
-      } else {
-        response =
-            s3AsyncClient
-                .putObject(
-                    requestBuilder.build(),
-                    AsyncRequestBody.fromString(jsonData, StandardCharsets.UTF_8))
-                .get();
-      }
-      return response.eTag();
-    } catch (IOException | InterruptedException e) {
-      throw new RuntimeException("Failed to conditionally upload data", e);
-    } catch (ExecutionException e) {
-      Throwable cause = e.getCause();
-      if (cause instanceof S3Exception s3Exception && s3Exception.statusCode() == 412) {
-        throw new VersionTokenMismatchException(key);
-      }
-      throw new RuntimeException("Failed to conditionally upload data", e);
     }
   }
 

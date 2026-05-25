@@ -20,7 +20,6 @@ public class SnapshotMetadataSerializer implements MetadataSerializer<SnapshotMe
         .setSnapshotType(toProtoSnapshotType(snapshotMetadata.snapshotType))
         .setIndexType(toProtoIndexType(snapshotMetadata.indexType))
         .setSnapshotGeneration(snapshotMetadata.snapshotGeneration)
-        .setSnapshotVersionToken(snapshotMetadata.snapshotVersionToken)
         .setVersion(snapshotMetadata.version)
         .build();
   }
@@ -39,7 +38,6 @@ public class SnapshotMetadataSerializer implements MetadataSerializer<SnapshotMe
         fromProtoIndexType(protoSnapshotMetadata.getIndexType()),
         protoSnapshotMetadata.getSnapshotPath(),
         protoSnapshotMetadata.getSnapshotGeneration(),
-        protoSnapshotMetadata.getSnapshotVersionToken(),
         protoSnapshotMetadata.getVersion());
   }
 

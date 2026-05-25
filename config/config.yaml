@@ -15,6 +15,7 @@ indexerConfig:
   readFromLocationOnStart: ${INDEXER_READ_FROM_LOCATION_ON_START:-LATEST}
   createRecoveryTasksOnStart: ${INDEXER_CREATE_RECOVERY_TASKS_ON_START:-true}
   maxChunksOnDisk: ${INDEXER_MAX_CHUNKS_ON_DISK:-3}
+  nrtEnabled: ${INDEXER_NRT_ENABLED:-false}
   serverConfig:
     serverPort: ${ASTRA_INDEX_SERVER_PORT:-8080}
     serverAddress: ${ASTRA_INDEX_SERVER_ADDRESS:-localhost}

@@ -32,7 +32,6 @@ class NrtBlobStoreTest {
                     "0",
                     "indexer-1",
                     1,
-                    1,
                     100,
                     1,
                     10,
@@ -51,7 +50,6 @@ class NrtBlobStoreTest {
                     "0",
                     "indexer-1",
                     1,
-                    1,
                     100,
                     1,
                     10,
@@ -66,8 +64,9 @@ class NrtBlobStoreTest {
   void testBlobKeyLayout() {
     NrtBlobStore nrtBlobStore = new NrtBlobStore(mock(BlobStore.class));
 
-    assertThat(nrtBlobStore.getManifestPath("0", "snapshot-1"))
-        .isEqualTo("nrt/v1/partitions/0/chunks/snapshot-1/manifest.json");
+    assertThat(nrtBlobStore.writeManifest(manifest()))
+        .isEqualTo(
+            "nrt/v1/partitions/0/chunks/snapshot-1/manifests/00000000000000000002-indexer-1.json");
   }
 
   @Test
@@ -75,19 +74,28 @@ class NrtBlobStoreTest {
     NrtBlobStore nrtBlobStore = new NrtBlobStore(mock(BlobStore.class));
 
     assertThatIllegalArgumentException()
-        .isThrownBy(() -> nrtBlobStore.getManifestPath("../0", "snapshot-1"));
+        .isThrownBy(
+            () -> nrtBlobStore.writeManifest(manifest("../0", "snapshot-1", 1, "indexer-1")));
     assertThatIllegalArgumentException()
-        .isThrownBy(() -> nrtBlobStore.getManifestPath("0", "snapshot/1"));
+        .isThrownBy(() -> nrtBlobStore.writeManifest(manifest("0", "snapshot/1", 1, "indexer-1")));
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> nrtBlobStore.writeManifest(manifest("0", "snapshot-1", 0, "indexer-1")));
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> nrtBlobStore.writeManifest(manifest("0", "snapshot-1", 1, "indexer/1")));
   }
 
   private static NrtManifest manifest() {
+    return manifest("0", "snapshot-1", 2, "indexer-1");
+  }
+
+  private static NrtManifest manifest(
+      String partitionId, String snapshotId, long manifestGeneration, String writerNodeId) {
     return new NrtManifest(
         1,
-        "snapshot-1",
-        "0",
-        "indexer-1",
-        1,
-        2,
+        snapshotId,
+        partitionId,
+        writerNodeId,
+        manifestGeneration,
         1700000060000L,
         4,
         1000,

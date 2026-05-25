@@ -13,6 +13,7 @@ indexerConfig:
   maxOffsetDelayMessages: 10001
   defaultQueryTimeoutMs: 1500
   maxChunksOnDisk: 3
+  nrtEnabled: false
   serverConfig:
     serverPort: 8080
     serverAddress: "localhost"

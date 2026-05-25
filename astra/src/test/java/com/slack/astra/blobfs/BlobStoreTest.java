@@ -267,22 +267,6 @@ class BlobStoreTest {
   }
 
   @Test
-  public void testUploadDataWithVersionToken() {
-    BlobStore blobStore = new BlobStore(s3Client, TEST_BUCKET, "");
-    String key = UUID.randomUUID().toString();
-
-    String createdVersionToken =
-        blobStore.uploadDataWithVersionToken(key, "{\"generation\":1}", false, "");
-    assertThat(createdVersionToken).isNotBlank();
-
-    String updatedVersionToken =
-        blobStore.uploadDataWithVersionToken(key, "{\"generation\":2}", false, createdVersionToken);
-    assertThat(updatedVersionToken).isNotBlank();
-
-    assertThat(blobStore.readFileData(key, false)).isEqualTo("{\"generation\":2}");
-  }
-
-  @Test
   public void testUploadDownloadJsonData_gzip() throws IOException {
     BlobStore blobStore = new BlobStore(s3Client, TEST_BUCKET, "");
     String chunkId = UUID.randomUUID().toString();

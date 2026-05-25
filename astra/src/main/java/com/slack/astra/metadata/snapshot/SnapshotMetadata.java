@@ -46,7 +46,6 @@ public class SnapshotMetadata extends AstraPartitionedMetadata {
   public long maxOffset;
   public long sizeInBytesOnDisk;
   public final long snapshotGeneration;
-  public final String snapshotVersionToken;
   public final String version;
 
   private static String normalizeSnapshotPath(
@@ -82,7 +81,6 @@ public class SnapshotMetadata extends AstraPartitionedMetadata {
         IndexType.LUCENE,
         sizeInBytesOnDisk == 0 ? "" : snapshotId,
         0,
-        "",
         DEFAULT_VERSION);
   }
 
@@ -97,7 +95,6 @@ public class SnapshotMetadata extends AstraPartitionedMetadata {
       IndexType indexType,
       String snapshotPath,
       long snapshotGeneration,
-      String snapshotVersionToken,
       String version) {
     super(snapshotId);
     checkArgument(snapshotId != null && !snapshotId.isEmpty(), "snapshotId can't be null or empty");
@@ -121,7 +118,6 @@ public class SnapshotMetadata extends AstraPartitionedMetadata {
     this.partitionId = partitionId;
     this.sizeInBytesOnDisk = sizeInBytesOnDisk;
     this.snapshotGeneration = snapshotGeneration;
-    this.snapshotVersionToken = Objects.requireNonNullElse(snapshotVersionToken, "");
     this.version = normalizeVersion(version);
   }
 
@@ -141,7 +137,6 @@ public class SnapshotMetadata extends AstraPartitionedMetadata {
         && snapshotType == that.snapshotType
         && indexType == that.indexType
         && partitionId.equals(that.partitionId)
-        && snapshotVersionToken.equals(that.snapshotVersionToken)
         && version.equals(that.version);
   }
 
@@ -158,7 +153,6 @@ public class SnapshotMetadata extends AstraPartitionedMetadata {
     result = 31 * result + partitionId.hashCode();
     result = 31 * result + Long.hashCode(sizeInBytesOnDisk);
     result = 31 * result + Long.hashCode(snapshotGeneration);
-    result = 31 * result + snapshotVersionToken.hashCode();
     result = 31 * result + version.hashCode();
     return result;
   }
@@ -189,9 +183,6 @@ public class SnapshotMetadata extends AstraPartitionedMetadata {
         + sizeInBytesOnDisk
         + ", snapshotGeneration="
         + snapshotGeneration
-        + ", snapshotVersionToken='"
-        + snapshotVersionToken
-        + '\''
         + ", version='"
         + version
         + '\''

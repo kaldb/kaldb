@@ -10,7 +10,6 @@ import java.util.Objects;
 
 /** Blob-store primitives for near-real-time snapshot manifest replication. */
 public class NrtBlobStore {
-  private static final String MANIFEST_FILE_NAME = "manifest.json";
   private static final String NRT_ROOT = "nrt";
   private static final String NRT_VERSION = "v1";
 
@@ -25,12 +24,20 @@ public class NrtBlobStore {
         "%s/%s/partitions/%s/chunks/%s", NRT_ROOT, NRT_VERSION, partitionId, snapshotId);
   }
 
-  private static String manifestKey(String partitionId, String snapshotId) {
-    return String.format("%s/%s", chunkPrefix(partitionId, snapshotId), MANIFEST_FILE_NAME);
+  static String filesPath(String partitionId, String snapshotId) {
+    return String.format("%s/files", chunkPrefix(partitionId, snapshotId));
   }
 
-  /** Deserializes and validates an NRT manifest JSON payload. */
-  public static NrtManifest deserializeManifest(String manifestJson) {
+  static String manifestPath(
+      String partitionId, String snapshotId, long generation, String writerNodeId) {
+    checkArgument(generation > 0, "generation must be positive");
+    validateKeyPart(writerNodeId, "writerNodeId");
+    return String.format(
+        "%s/manifests/%020d-%s.json",
+        chunkPrefix(partitionId, snapshotId), generation, writerNodeId);
+  }
+
+  static NrtManifest deserializeManifest(String manifestJson) {
     checkArgument(manifestJson != null && !manifestJson.isBlank(), "manifestJson is required");
     try {
       return OBJECT_MAPPER.readValue(manifestJson, NrtManifest.class);
@@ -39,8 +46,7 @@ public class NrtBlobStore {
     }
   }
 
-  /** Serializes a validated NRT manifest to JSON. */
-  public static String serializeManifest(NrtManifest manifest) {
+  static String serializeManifest(NrtManifest manifest) {
     Objects.requireNonNull(manifest, "manifest");
     try {
       return OBJECT_MAPPER.writeValueAsString(manifest);
@@ -71,13 +77,13 @@ public class NrtBlobStore {
     checkArgument(checksum != null && !checksum.isBlank(), "%s.checksum is required", fieldName);
   }
 
+  /**
+   * Creates NRT-specific blob-store operations backed by the shared Astra blob store.
+   *
+   * @param blobStore blob store used for manifest reads and writes
+   */
   public NrtBlobStore(BlobStore blobStore) {
     this.blobStore = Objects.requireNonNull(blobStore, "blobStore");
-  }
-
-  /** Returns the stable manifest path that SnapshotMetadata.snapshotPath should point at. */
-  public String getManifestPath(String partitionId, String snapshotId) {
-    return manifestKey(partitionId, snapshotId);
   }
 
   /** Reads and validates the manifest referenced by SnapshotMetadata.snapshotPath. */
@@ -90,12 +96,19 @@ public class NrtBlobStore {
     return deserializeManifest(data);
   }
 
-  /** Conditionally writes the stable manifest object and returns the new version token. */
-  public String writeManifest(
-      String snapshotPath, NrtManifest manifest, String expectedVersionToken) {
-    checkArgument(snapshotPath != null && !snapshotPath.isBlank(), "snapshotPath is required");
-    return blobStore.uploadDataWithVersionToken(
-        snapshotPath, serializeManifest(manifest), false, expectedVersionToken);
+  /**
+   * Writes an immutable manifest object and returns the path to commit through SnapshotMetadata
+   * CAS.
+   */
+  public String writeManifest(NrtManifest manifest) {
+    String snapshotPath =
+        manifestPath(
+            manifest.partitionId(),
+            manifest.snapshotId(),
+            manifest.manifestGeneration(),
+            manifest.writerNodeId());
+    blobStore.uploadData(snapshotPath, serializeManifest(manifest), false);
+    return snapshotPath;
   }
 
   /** File metadata for one object required by an NRT manifest. */
@@ -111,7 +124,6 @@ public class NrtBlobStore {
       String snapshotId,
       String partitionId,
       String writerNodeId,
-      long writerEpoch,
       long manifestGeneration,
       long createdAtEpochMs,
       long luceneCommitGeneration,
@@ -126,7 +138,6 @@ public class NrtBlobStore {
       validateKeyPart(snapshotId, "snapshotId");
       validateKeyPart(partitionId, "partitionId");
       checkArgument(writerNodeId != null && !writerNodeId.isBlank(), "writerNodeId is required");
-      checkArgument(writerEpoch >= 0, "writerEpoch must be non-negative");
       checkArgument(manifestGeneration > 0, "manifestGeneration must be positive");
       checkArgument(createdAtEpochMs > 0, "createdAtEpochMs must be positive");
       checkArgument(luceneCommitGeneration >= 0, "luceneCommitGeneration must be non-negative");
