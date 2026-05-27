@@ -10,6 +10,7 @@ import com.linecorp.armeria.common.AggregatedHttpRequest;
 import com.linecorp.armeria.common.HttpResponse;
 import com.linecorp.armeria.common.HttpStatus;
 import com.linecorp.armeria.common.MediaType;
+import com.linecorp.armeria.server.annotation.Blocking;
 import com.linecorp.armeria.server.annotation.Post;
 import com.slack.astra.bulkIngestApi.BulkIngestKafkaProducer;
 import com.slack.astra.bulkIngestApi.BulkIngestResponse;
@@ -23,7 +24,6 @@ import io.opentelemetry.proto.collector.trace.v1.ExportTraceServiceResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -73,12 +73,10 @@ public class OtlpTraceIngestApi {
   }
 
   /** Handles OTLP/HTTP trace export requests. */
+  @Blocking
   @Post("/v1/traces")
   public HttpResponse ingestTraces(AggregatedHttpRequest request) {
-    CompletableFuture<HttpResponse> responseFuture = new CompletableFuture<>();
     Timer.Sample sample = Timer.start(meterRegistry);
-    CompletableFuture<HttpResponse> timedFuture =
-        responseFuture.whenComplete((response, error) -> sample.stop(otlpTraceTimer));
 
     try {
       byte[] body = request.content().array();
@@ -90,48 +88,33 @@ public class OtlpTraceIngestApi {
 
       for (Map.Entry<String, List<Trace.Span>> indexDocs : docs.entrySet()) {
         if (!datasetRateLimitingService.tryAcquire(indexDocs.getKey(), indexDocs.getValue())) {
-          responseFuture.complete(
-              HttpResponse.ofJson(
-                  HttpStatus.valueOf(rateLimitExceededErrorCode),
-                  new BulkIngestResponse(0, 0, "rate limit exceeded")));
-          return HttpResponse.of(timedFuture);
+          return HttpResponse.ofJson(
+              HttpStatus.valueOf(rateLimitExceededErrorCode),
+              new BulkIngestResponse(0, 0, "rate limit exceeded"));
         }
       }
 
-      // TODO: Move this blocking Kafka response wait onto an Armeria blocking executor instead of
-      // using a per-request virtual thread.
-      Thread.ofVirtual()
-          .start(
-              () -> {
-                try {
-                  BulkIngestResponse response =
-                      bulkIngestKafkaProducer.submitRequest(docs).getResponse();
-                  if (response.failedDocs() > 0) {
-                    completeError(responseFuture, INTERNAL_SERVER_ERROR, response.errorMsg());
-                  } else {
-                    responseFuture.complete(successResponse(request.contentType()));
-                  }
-                } catch (InterruptedException e) {
-                  Thread.currentThread().interrupt();
-                  LOG.error("OTLP trace ingest request interrupted", e);
-                  completeError(responseFuture, INTERNAL_SERVER_ERROR, e.getMessage());
-                } catch (Exception e) {
-                  LOG.error("OTLP trace ingest request failed", e);
-                  completeError(responseFuture, INTERNAL_SERVER_ERROR, e.getMessage());
-                }
-              });
+      BulkIngestResponse response = bulkIngestKafkaProducer.submitRequest(docs).getResponse();
+      if (response.failedDocs() > 0) {
+        return errorResponse(INTERNAL_SERVER_ERROR, response.errorMsg());
+      }
+      return successResponse(request.contentType());
     } catch (InvalidProtocolBufferException e) {
       LOG.warn("Unable to parse OTLP trace request", e);
-      completeError(responseFuture, BAD_REQUEST, "Unable to parse OTLP trace request");
+      return errorResponse(BAD_REQUEST, "Unable to parse OTLP trace request");
     } catch (UnsupportedOperationException e) {
       LOG.warn("Unsupported OTLP trace content type", e);
-      completeError(responseFuture, UNSUPPORTED_MEDIA_TYPE, e.getMessage());
+      return errorResponse(UNSUPPORTED_MEDIA_TYPE, e.getMessage());
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      LOG.error("OTLP trace ingest request interrupted", e);
+      return errorResponse(INTERNAL_SERVER_ERROR, e.getMessage());
     } catch (Exception e) {
       LOG.error("OTLP trace ingest request failed", e);
-      completeError(responseFuture, INTERNAL_SERVER_ERROR, e.getMessage());
+      return errorResponse(INTERNAL_SERVER_ERROR, e.getMessage());
+    } finally {
+      sample.stop(otlpTraceTimer);
     }
-
-    return HttpResponse.of(timedFuture);
   }
 
   private Map<String, List<Trace.Span>> parseRequest(MediaType contentType, byte[] body)
@@ -154,9 +137,8 @@ public class OtlpTraceIngestApi {
         OK, MediaType.X_PROTOBUF, ExportTraceServiceResponse.getDefaultInstance().toByteArray());
   }
 
-  private void completeError(
-      CompletableFuture<HttpResponse> responseFuture, HttpStatus status, String message) {
+  private HttpResponse errorResponse(HttpStatus status, String message) {
     otlpTraceErrorCounter.increment();
-    responseFuture.complete(HttpResponse.ofJson(status, new BulkIngestResponse(0, 0, message)));
+    return HttpResponse.ofJson(status, new BulkIngestResponse(0, 0, message));
   }
 }
