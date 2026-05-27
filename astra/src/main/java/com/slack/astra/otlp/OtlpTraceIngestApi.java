@@ -98,6 +98,8 @@ public class OtlpTraceIngestApi {
         }
       }
 
+      // TODO: Move this blocking Kafka response wait onto an Armeria blocking executor instead of
+      // using a per-request virtual thread.
       Thread.ofVirtual()
           .start(
               () -> {

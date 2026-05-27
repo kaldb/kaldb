@@ -131,8 +131,11 @@ public class PreprocessorRateLimiter {
     }
   }
 
+  /** Returns the rate limit byte cost with a one-byte floor for each span. */
   public static int getSpanBytes(List<Trace.Span> spans) {
-    return spans.stream().mapToInt(Trace.Span::getSerializedSize).sum();
+    // Empty protobuf spans serialize to zero bytes, but should still count per span so large
+    // empty batches cannot bypass rate limiting.
+    return spans.stream().mapToInt(span -> Math.max(1, span.getSerializedSize())).sum();
   }
 
   public BiPredicate<String, List<Trace.Span>> createBulkIngestRateLimiter(
@@ -169,9 +172,7 @@ public class PreprocessorRateLimiter {
         return false;
       }
 
-      // Protobuf messages with only default or unset fields can serialize to zero bytes.
-      // Charge at least one byte so empty spans cannot bypass rate limiting.
-      int totalBytes = Math.max(1, getSpanBytes(docs));
+      int totalBytes = getSpanBytes(docs);
       if (index == null) {
         // index name wasn't provided
         LOG.debug("Message was dropped due to missing index name - '{}'", index);

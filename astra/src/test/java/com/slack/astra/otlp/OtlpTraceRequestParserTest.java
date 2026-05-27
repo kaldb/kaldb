@@ -149,6 +149,42 @@ class OtlpTraceRequestParserTest {
   }
 
   @Test
+  void parsesJsonOtlpTraceRequestWithHexIds() throws Exception {
+    String json =
+        """
+        {
+          "resourceSpans": [{
+            "resource": {
+              "attributes": [{
+                "key": "service.name",
+                "value": {"stringValue": "frontend"}
+              }]
+            },
+            "scopeSpans": [{
+              "spans": [{
+                "traceId": "000102030405060708090a0b0c0d0e0f",
+                "spanId": "1011121314151617",
+                "parentSpanId": "2021222324252627",
+                "name": "GET /api",
+                "startTimeUnixNano": "1700000000123456789",
+                "endTimeUnixNano": "1700000000555556789"
+              }]
+            }]
+          }]
+        }
+        """;
+
+    Map<String, List<Trace.Span>> spansByDataset =
+        OtlpTraceRequestParser.parseJson(
+            json, TRACE_DATASET, Schema.IngestSchema.getDefaultInstance());
+
+    Trace.Span span = spansByDataset.get(TRACE_DATASET).get(0);
+    assertThat(span.getTraceId().toStringUtf8()).isEqualTo("000102030405060708090a0b0c0d0e0f");
+    assertThat(span.getId().toStringUtf8()).isEqualTo("1011121314151617");
+    assertThat(span.getParentId().toStringUtf8()).isEqualTo("2021222324252627");
+  }
+
+  @Test
   void routesAllServicesToConfiguredTraceDataset() throws Exception {
     ExportTraceServiceRequest request =
         ExportTraceServiceRequest.newBuilder()

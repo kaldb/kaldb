@@ -1,5 +1,9 @@
 package com.slack.astra.otlp;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.util.JsonFormat;
@@ -17,6 +21,8 @@ import io.opentelemetry.proto.trace.v1.ResourceSpans;
 import io.opentelemetry.proto.trace.v1.ScopeSpans;
 import io.opentelemetry.proto.trace.v1.Span;
 import java.util.ArrayList;
+import java.util.Base64;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -26,6 +32,10 @@ import org.apache.commons.codec.binary.Hex;
 /** Converts OTLP trace export requests into KalDB trace spans. */
 public final class OtlpTraceRequestParser {
   public static final String DEFAULT_TRACE_DATASET_NAME = "otel_traces";
+
+  private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+  private static final int TRACE_ID_HEX_LENGTH = 32;
+  private static final int SPAN_ID_HEX_LENGTH = 16;
 
   private static final String RESOURCE_PREFIX = "resource.";
   private static final String SCOPE_PREFIX = "scope.";
@@ -47,7 +57,7 @@ public final class OtlpTraceRequestParser {
       String postBody, String traceDatasetName, Schema.IngestSchema schema)
       throws InvalidProtocolBufferException {
     ExportTraceServiceRequest.Builder builder = ExportTraceServiceRequest.newBuilder();
-    JsonFormat.parser().ignoringUnknownFields().merge(postBody, builder);
+    JsonFormat.parser().ignoringUnknownFields().merge(normalizeJsonTraceIds(postBody), builder);
     return convert(builder.build(), traceDatasetName, schema);
   }
 
@@ -57,6 +67,57 @@ public final class OtlpTraceRequestParser {
       return DEFAULT_TRACE_DATASET_NAME;
     }
     return traceDatasetName;
+  }
+
+  private static String normalizeJsonTraceIds(String postBody)
+      throws InvalidProtocolBufferException {
+    try {
+      JsonNode root = OBJECT_MAPPER.readTree(postBody);
+      rewriteHexIdFields(root);
+      return OBJECT_MAPPER.writeValueAsString(root);
+    } catch (JsonProcessingException e) {
+      InvalidProtocolBufferException exception = new InvalidProtocolBufferException(e.getMessage());
+      exception.initCause(e);
+      throw exception;
+    }
+  }
+
+  private static void rewriteHexIdFields(JsonNode node) {
+    if (node == null) {
+      return;
+    }
+
+    if (node.isObject()) {
+      ObjectNode objectNode = (ObjectNode) node;
+      rewriteHexIdField(objectNode, "traceId", TRACE_ID_HEX_LENGTH);
+      rewriteHexIdField(objectNode, "spanId", SPAN_ID_HEX_LENGTH);
+      rewriteHexIdField(objectNode, "parentSpanId", SPAN_ID_HEX_LENGTH);
+    }
+
+    node.elements().forEachRemaining(OtlpTraceRequestParser::rewriteHexIdFields);
+  }
+
+  private static void rewriteHexIdField(ObjectNode objectNode, String fieldName, int hexLength) {
+    JsonNode valueNode = objectNode.get(fieldName);
+    if (valueNode == null || !valueNode.isTextual()) {
+      return;
+    }
+
+    String value = valueNode.asText();
+    if (value.length() != hexLength || !isHex(value)) {
+      return;
+    }
+
+    objectNode.put(fieldName, Base64.getEncoder().encodeToString(HexFormat.of().parseHex(value)));
+  }
+
+  private static boolean isHex(String value) {
+    for (int i = 0; i < value.length(); i++) {
+      if (Character.digit(value.charAt(i), 16) == -1) {
+        return false;
+      }
+    }
+    return true;
   }
 
   private static Map<String, List<Trace.Span>> convert(
