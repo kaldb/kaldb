@@ -9,7 +9,6 @@ import com.google.protobuf.ByteString;
 import com.slack.astra.logstore.LogMessage;
 import com.slack.astra.logstore.LogWireMessage;
 import com.slack.astra.logstore.opensearch.OpenSearchInternalAggregation;
-import com.slack.astra.logstore.schema.ReservedFields;
 import com.slack.astra.metadata.schema.FieldType;
 import com.slack.astra.proto.service.AstraSearch;
 import com.slack.astra.util.JsonUtil;
@@ -205,14 +204,7 @@ public class SearchResultUtils {
     if ("_doc".equals(fieldName)) {
       return;
     }
-    sortFieldSpecs.add(new SearchQuery.SortFieldSpec(normalizeSortFieldName(fieldName), direction));
-  }
-
-  private static String normalizeSortFieldName(String fieldName) {
-    if (ReservedFields.TIMESTAMP.equals(fieldName)) {
-      return LogMessage.SystemField.TIME_SINCE_EPOCH.fieldName;
-    }
-    return fieldName;
+    sortFieldSpecs.add(new SearchQuery.SortFieldSpec(fieldName, direction));
   }
 
   public static SearchResult<LogMessage> fromSearchResultProtoOrEmpty(

@@ -83,7 +83,7 @@ public class SearchResultUtilsTest {
 
     assertThat(sortFieldSpecs)
         .containsExactly(
-            new SearchQuery.SortFieldSpec("_timesinceepoch", SearchQuery.SortDirection.DESC),
+            new SearchQuery.SortFieldSpec("@timestamp", SearchQuery.SortDirection.DESC),
             new SearchQuery.SortFieldSpec("SearchPhrase", SearchQuery.SortDirection.ASC),
             new SearchQuery.SortFieldSpec("WindowClientWidth", SearchQuery.SortDirection.DESC));
   }

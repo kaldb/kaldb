@@ -3,7 +3,6 @@ package com.slack.astra.logstore.search;
 import static com.slack.astra.util.ArgValidationUtils.ensureTrue;
 
 import com.slack.astra.logstore.LogMessage;
-import com.slack.astra.logstore.schema.ReservedFields;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
@@ -140,8 +139,7 @@ public class SearchQuery {
 
   /** Returns the response sort value for a hit and sort field. */
   public static Object sortValue(LogMessage message, SortFieldSpec sortFieldSpec) {
-    if (ReservedFields.TIMESTAMP.equals(sortFieldSpec.field())
-        || LogMessage.SystemField.TIME_SINCE_EPOCH.fieldName.equals(sortFieldSpec.field())) {
+    if (LogMessage.SystemField.TIME_SINCE_EPOCH.fieldName.equals(sortFieldSpec.field())) {
       return message.getTimestamp().toEpochMilli();
     }
     return message.getSource().get(sortFieldSpec.field());
