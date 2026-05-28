@@ -374,6 +374,7 @@ class OtlpTraceIngestApiTest {
 
   private void validateOffset(KafkaConsumer<String, byte[]> kafkaConsumer, long expectedOffset) {
     await()
+        .pollInSameThread()
         .until(
             () ->
                 kafkaConsumer
