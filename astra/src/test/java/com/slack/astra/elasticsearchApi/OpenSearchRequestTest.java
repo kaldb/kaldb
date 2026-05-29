@@ -155,6 +155,44 @@ public class OpenSearchRequestTest {
   }
 
   @Test
+  public void testGetAggregationJsonWithMultipleTopLevelAggs() throws Exception {
+    String searchBody =
+        """
+        {
+          "size": 0,
+          "aggs": {
+            "over_time": {
+              "date_histogram": {
+                "field": "_timesinceepoch",
+                "interval": "10m",
+                "min_doc_count": 0,
+                "extended_bounds": {
+                  "min": 1676498801027,
+                  "max": 1676500240688
+                },
+                "format": "epoch_millis"
+              },
+              "aggs": {}
+            },
+            "services": {
+              "terms": {
+                "field": "service_name",
+                "size": 10
+              }
+            }
+          }
+        }
+        """;
+
+    OpenSearchRequest openSearchRequest = new OpenSearchRequest();
+    AstraSearch.SearchRequest request =
+        openSearchRequest.parseSingleSearchRequest("test", searchBody);
+
+    JsonNode parsedRequest = OBJECT_MAPPER.readTree(searchBody);
+    assertThat(request.getAggregationJson()).isEqualTo(parsedRequest.get("aggs").toString());
+  }
+
+  @Test
   public void testExplicitEmptyAggsTakesPrecedenceOverAggregations() throws Exception {
     String searchBody =
         """

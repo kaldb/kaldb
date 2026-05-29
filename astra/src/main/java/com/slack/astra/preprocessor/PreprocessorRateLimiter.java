@@ -20,7 +20,6 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.function.BiPredicate;
 import java.util.stream.Collectors;
 import javax.annotation.concurrent.ThreadSafe;
@@ -152,20 +151,13 @@ public class PreprocessorRateLimiter {
         throughputSortedDatasets.stream()
             .map(
                 datasetMetadata -> {
-                  // get the currently active partition, and then calculate the active partitions
-                  Optional<Integer> activePartitionCount =
-                      datasetMetadata.getPartitionConfigs().stream()
-                          .filter((item) -> item.getEndTimeEpochMs() == Long.MAX_VALUE)
-                          .map(item -> item.getPartitions().size())
-                          .findFirst();
-
-                  return activePartitionCount
-                      .map(
-                          integer ->
-                              MultiGauge.Row.of(
-                                  Tags.of(Tag.of("service", datasetMetadata.getName())),
-                                  datasetMetadata.getThroughputBytes() / integer))
-                      .orElse(null);
+                  if (datasetMetadata.getActivePartitionMetadata().isEmpty()
+                      || datasetMetadata.getActivePartitionIds().isEmpty()) {
+                    return null;
+                  }
+                  return MultiGauge.Row.of(
+                      Tags.of(Tag.of("service", datasetMetadata.getName())),
+                      datasetMetadata.getActivePerPartitionThroughput());
                 })
             .filter(Objects::nonNull)
             .collect(Collectors.toUnmodifiableList()),

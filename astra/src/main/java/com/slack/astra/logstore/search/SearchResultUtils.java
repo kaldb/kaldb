@@ -232,7 +232,7 @@ public class SearchResultUtils {
 
     ByteString bytes =
         ByteString.copyFrom(
-            OpenSearchInternalAggregation.toByteArray(searchResult.internalAggregation));
+            OpenSearchInternalAggregation.toByteArray(searchResult.internalAggregations));
     searchResultBuilder.setInternalAggregations(bytes);
     span.finish();
     return searchResultBuilder.build();

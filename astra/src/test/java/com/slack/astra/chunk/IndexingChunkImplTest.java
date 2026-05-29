@@ -653,7 +653,7 @@ public class IndexingChunkImplTest {
       String bucket = "invalid-bucket";
       S3AsyncClient s3AsyncClient =
           S3TestUtils.createS3CrtClient(S3_MOCK_EXTENSION.getServiceEndpoint());
-      BlobStore blobStore = new BlobStore(s3AsyncClient, bucket);
+      BlobStore blobStore = new BlobStore(s3AsyncClient, bucket, "");
 
       // Snapshot to S3 without creating the s3 bucket.
       assertThat(chunk.snapshotToS3(blobStore)).isFalse();
@@ -747,7 +747,7 @@ public class IndexingChunkImplTest {
       s3Client.createBucket(CreateBucketRequest.builder().bucket(bucket).build()).get();
 
       // Spy the real blobstore
-      BlobStore realBlobStore = new BlobStore(s3Client, bucket);
+      BlobStore realBlobStore = new BlobStore(s3Client, bucket, "");
       BlobStore spyBlobStore = org.mockito.Mockito.spy(realBlobStore);
 
       // Override upload to simulate skipping schema.json and injecting write.lock
@@ -831,7 +831,7 @@ public class IndexingChunkImplTest {
       S3AsyncClient s3AsyncClient =
           S3TestUtils.createS3CrtClient(S3_MOCK_EXTENSION.getServiceEndpoint());
       s3AsyncClient.createBucket(CreateBucketRequest.builder().bucket(bucket).build()).get();
-      BlobStore blobStore = new BlobStore(s3AsyncClient, bucket);
+      BlobStore blobStore = new BlobStore(s3AsyncClient, bucket, "");
 
       // Snapshot to S3
       assertThat(chunk.snapshotToS3(blobStore)).isTrue();

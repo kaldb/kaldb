@@ -23,7 +23,7 @@ public class DatasetMetadataTest {
         new DatasetPartitionMetadata(
             Instant.now().toEpochMilli(),
             Instant.now().plusSeconds(90).toEpochMilli(),
-            List.of("partition"));
+            List.of("1"));
     final List<DatasetPartitionMetadata> partitionConfigs = Collections.singletonList(partition);
     DatasetMetadata datasetMetadata =
         new DatasetMetadata(name, owner, throughputBytes, partitionConfigs, name);
@@ -58,7 +58,7 @@ public class DatasetMetadataTest {
         new DatasetPartitionMetadata(
             Instant.now().toEpochMilli(),
             Instant.now().plusSeconds(90).toEpochMilli(),
-            List.of("partition"));
+            List.of("1"));
     final List<DatasetPartitionMetadata> partitionConfigs1 = Collections.singletonList(partition);
     assertThatIllegalArgumentException()
         .isThrownBy(
@@ -77,7 +77,7 @@ public class DatasetMetadataTest {
         new DatasetPartitionMetadata(
             Instant.now().toEpochMilli(),
             Instant.now().plusSeconds(90).toEpochMilli(),
-            List.of("partition"));
+            List.of("1"));
     final List<DatasetPartitionMetadata> partitionConfigs1 = Collections.singletonList(partition);
     DatasetMetadata datasetMetadata =
         new DatasetMetadata(name, owner, throughputBytes, partitionConfigs1, name);
@@ -91,7 +91,7 @@ public class DatasetMetadataTest {
         new DatasetPartitionMetadata(
             Instant.now().toEpochMilli(),
             Instant.now().plusSeconds(90).toEpochMilli(),
-            List.of("partition2"));
+            List.of("2"));
 
     assertThatExceptionOfType(UnsupportedOperationException.class)
         .isThrownBy(() -> datasetMetadata.partitionConfigs.add(partition2));
@@ -106,7 +106,7 @@ public class DatasetMetadataTest {
         new DatasetPartitionMetadata(
             Instant.now().toEpochMilli(),
             Instant.now().plusSeconds(90).toEpochMilli(),
-            List.of("partition"));
+            List.of("1"));
     final List<DatasetPartitionMetadata> partitionConfig = Collections.singletonList(partition);
 
     DatasetMetadata datasetMetadata1 =
@@ -119,11 +119,14 @@ public class DatasetMetadataTest {
         new DatasetMetadata(name, owner, throughputBytes + 4, partitionConfig, name);
     DatasetMetadata datasetMetadata5 =
         new DatasetMetadata(name, owner, throughputBytes, Collections.emptyList(), name);
+    DatasetMetadata datasetMetadata6 =
+        new DatasetMetadata(name, owner, throughputBytes, partitionConfig, name, true);
 
     assertThat(datasetMetadata1).isNotEqualTo(datasetMetadata2);
     assertThat(datasetMetadata1).isNotEqualTo(datasetMetadata3);
     assertThat(datasetMetadata1).isNotEqualTo(datasetMetadata4);
     assertThat(datasetMetadata1).isNotEqualTo(datasetMetadata5);
+    assertThat(datasetMetadata1).isNotEqualTo(datasetMetadata6);
 
     Set<DatasetMetadata> set = new HashSet<>();
     set.add(datasetMetadata1);
@@ -131,14 +134,16 @@ public class DatasetMetadataTest {
     set.add(datasetMetadata3);
     set.add(datasetMetadata4);
     set.add(datasetMetadata5);
-    assertThat(set.size()).isEqualTo(5);
+    set.add(datasetMetadata6);
+    assertThat(set.size()).isEqualTo(6);
     assertThat(set)
         .containsOnly(
             datasetMetadata1,
             datasetMetadata2,
             datasetMetadata3,
             datasetMetadata4,
-            datasetMetadata5);
+            datasetMetadata5,
+            datasetMetadata6);
   }
 
   @Test
@@ -150,7 +155,7 @@ public class DatasetMetadataTest {
         new DatasetPartitionMetadata(
             Instant.now().toEpochMilli(),
             Instant.now().plusSeconds(90).toEpochMilli(),
-            List.of("partition"));
+            List.of("1"));
     final List<DatasetPartitionMetadata> partitionConfig = Collections.singletonList(partition);
 
     assertThatIllegalArgumentException()
@@ -171,7 +176,7 @@ public class DatasetMetadataTest {
   public void testValidServicePartitions() {
     final String name = "testService";
     final String owner = "serviceOwner";
-    final String partitionName = "partition";
+    final String partitionName = "1";
     final List<String> partitionlist = List.of(partitionName);
     final long throughputBytes = 2000;
 

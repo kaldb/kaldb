@@ -256,6 +256,7 @@ s3Config:
   s3EndPoint: localhost:9090
   s3Bucket: test-s3-bucket
   s3TargetThroughputGbps: 25
+  s3PathPrefix: shared/path
 ```
 
 <deflist type="wide">
@@ -281,6 +282,14 @@ AWS S3 bucket name
 <def title="s3TargetThroughputGbps">
 Throughput target in gigabits per second. This configuration controls how many concurrent connections will be 
 established in the AWS CRT client. Recommended to be set to match the maximum bandwidth of the underlying host.
+</def>
+<def title="s3PathPrefix">
+Object key prefix to use inside the configured S3 bucket. Set this when the bucket is shared with
+other KalDB clusters or non-KalDB objects so this cluster's objects are isolated under the prefix.
+Leave this empty when the bucket is dedicated to this cluster. Leading and trailing `/` characters
+are ignored and `BlobStore` adds one trailing `/` to non-empty prefixes, so `shared/path`,
+`/shared/path/`, and `shared/path/` all store objects under `shared/path/`. A value containing only
+`/` characters is treated as no prefix.
 </def>
 </deflist>
 

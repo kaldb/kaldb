@@ -1,11 +1,12 @@
 package com.slack.astra.logstore.search;
 
 import com.slack.astra.logstore.LogMessage;
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
-import org.opensearch.search.aggregations.InternalAggregation;
+import org.opensearch.core.common.Strings;
+import org.opensearch.core.xcontent.MediaTypeRegistry;
+import org.opensearch.search.aggregations.InternalAggregations;
 
 public class SearchResult<T> {
 
@@ -30,19 +31,9 @@ public class SearchResult<T> {
   public final int requestedSnapshots;
   public final int fulfilledSnapshots;
 
-  public final InternalAggregation internalAggregation;
+  public final InternalAggregations internalAggregations;
 
-  public SearchResult() {
-    this.hits = new ArrayList<>();
-    this.tookMicros = 0;
-    this.failedNodes = 0;
-    this.totalNodes = 0;
-    this.requestedSnapshots = 0;
-    this.fulfilledSnapshots = 0;
-    this.internalAggregation = null;
-  }
-
-  // TODO: Move stats into a separate struct.
+  /** Creates a search result that carries the full top-level OpenSearch aggregation collection. */
   public SearchResult(
       List<T> hits,
       long tookMicros,
@@ -50,14 +41,14 @@ public class SearchResult<T> {
       int totalNodes,
       int requestedSnapshots,
       int fulfilledSnapshots,
-      InternalAggregation internalAggregation) {
+      InternalAggregations internalAggregations) {
     this.hits = hits;
     this.tookMicros = tookMicros;
     this.failedNodes = failedNodes;
     this.totalNodes = totalNodes;
     this.requestedSnapshots = requestedSnapshots;
     this.fulfilledSnapshots = fulfilledSnapshots;
-    this.internalAggregation = internalAggregation;
+    this.internalAggregations = internalAggregations;
   }
 
   @Override
@@ -75,8 +66,8 @@ public class SearchResult<T> {
         + requestedSnapshots
         + ", fulfilledSnapshots="
         + fulfilledSnapshots
-        + ", internalAggregation="
-        + internalAggregation
+        + ", internalAggregations="
+        + aggregationString(internalAggregations)
         + '}';
   }
 
@@ -100,22 +91,19 @@ public class SearchResult<T> {
     // method
     // As such the DocValueFormat.parser are never equal to each other
     return Objects.equals(
-        internalAggregation == null ? null : internalAggregation.toString(),
-        that.internalAggregation == null ? null : that.internalAggregation.toString());
+        aggregationString(internalAggregations), aggregationString(that.internalAggregations));
   }
 
   @Override
   public int hashCode() {
-    int result = hits.hashCode();
-    result = 31 * result + (int) (tookMicros ^ (tookMicros >>> 32));
-    result = 31 * result + failedNodes;
-    result = 31 * result + totalNodes;
-    result = 31 * result + requestedSnapshots;
-    result = 31 * result + fulfilledSnapshots;
-    result =
-        31 * result
-            + Objects.hashCode(internalAggregation == null ? null : internalAggregation.toString());
-    return result;
+    return Objects.hash(
+        hits,
+        tookMicros,
+        failedNodes,
+        totalNodes,
+        requestedSnapshots,
+        fulfilledSnapshots,
+        aggregationString(internalAggregations));
   }
 
   public static SearchResult<LogMessage> empty() {
@@ -177,5 +165,11 @@ public class SearchResult<T> {
    */
   public static SearchResult<LogMessage> missingQueryableSnapshotCoverage(int requestedSnapshots) {
     return new SearchResult<>(Collections.emptyList(), 0, 0, 0, requestedSnapshots, 0, null);
+  }
+
+  private static String aggregationString(InternalAggregations internalAggregations) {
+    return internalAggregations == null
+        ? null
+        : Strings.toString(MediaTypeRegistry.JSON, internalAggregations);
   }
 }

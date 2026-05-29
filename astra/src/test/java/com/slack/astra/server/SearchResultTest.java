@@ -19,8 +19,10 @@ import java.util.Map;
 import java.util.Random;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
-import org.opensearch.search.aggregations.Aggregator;
-import org.opensearch.search.aggregations.InternalAggregation;
+import org.opensearch.search.aggregations.AggregatorFactories;
+import org.opensearch.search.aggregations.InternalAggregations;
+import org.opensearch.search.aggregations.metrics.AvgAggregationBuilder;
+import org.opensearch.search.aggregations.metrics.InternalAvg;
 
 public class SearchResultTest {
 
@@ -29,6 +31,21 @@ public class SearchResultTest {
       new TemporaryLogStoreAndSearcherExtension(false);
 
   public SearchResultTest() throws IOException {}
+
+  private static AggregatorFactories.Builder createTwoAverageAggregations() {
+    AvgAggregationBuilder foo = new AvgAggregationBuilder("foo");
+    foo.field(LogMessage.SystemField.TIME_SINCE_EPOCH.fieldName);
+    foo.missing("2");
+
+    AvgAggregationBuilder bar = new AvgAggregationBuilder("bar");
+    bar.field(LogMessage.SystemField.TIME_SINCE_EPOCH.fieldName);
+    bar.missing("2");
+
+    AggregatorFactories.Builder builder = new AggregatorFactories.Builder();
+    builder.addAggregator(foo);
+    builder.addAggregator(bar);
+    return builder;
+  }
 
   @Test
   public void testSearchResultObjectConversions() throws Exception {
@@ -46,18 +63,18 @@ public class SearchResultTest {
     }
     OpenSearchAdapter openSearchAdapter = new OpenSearchAdapter(Map.of());
 
-    Aggregator dateHistogramAggregation =
-        openSearchAdapter.buildAggregatorFromFactory(
+    OpenSearchAdapter.AggregationExecution aggregationExecution =
+        openSearchAdapter.createAggregationExecution(
+            createGenericDateHistogramAggregatorFactoriesBuilder(),
             logStoreAndSearcherRule
                 .logStore
                 .getAstraSearcherManager()
                 .getLuceneSearcherManager()
                 .acquire(),
-            createGenericDateHistogramAggregatorFactoriesBuilder(),
             null);
-    InternalAggregation internalAggregation = dateHistogramAggregation.buildTopLevel();
+    InternalAggregations internalAggregations = aggregationExecution.finish();
     SearchResult<LogMessage> searchResult =
-        new SearchResult<>(logMessages, 1, 1, 5, 7, 7, internalAggregation);
+        new SearchResult<>(logMessages, 1, 1, 5, 7, 7, internalAggregations);
     AstraSearch.SearchResult protoSearchResult =
         SearchResultUtils.toSearchResultProto(searchResult);
 
@@ -68,7 +85,7 @@ public class SearchResultTest {
     assertThat(protoSearchResult.getRequestedSnapshots()).isEqualTo(7);
     assertThat(protoSearchResult.getFulfilledSnapshots()).isEqualTo(7);
     assertThat(protoSearchResult.getInternalAggregations().toByteArray())
-        .isEqualTo(OpenSearchInternalAggregation.toByteArray(internalAggregation));
+        .isEqualTo(OpenSearchInternalAggregation.toByteArray(internalAggregations));
 
     SearchResult<LogMessage> convertedSearchResult =
         SearchResultUtils.fromSearchResultProto(protoSearchResult);
@@ -131,5 +148,34 @@ public class SearchResultTest {
     assertThat(r.failedNodes).isEqualTo(0);
     assertThat(r.totalNodes).isEqualTo(0);
     assertThat(r.failedSnapshots()).isEqualTo(4);
+  }
+
+  @Test
+  public void testSearchResultProtoRoundTripWithSiblingAggregations() throws Exception {
+    OpenSearchAdapter openSearchAdapter = new OpenSearchAdapter(Map.of());
+    OpenSearchAdapter.AggregationExecution aggregationExecution =
+        openSearchAdapter.createAggregationExecution(
+            createTwoAverageAggregations(),
+            logStoreAndSearcherRule
+                .logStore
+                .getAstraSearcherManager()
+                .getLuceneSearcherManager()
+                .acquire(),
+            null);
+    InternalAggregations internalAggregations = aggregationExecution.finish();
+    SearchResult<LogMessage> searchResult =
+        new SearchResult<>(List.of(), 1, 0, 1, 1, 1, internalAggregations);
+
+    AstraSearch.SearchResult protoSearchResult =
+        SearchResultUtils.toSearchResultProto(searchResult);
+    SearchResult<LogMessage> convertedSearchResult =
+        SearchResultUtils.fromSearchResultProto(protoSearchResult);
+
+    InternalAvg foo = (InternalAvg) convertedSearchResult.internalAggregations.get("foo");
+    InternalAvg bar = (InternalAvg) convertedSearchResult.internalAggregations.get("bar");
+    assertThat(foo).isNotNull();
+    assertThat(bar).isNotNull();
+    assertThat(foo.getName()).isEqualTo("foo");
+    assertThat(bar.getName()).isEqualTo("bar");
   }
 }

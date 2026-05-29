@@ -89,6 +89,9 @@
       "serverAddress": "localhost",
       "requestTimeoutMs": 3000
     },
+    "partitionAssignmentConfig": {
+      "minNumberOfPartitions": 2
+    },
     "replicaCreationServiceConfig": {
       "schedulePeriodMins": 15,
       "replicaLifespanMins": 1440,

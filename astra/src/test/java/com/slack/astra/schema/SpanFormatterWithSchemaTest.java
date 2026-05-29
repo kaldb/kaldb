@@ -245,6 +245,54 @@ public class SpanFormatterWithSchemaTest {
   }
 
   @Test
+  public void testEmptyStringIsAValueButNullIsAbsent() {
+    // For keyword-style fields "" is a real value and must be indexed; null/absent is not.
+    // In-schema keyword field "" produces a KEYWORD KV with an empty value (not dropped).
+    Trace.KeyValue kv = SpanFormatter.convertKVtoProto("host", "", schema).get(0);
+    assertThat(kv.getFieldType()).isEqualTo(Schema.SchemaFieldType.KEYWORD);
+    assertThat(kv.getVStr()).isEqualTo("");
+    assertThat(kv.getIndexSignal()).isEqualTo(Trace.IndexSignal.IN_SCHEMA_INDEX);
+
+    // A dynamic (not-in-schema) field with "" is still indexed as a keyword value.
+    Trace.KeyValue dynamicKv = SpanFormatter.convertKVtoProto("dynamicField", "", schema).get(0);
+    assertThat(dynamicKv.getFieldType()).isEqualTo(Schema.SchemaFieldType.KEYWORD);
+    assertThat(dynamicKv.getVStr()).isEqualTo("");
+
+    // null has no value, so no field is produced.
+    assertThat(SpanFormatter.convertKVtoProto("host", null, schema)).isNull();
+  }
+
+  @Test
+  public void testEmptyStringKeywordReachesLuceneDocument() throws Exception {
+    // End-to-end: a "" keyword value flows through convertKVtoProto into the Lucene document as a
+    // real indexed term AND a doc-value, so term, exists, terms/multi_terms, cardinality, and sort
+    // all observe it the way OpenSearch would.
+    Trace.Span.Builder spanBuilder =
+        Trace.Span.newBuilder().setId(ByteString.copyFrom("eskw".getBytes()));
+    SpanFormatter.convertKVtoProto("host", "", schema).forEach(spanBuilder::addTags);
+    Trace.Span span = spanBuilder.build();
+
+    Document doc =
+        build(
+                SchemaAwareLogDocumentBuilderImpl.FieldConflictPolicy.RAISE_ERROR,
+                false,
+                meterRegistry)
+            .fromMessage(span);
+
+    // indexed term is the empty string
+    assertThat(Arrays.stream(doc.getFields("host")).anyMatch(f -> "".equals(f.stringValue())))
+        .isTrue();
+    // doc-value is the empty string (this is what aggregations read)
+    assertThat(
+            Arrays.stream(doc.getFields("host"))
+                .anyMatch(
+                    f ->
+                        f instanceof SortedDocValuesField
+                            && "".equals(f.binaryValue().utf8ToString())))
+        .isTrue();
+  }
+
+  @Test
   public void testSimpleSchema() {
     Trace.KeyValue kv = SpanFormatter.convertKVtoProto("host", "host1", schema).get(0);
     assertThat(kv.getVStr()).isEqualTo("host1");

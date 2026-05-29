@@ -82,6 +82,11 @@ message S3Config {
   string s3_end_point = 4;
   string s3_bucket = 5;
   double s3_target_throughput_gbps = 6;
+  // Key prefix for objects written to s3_bucket when the bucket is shared with
+  // other KalDB clusters or non-KalDB objects. Empty string disables prefixing.
+  // Leading and trailing "/" characters are trimmed and BlobStore adds one
+  // trailing "/" to non-empty prefixes.
+  string s3_path_prefix = 7;
 }
 
 message TracingConfig {
@@ -236,6 +241,11 @@ message ManagerConfig {
     int32 schedule_period_mins = 1;
   }
 
+  message PartitionAssignmentConfig {
+    // Minimum number of partitions per tenant when auto assigning.
+    int32 min_number_of_partitions = 1;
+  }
+
   // Event aggregation secs is a de-bounce setting. It's the time
   // a service waits to take an action after a zk notification.
   int32 event_aggregation_secs = 1;
@@ -256,6 +266,7 @@ message ManagerConfig {
   CacheNodeAssignmentServiceConfig cache_node_assignment_service_config = 11;
   ClusterMonitorServiceConfig cluster_monitor_service_config = 12;
   CacheNodeSearchabilityServiceConfig cache_node_searchability_service_config = 13;
+  PartitionAssignmentConfig partition_assignment_config = 14;
 }
 
 // Config for the recovery node.

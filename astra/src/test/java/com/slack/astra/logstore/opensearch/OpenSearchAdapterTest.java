@@ -14,10 +14,8 @@ import com.slack.astra.testlib.TemporaryLogStoreAndSearcherExtension;
 import com.slack.astra.util.QueryBuilderUtil;
 import java.io.IOException;
 import java.time.Instant;
-import java.util.List;
 import java.util.Optional;
 import org.apache.lucene.search.BooleanQuery;
-import org.apache.lucene.search.CollectorManager;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.IndexSortSortedNumericDocValuesRangeQuery;
 import org.apache.lucene.search.MatchAllDocsQuery;
@@ -32,9 +30,8 @@ import org.opensearch.index.query.BoolQueryBuilder;
 import org.opensearch.index.query.MatchAllQueryBuilder;
 import org.opensearch.index.query.QueryStringQueryBuilder;
 import org.opensearch.index.query.RangeQueryBuilder;
-import org.opensearch.search.aggregations.Aggregator;
 import org.opensearch.search.aggregations.AggregatorFactories;
-import org.opensearch.search.aggregations.InternalAggregation;
+import org.opensearch.search.aggregations.InternalAggregations;
 import org.opensearch.search.aggregations.metrics.AvgAggregationBuilder;
 import org.opensearch.search.aggregations.metrics.InternalAvg;
 
@@ -88,7 +85,7 @@ public class OpenSearchAdapterTest {
   }
 
   @Test
-  public void testOpenSearchCollectorManagerCorrectlyReducesListOfCollectors() throws IOException {
+  public void testAggregationExecutionBuildsAggregationResult() throws IOException {
     AvgAggregationBuilder avgAggregationBuilder = new AvgAggregationBuilder("foo");
     avgAggregationBuilder.field(LogMessage.SystemField.TIME_SINCE_EPOCH.fieldName);
     avgAggregationBuilder.missing("2");
@@ -99,12 +96,9 @@ public class OpenSearchAdapterTest {
 
     AggregatorFactories.Builder aggregatorFactoriesBuilder = new AggregatorFactories.Builder();
     aggregatorFactoriesBuilder.addAggregator(avgAggregationBuilder);
-
-    AggregatorFactories.Builder aggregatorFactoriesBuilder2 = new AggregatorFactories.Builder();
-    aggregatorFactoriesBuilder2.addAggregator(avgAggregationBuilder2);
-
-    CollectorManager<Aggregator, InternalAggregation> collectorManager1 =
-        openSearchAdapter.getCollectorManager(
+    aggregatorFactoriesBuilder.addAggregator(avgAggregationBuilder2);
+    OpenSearchAdapter.AggregationExecution aggregationExecution =
+        openSearchAdapter.createAggregationExecution(
             aggregatorFactoriesBuilder,
             logStoreAndSearcherRule
                 .logStore
@@ -112,24 +106,16 @@ public class OpenSearchAdapterTest {
                 .getLuceneSearcherManager()
                 .acquire(),
             null);
-    CollectorManager<Aggregator, InternalAggregation> collectorManager2 =
-        openSearchAdapter.getCollectorManager(
-            aggregatorFactoriesBuilder2,
-            logStoreAndSearcherRule
-                .logStore
-                .getAstraSearcherManager()
-                .getLuceneSearcherManager()
-                .acquire(),
-            null);
+    InternalAggregations reduced = aggregationExecution.finish();
+    InternalAvg reducedAvg = (InternalAvg) reduced.get("foo");
+    InternalAvg reducedAvg2 = (InternalAvg) reduced.get("bar");
 
-    Aggregator collector1 = collectorManager1.newCollector();
-    Aggregator collector2 = collectorManager2.newCollector();
-
-    InternalAvg reduced = (InternalAvg) collectorManager1.reduce(List.of(collector1, collector2));
-
-    assertThat(reduced.getName()).isEqualTo("foo");
-    assertThat(reduced.getType()).isEqualTo("avg");
-    assertThat(reduced.getValue()).isEqualTo(Double.valueOf("NaN"));
+    assertThat(reducedAvg.getName()).isEqualTo("foo");
+    assertThat(reducedAvg.getType()).isEqualTo("avg");
+    assertThat(reducedAvg.getValue()).isEqualTo(Double.valueOf("NaN"));
+    assertThat(reducedAvg2.getName()).isEqualTo("bar");
+    assertThat(reducedAvg2.getType()).isEqualTo("avg");
+    assertThat(reducedAvg2.getValue()).isEqualTo(Double.valueOf("NaN"));
 
     // todo - we don't have access to the package local methods for extra asserts - use reflection?
   }

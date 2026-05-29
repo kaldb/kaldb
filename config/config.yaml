@@ -36,6 +36,7 @@ s3Config:
   s3EndPoint: ${S3_ENDPOINT:-http://localhost:9090}
   s3Bucket: ${S3_BUCKET:-test-s3-bucket}
   s3TargetThroughputGbps: ${S3_TARGET_THROUGHPUT_GBPS:-25}
+  s3PathPrefix: ${S3_PATH_PREFIX:-}
 
 tracingConfig:
   zipkinEndpoint: ${ZIPKIN_TRACING_ENDPOINT:-http://localhost:9411/api/v2/spans}
@@ -114,6 +115,8 @@ managerConfig:
     maxConcurrentPerNode: ${ASTRA_MANAGER_MAX_CONCURRENT_ASSIGNMENTS_PER_NODE:-2}
   clusterMonitorServiceConfig:
     schedulePeriodMins: ${ASTRA_MANAGER_CLUSTER_MONITOR_PERIOD_MINS:-15}
+  partitionAssignmentConfig:
+    minNumberOfPartitions: ${ASTRA_MANAGER_API_MIN_NUMBER_OF_PARTITIONS:-2}
 
 redactionUpdateServiceConfig:
   redactionUpdatePeriodSecs: ${ASTRA_MANAGER_REDACTION_UPDATE_PERIOD_SECS:-300}

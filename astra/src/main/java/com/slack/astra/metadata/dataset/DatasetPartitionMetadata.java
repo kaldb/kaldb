@@ -5,15 +5,19 @@ import static com.google.common.base.Preconditions.checkArgument;
 import com.google.common.collect.ImmutableList;
 import com.slack.astra.chunk.ChunkInfo;
 import com.slack.astra.proto.metadata.Metadata;
+import com.slack.astra.server.partitionassignment.PartitionIdOrdering;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
 /**
  * Metadata for a specific partition configuration at a point in time. For partitions that are
- * currently active we would expect to have an endTime of max long.
+ * currently active we use {@link #ACTIVE_END_TIME_EPOCH_MS} as the open-ended end time.
  */
 public class DatasetPartitionMetadata {
+  /** Sentinel end time used for the currently active partition assignment window. */
+  public static final long ACTIVE_END_TIME_EPOCH_MS = Long.MAX_VALUE;
 
   public final long startTimeEpochMs;
   public final long endTimeEpochMs;
@@ -28,10 +32,27 @@ public class DatasetPartitionMetadata {
         endTimeEpochMs > startTimeEpochMs,
         "endTimeEpochMs must be greater than the startTimeEpochMs");
     checkArgument(partitions != null, "partitions must be non-null");
+    List<String> invalidPartitionIds = new ArrayList<>();
+    for (String partitionId : partitions) {
+      checkArgument(Objects.nonNull(partitionId), "partitions must not contain null IDs");
+      if (!PartitionIdOrdering.isCanonicalNonNegativePartitionId(partitionId)) {
+        invalidPartitionIds.add(partitionId);
+      }
+    }
+    invalidPartitionIds = invalidPartitionIds.stream().distinct().sorted().toList();
+    checkArgument(
+        invalidPartitionIds.isEmpty(),
+        "partitions must contain only canonical non-negative integer partition IDs: %s",
+        invalidPartitionIds);
 
     this.startTimeEpochMs = startTimeEpochMs;
     this.endTimeEpochMs = endTimeEpochMs;
     this.partitions = ImmutableList.copyOf(partitions);
+  }
+
+  public static DatasetPartitionMetadata createActive(
+      long startTimeEpochMs, List<String> partitions) {
+    return new DatasetPartitionMetadata(startTimeEpochMs, ACTIVE_END_TIME_EPOCH_MS, partitions);
   }
 
   public long getStartTimeEpochMs() {
@@ -44,6 +65,10 @@ public class DatasetPartitionMetadata {
 
   public ImmutableList<String> getPartitions() {
     return partitions;
+  }
+
+  public boolean isActive() {
+    return endTimeEpochMs == ACTIVE_END_TIME_EPOCH_MS;
   }
 
   @Override
