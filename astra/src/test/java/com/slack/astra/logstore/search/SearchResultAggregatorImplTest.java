@@ -12,6 +12,7 @@ import com.slack.astra.logstore.LogStore;
 import com.slack.astra.logstore.LuceneIndexStoreConfig;
 import com.slack.astra.logstore.LuceneIndexStoreImpl;
 import com.slack.astra.logstore.schema.SchemaAwareLogDocumentBuilderImpl;
+import com.slack.astra.proto.schema.Schema;
 import com.slack.astra.proto.service.AstraSearch;
 import com.slack.astra.testlib.MessageUtil;
 import com.slack.astra.testlib.SpanUtil;
@@ -27,6 +28,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.BeforeEach;
@@ -34,9 +36,29 @@ import org.junit.jupiter.api.Test;
 import org.opensearch.search.aggregations.InternalAggregation;
 import org.opensearch.search.aggregations.InternalAggregations;
 import org.opensearch.search.aggregations.bucket.histogram.InternalDateHistogram;
+import org.opensearch.search.aggregations.bucket.terms.InternalMultiTerms;
 import org.opensearch.search.aggregations.bucket.terms.StringTerms;
 
 public class SearchResultAggregatorImplTest {
+  private static Trace.Span makeDimensionSpan(
+      int id, Instant timestamp, String country, String browser) {
+    return SpanUtil.makeSpan(
+        id,
+        "dimension-message-" + id,
+        timestamp,
+        List.of(
+            Trace.KeyValue.newBuilder()
+                .setKey("country")
+                .setFieldType(Schema.SchemaFieldType.KEYWORD)
+                .setVStr(country)
+                .build(),
+            Trace.KeyValue.newBuilder()
+                .setKey("browser")
+                .setFieldType(Schema.SchemaFieldType.KEYWORD)
+                .setVStr(browser)
+                .build()));
+  }
+
   @BeforeEach
   public void setUp() throws Exception {
     Tracing.newBuilder().build();
@@ -405,6 +427,78 @@ public class SearchResultAggregatorImplTest {
     assertThat(allServices.getBuckets()).hasSize(1);
     assertThat(allServices.getBuckets().getFirst().getDocCount())
         .isEqualTo(messages1.size() + messages2.size());
+  }
+
+  /** Verifies compound multi_terms buckets are reduced across shard search results. */
+  @Test
+  public void testSearchResultAggregatorReducesMultiTermsBuckets() throws IOException {
+    Instant startTime = Instant.now().minusSeconds(10);
+    long searchStartMs = startTime.toEpochMilli();
+    long searchEndMs = startTime.plusSeconds(1).toEpochMilli();
+    List<Trace.Span> shard1Rows =
+        List.of(
+            makeDimensionSpan(1, startTime.plusMillis(1), "US", "Chrome"),
+            makeDimensionSpan(2, startTime.plusMillis(2), "CA", "Safari"));
+    List<Trace.Span> shard2Rows =
+        List.of(
+            makeDimensionSpan(3, startTime.plusMillis(3), "US", "Chrome"),
+            makeDimensionSpan(4, startTime.plusMillis(4), "US", "Safari"));
+    Map<List<Object>, Long> expectedBuckets =
+        Map.of(
+            List.of("US", "Chrome"), 2L,
+            List.of("CA", "Safari"), 1L,
+            List.of("US", "Safari"), 1L);
+    SearchQuery searchQuery =
+        SearchResultUtils.fromSearchRequest(
+            AstraSearch.SearchRequest.newBuilder()
+                .setDataset(MessageUtil.TEST_DATASET_NAME)
+                .setStartTimeEpochMs(searchStartMs)
+                .setEndTimeEpochMs(searchEndMs)
+                .setHowMany(0)
+                .setAggregationJson(
+                    """
+                    {
+                      "dimensions": {
+                        "multi_terms": {
+                          "terms": [
+                            {
+                              "field": "country"
+                            },
+                            {
+                              "field": "browser"
+                            }
+                          ],
+                          "size": 10,
+                          "order": {
+                            "_count": "desc"
+                          }
+                        }
+                      }
+                    }
+                    """)
+                .build());
+
+    InternalAggregations shard1Aggregations =
+        makeAggregations(searchQuery, searchStartMs, searchEndMs, shard1Rows);
+    InternalAggregations shard2Aggregations =
+        makeAggregations(searchQuery, searchStartMs, searchEndMs, shard2Rows);
+
+    SearchResult<LogMessage> result =
+        new SearchResultAggregatorImpl<LogMessage>(searchQuery)
+            .aggregate(
+                List.of(
+                    new SearchResult<>(List.of(), 0, 0, 1, 1, 0, shard1Aggregations),
+                    new SearchResult<>(List.of(), 0, 0, 1, 1, 0, shard2Aggregations)),
+                true);
+
+    InternalMultiTerms dimensions =
+        (InternalMultiTerms) Objects.requireNonNull(result.internalAggregations).get("dimensions");
+    Map<List<Object>, Long> actualBuckets =
+        dimensions.getBuckets().stream()
+            .collect(
+                Collectors.toMap(
+                    InternalMultiTerms.Bucket::getKey, InternalMultiTerms.Bucket::getDocCount));
+    assertThat(actualBuckets).isEqualTo(expectedBuckets);
   }
 
   @Test
