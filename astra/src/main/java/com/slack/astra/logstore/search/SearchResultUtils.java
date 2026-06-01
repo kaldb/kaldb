@@ -143,7 +143,8 @@ public class SearchResultUtils {
         searchRequest.getChunkIdsList(),
         queryBuilder,
         SourceFieldFilter.fromProto(searchRequest.getSourceFieldFilter()),
-        aggregatorFactoriesBuilder);
+        aggregatorFactoriesBuilder,
+        fromTrackTotalHitsProto(searchRequest.getTrackTotalHits()));
   }
 
   /** Parses OpenSearch hit sort clauses into the internal sort representation. */
@@ -233,6 +234,8 @@ public class SearchResultUtils {
         protoSearchResult.getTotalNodes(),
         protoSearchResult.getTotalSnapshots(),
         protoSearchResult.getSnapshotsWithReplicas(),
+        protoSearchResult.getTotalHits(),
+        fromTotalHitsRelationProto(protoSearchResult.getTotalHitsRelation()),
         OpenSearchInternalAggregation.fromByteArray(
             protoSearchResult.getInternalAggregations().toByteArray()));
   }
@@ -283,6 +286,10 @@ public class SearchResultUtils {
     searchResultBuilder.setTotalNodes(searchResult.totalNodes);
     searchResultBuilder.setTotalSnapshots(searchResult.totalSnapshots);
     searchResultBuilder.setSnapshotsWithReplicas(searchResult.snapshotsWithReplicas);
+    searchResultBuilder.setTotalHits(searchResult.totalHits);
+    if (searchResult.totalHitsRelation != null) {
+      searchResultBuilder.setTotalHitsRelation(toTotalHitsRelationProto(searchResult));
+    }
 
     // Set hits
     ArrayList<String> protoHits = new ArrayList<>(searchResult.hits.size());
@@ -301,5 +308,36 @@ public class SearchResultUtils {
     searchResultBuilder.setInternalAggregations(bytes);
     span.finish();
     return searchResultBuilder.build();
+  }
+
+  private static SearchQuery.TotalHitsPolicy fromTrackTotalHitsProto(
+      AstraSearch.SearchRequest.TrackTotalHits trackTotalHits) {
+    return switch (trackTotalHits.getMode()) {
+      case TRACK_TOTAL_HITS_EXACT -> SearchQuery.TotalHitsPolicy.exact();
+      case TRACK_TOTAL_HITS_DISABLED -> SearchQuery.TotalHitsPolicy.disabled();
+      case TRACK_TOTAL_HITS_THRESHOLD ->
+          SearchQuery.TotalHitsPolicy.threshold(trackTotalHits.getThreshold());
+      case TRACK_TOTAL_HITS_MODE_UNSPECIFIED, UNRECOGNIZED ->
+          SearchQuery.TotalHitsPolicy.defaultPolicy();
+    };
+  }
+
+  private static SearchResult.TotalHitsRelation fromTotalHitsRelationProto(
+      AstraSearch.SearchResult.TotalHitsRelation relation) {
+    return switch (relation) {
+      case TOTAL_HITS_EQUAL_TO -> SearchResult.TotalHitsRelation.EQUAL_TO;
+      case TOTAL_HITS_GREATER_THAN_OR_EQUAL_TO ->
+          SearchResult.TotalHitsRelation.GREATER_THAN_OR_EQUAL_TO;
+      case TOTAL_HITS_RELATION_UNSPECIFIED, UNRECOGNIZED -> null;
+    };
+  }
+
+  private static AstraSearch.SearchResult.TotalHitsRelation toTotalHitsRelationProto(
+      SearchResult<?> searchResult) {
+    return switch (searchResult.totalHitsRelation) {
+      case EQUAL_TO -> AstraSearch.SearchResult.TotalHitsRelation.TOTAL_HITS_EQUAL_TO;
+      case GREATER_THAN_OR_EQUAL_TO ->
+          AstraSearch.SearchResult.TotalHitsRelation.TOTAL_HITS_GREATER_THAN_OR_EQUAL_TO;
+    };
   }
 }

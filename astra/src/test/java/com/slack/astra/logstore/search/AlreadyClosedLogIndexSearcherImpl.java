@@ -13,7 +13,8 @@ public class AlreadyClosedLogIndexSearcherImpl implements LogIndexSearcher<LogMe
       java.util.List<SearchQuery.SortFieldSpec> sortFieldSpecs,
       QueryBuilder queryBuilder,
       SourceFieldFilter sourceFieldFilter,
-      AggregatorFactories.Builder aggregatorFactoriesBuilder) {
+      AggregatorFactories.Builder aggregatorFactoriesBuilder,
+      SearchQuery.TotalHitsPolicy totalHitsPolicy) {
     throw new AlreadyClosedException("Failed to acquire an index searcher");
   }
 

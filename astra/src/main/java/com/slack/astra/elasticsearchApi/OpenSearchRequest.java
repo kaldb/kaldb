@@ -10,6 +10,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.slack.astra.logstore.LogMessage;
 import com.slack.astra.logstore.opensearch.OpenSearchAdapter;
+import com.slack.astra.logstore.search.SearchQuery;
 import com.slack.astra.proto.service.AstraSearch;
 import java.time.DateTimeException;
 import java.time.Instant;
@@ -154,6 +155,7 @@ public class OpenSearchRequest {
         .setSourceFieldFilter(getSourceFieldFilter(body))
         .setAggregationJson(getAggregationJson(body))
         .setSortJson(getSortJson(body))
+        .setTrackTotalHits(getTrackTotalHits(body))
         .setStartTimeEpochMs(startTimeEpochMs)
         .setEndTimeEpochMs(endTimeEpochMs)
         .build();
@@ -356,6 +358,36 @@ public class OpenSearchRequest {
 
   private static int getStartFrom(JsonNode body) {
     return body.path("from").asInt(0);
+  }
+
+  private static AstraSearch.SearchRequest.TrackTotalHits getTrackTotalHits(JsonNode body) {
+    JsonNode trackTotalHitsNode = body.get("track_total_hits");
+    AstraSearch.SearchRequest.TrackTotalHits.Builder builder =
+        AstraSearch.SearchRequest.TrackTotalHits.newBuilder();
+    if (trackTotalHitsNode == null || trackTotalHitsNode.isNull()) {
+      return builder
+          .setMode(AstraSearch.SearchRequest.TrackTotalHits.Mode.TRACK_TOTAL_HITS_THRESHOLD)
+          .setThreshold(SearchQuery.TotalHitsPolicy.DEFAULT_THRESHOLD)
+          .build();
+    }
+    if (trackTotalHitsNode.isBoolean()) {
+      return builder
+          .setMode(
+              trackTotalHitsNode.booleanValue()
+                  ? AstraSearch.SearchRequest.TrackTotalHits.Mode.TRACK_TOTAL_HITS_EXACT
+                  : AstraSearch.SearchRequest.TrackTotalHits.Mode.TRACK_TOTAL_HITS_DISABLED)
+          .build();
+    }
+    if (trackTotalHitsNode.isIntegralNumber()
+        && trackTotalHitsNode.canConvertToInt()
+        && trackTotalHitsNode.asInt() >= 0) {
+      return builder
+          .setMode(AstraSearch.SearchRequest.TrackTotalHits.Mode.TRACK_TOTAL_HITS_THRESHOLD)
+          .setThreshold(trackTotalHitsNode.asInt())
+          .build();
+    }
+    throw new IllegalArgumentException(
+        "track_total_hits must be a boolean or non-negative integer");
   }
 
   private static String getAggregationJson(JsonNode body) {

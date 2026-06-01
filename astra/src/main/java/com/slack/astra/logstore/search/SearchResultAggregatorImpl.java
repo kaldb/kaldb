@@ -34,6 +34,9 @@ public class SearchResultAggregatorImpl<T extends LogMessage> implements SearchR
     int totalNodes = 0;
     int totalSnapshots = 0;
     int snapshpotReplicas = 0;
+    long totalHits = 0;
+    boolean allTotalHitsExact = true;
+    boolean hasTrackedTotalHits = searchQuery.totalHitsPolicy.enabled();
     List<InternalAggregations> internalAggregationList = new ArrayList<>();
 
     for (SearchResult<T> searchResult : searchResults) {
@@ -42,6 +45,11 @@ public class SearchResultAggregatorImpl<T extends LogMessage> implements SearchR
       totalNodes += searchResult.totalNodes;
       totalSnapshots += searchResult.totalSnapshots;
       snapshpotReplicas += searchResult.snapshotsWithReplicas;
+      if (searchQuery.totalHitsPolicy.enabled() && searchResult.totalHitsRelation != null) {
+        totalHits += searchResult.totalHits;
+        allTotalHitsExact &=
+            searchResult.totalHitsRelation == SearchResult.TotalHitsRelation.EQUAL_TO;
+      }
       if (searchResult.internalAggregations != null) {
         internalAggregationList.add(searchResult.internalAggregations);
       }
@@ -88,6 +96,12 @@ public class SearchResultAggregatorImpl<T extends LogMessage> implements SearchR
     span.tag("finalAggregation", String.valueOf(finalAggregation));
     span.finish();
 
+    SearchResult.TotalHitsRelation totalHitsRelation =
+        hasTrackedTotalHits
+            ? allTotalHitsExact
+                ? SearchResult.TotalHitsRelation.EQUAL_TO
+                : SearchResult.TotalHitsRelation.GREATER_THAN_OR_EQUAL_TO
+            : null;
     return new SearchResult<>(
         resultHits,
         tookMicros,
@@ -95,6 +109,8 @@ public class SearchResultAggregatorImpl<T extends LogMessage> implements SearchR
         totalNodes,
         totalSnapshots,
         snapshpotReplicas,
+        totalHits,
+        totalHitsRelation,
         internalAggregations);
   }
 }

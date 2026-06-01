@@ -273,10 +273,17 @@ public class ElasticsearchApiService {
       responseHits.add(SearchResponseHit.fromByteString(bytes, sortFieldSpecs));
     }
 
-    return new HitsMetadata.Builder()
-        .hitsTotal(ImmutableMap.of("value", responseHits.size(), "relation", "eq"))
-        .hits(responseHits)
-        .build();
+    return new HitsMetadata.Builder().hitsTotal(hitsTotal(searchResult)).hits(responseHits).build();
+  }
+
+  private Map<String, Object> hitsTotal(AstraSearch.SearchResult searchResult) {
+    return switch (searchResult.getTotalHitsRelation()) {
+      case TOTAL_HITS_EQUAL_TO ->
+          ImmutableMap.of("value", searchResult.getTotalHits(), "relation", "eq");
+      case TOTAL_HITS_GREATER_THAN_OR_EQUAL_TO ->
+          ImmutableMap.of("value", searchResult.getTotalHits(), "relation", "gte");
+      case TOTAL_HITS_RELATION_UNSPECIFIED, UNRECOGNIZED -> null;
+    };
   }
 
   /**

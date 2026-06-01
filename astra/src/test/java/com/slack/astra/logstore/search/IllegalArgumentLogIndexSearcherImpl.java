@@ -12,7 +12,8 @@ public class IllegalArgumentLogIndexSearcherImpl implements LogIndexSearcher<Log
       java.util.List<SearchQuery.SortFieldSpec> sortFieldSpecs,
       QueryBuilder queryBuilder,
       SourceFieldFilter sourceFieldFilter,
-      AggregatorFactories.Builder aggregatorFactoriesBuilder) {
+      AggregatorFactories.Builder aggregatorFactoriesBuilder,
+      SearchQuery.TotalHitsPolicy totalHitsPolicy) {
     throw new IllegalArgumentException("Failed to acquire an index searcher");
   }
 

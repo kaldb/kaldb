@@ -459,6 +459,8 @@ public class ElasticsearchApiServiceTest {
 
     assertThat(aggregatedRes.status().code()).isEqualTo(200);
     assertThat(jsonNode.findValue("hits").get("hits").size()).isEqualTo(10);
+    assertThat(jsonNode.findValue("hits").get("total").get("value").asInt()).isEqualTo(100);
+    assertThat(jsonNode.findValue("hits").get("total").get("relation").asText()).isEqualTo("eq");
     assertThat(
             jsonNode
                 .findValue("hits")
@@ -477,6 +479,27 @@ public class ElasticsearchApiServiceTest {
                 .asText()
                 .endsWith("Message91"))
         .isTrue();
+  }
+
+  @Test
+  public void testTrackTotalHitsFalseOmitsTotalHits() throws Exception {
+    addMessagesToChunkManager(SpanUtil.makeSpansWithTimeDifference(1, 100, 1, Instant.now()));
+
+    String postBody =
+        """
+        {"index":"%s"}
+        {"size":10,"track_total_hits":false,"query":{"match_all":{}}}
+        """
+            .formatted(TEST_DATASET_NAME);
+    HttpResponse response = elasticsearchApiService.multiSearch(postBody);
+
+    AggregatedHttpResponse aggregatedRes = response.aggregate().join();
+    String body = aggregatedRes.content(StandardCharsets.UTF_8);
+    JsonNode responseNode = OBJECT_MAPPER.readTree(body).get("responses").get(0);
+
+    assertThat(aggregatedRes.status().code()).isEqualTo(200);
+    assertThat(responseNode.get("hits").get("hits").size()).isEqualTo(10);
+    assertThat(responseNode.get("hits").has("total")).isFalse();
   }
 
   @Test
