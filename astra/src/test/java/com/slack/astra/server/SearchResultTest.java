@@ -59,7 +59,15 @@ public class SearchResultTest {
             null);
     InternalAggregations internalAggregations = aggregationExecution.finish();
     SearchResult<LogMessage> searchResult =
-        new SearchResult<>(logMessages, 1, 1, 5, 7, 7, internalAggregations);
+        new SearchResult<>(
+            logMessages,
+            1,
+            1,
+            5,
+            7,
+            7,
+            SearchResult.TotalHits.equalTo(logMessages.size()),
+            internalAggregations);
     AstraSearch.SearchResult protoSearchResult =
         SearchResultUtils.toSearchResultProto(searchResult);
 
@@ -92,7 +100,8 @@ public class SearchResultTest {
             null);
     InternalAggregations internalAggregations = aggregationExecution.finish();
     SearchResult<LogMessage> searchResult =
-        new SearchResult<>(List.of(), 1, 0, 1, 1, 1, internalAggregations);
+        new SearchResult<>(
+            List.of(), 1, 0, 1, 1, 1, SearchResult.TotalHits.equalTo(0), internalAggregations);
 
     AstraSearch.SearchResult protoSearchResult =
         SearchResultUtils.toSearchResultProto(searchResult);

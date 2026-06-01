@@ -42,6 +42,25 @@ public class SearchResultAggregatorImplTest {
     Tracing.newBuilder().build();
   }
 
+  private static SearchResult<LogMessage> searchResultWithExactReturnedHitTotal(
+      List<LogMessage> hits,
+      long tookMicros,
+      int failedNodes,
+      int totalNodes,
+      int totalSnapshots,
+      int snapshotsWithReplicas,
+      InternalAggregations internalAggregations) {
+    return new SearchResult<>(
+        hits,
+        tookMicros,
+        failedNodes,
+        totalNodes,
+        totalSnapshots,
+        snapshotsWithReplicas,
+        SearchResult.TotalHits.equalTo(hits.size()),
+        internalAggregations);
+  }
+
   @Test
   public void testSimpleSearchResultsAggWithOneResult() throws IOException {
     long tookMs = 10;
@@ -72,10 +91,10 @@ public class SearchResultAggregatorImplTest {
             SpanUtil.makeSpansWithTimeDifference(11, 20, 1000 * 60, startTime2));
 
     SearchResult<LogMessage> searchResult1 =
-        new SearchResult<>(
+        searchResultWithExactReturnedHitTotal(
             messages1, tookMs, 0, 1, 1, 0, InternalAggregations.from(List.of(histogram1)));
     SearchResult<LogMessage> searchResult2 =
-        new SearchResult<>(
+        searchResultWithExactReturnedHitTotal(
             messages2, tookMs + 1, 0, 1, 1, 0, InternalAggregations.from(List.of(histogram2)));
 
     SearchQuery searchQuery =
@@ -88,7 +107,8 @@ public class SearchResultAggregatorImplTest {
             QueryBuilderUtil.generateQueryBuilder("Message1", histogramStartMs, histogramEndMs),
             null,
             createDateHistogramAggregatorFactoriesBuilder(
-                "1", LogMessage.SystemField.TIME_SINCE_EPOCH.fieldName, "6m", 1));
+                "1", LogMessage.SystemField.TIME_SINCE_EPOCH.fieldName, "6m", 1),
+            SearchQuery.TotalHitsPolicy.defaultPolicy());
     List<SearchResult<LogMessage>> searchResults = new ArrayList<>(2);
     searchResults.add(searchResult1);
     searchResults.add(searchResult2);
@@ -146,10 +166,10 @@ public class SearchResultAggregatorImplTest {
             SpanUtil.makeSpansWithTimeDifference(11, 20, 1000 * 60, startTime2));
 
     SearchResult<LogMessage> searchResult1 =
-        new SearchResult<>(
+        searchResultWithExactReturnedHitTotal(
             messages1, tookMs, 0, 1, 1, 0, InternalAggregations.from(List.of(histogram1)));
     SearchResult<LogMessage> searchResult2 =
-        new SearchResult<>(
+        searchResultWithExactReturnedHitTotal(
             messages2, tookMs + 1, 0, 1, 1, 0, InternalAggregations.from(List.of(histogram2)));
 
     SearchQuery searchQuery =
@@ -162,7 +182,8 @@ public class SearchResultAggregatorImplTest {
             QueryBuilderUtil.generateQueryBuilder("Message1", histogramStartMs, histogramEndMs),
             null,
             createDateHistogramAggregatorFactoriesBuilder(
-                "1", LogMessage.SystemField.TIME_SINCE_EPOCH.fieldName, "10m", 1));
+                "1", LogMessage.SystemField.TIME_SINCE_EPOCH.fieldName, "10m", 1),
+            SearchQuery.TotalHitsPolicy.defaultPolicy());
     List<SearchResult<LogMessage>> searchResults = new ArrayList<>(2);
     searchResults.add(searchResult1);
     searchResults.add(searchResult2);
@@ -238,16 +259,16 @@ public class SearchResultAggregatorImplTest {
             SpanUtil.makeSpansWithTimeDifference(31, 40, 1000 * 60, startTime4));
 
     SearchResult<LogMessage> searchResult1 =
-        new SearchResult<>(
+        searchResultWithExactReturnedHitTotal(
             messages1, tookMs, 0, 1, 1, 0, InternalAggregations.from(List.of(histogram1)));
     SearchResult<LogMessage> searchResult2 =
-        new SearchResult<>(
+        searchResultWithExactReturnedHitTotal(
             messages2, tookMs + 1, 1, 1, 1, 1, InternalAggregations.from(List.of(histogram2)));
     SearchResult<LogMessage> searchResult3 =
-        new SearchResult<>(
+        searchResultWithExactReturnedHitTotal(
             messages3, tookMs + 2, 0, 1, 1, 0, InternalAggregations.from(List.of(histogram3)));
     SearchResult<LogMessage> searchResult4 =
-        new SearchResult<>(
+        searchResultWithExactReturnedHitTotal(
             messages4, tookMs + 3, 0, 1, 1, 1, InternalAggregations.from(List.of(histogram4)));
 
     SearchQuery searchQuery =
@@ -260,7 +281,8 @@ public class SearchResultAggregatorImplTest {
             QueryBuilderUtil.generateQueryBuilder("Message1", histogramStartMs, histogramEndMs),
             null,
             createDateHistogramAggregatorFactoriesBuilder(
-                "1", LogMessage.SystemField.TIME_SINCE_EPOCH.fieldName, "6m", 1));
+                "1", LogMessage.SystemField.TIME_SINCE_EPOCH.fieldName, "6m", 1),
+            SearchQuery.TotalHitsPolicy.defaultPolicy());
     List<SearchResult<LogMessage>> searchResults =
         List.of(searchResult1, searchResult4, searchResult3, searchResult2);
     SearchResult<LogMessage> aggSearchResult =
@@ -318,9 +340,9 @@ public class SearchResultAggregatorImplTest {
             SpanUtil.makeSpansWithTimeDifference(11, 20, 1000 * 60, startTime2));
 
     SearchResult<LogMessage> searchResult1 =
-        new SearchResult<>(messages1, tookMs, 0, 1, 1, 0, aggregations1);
+        searchResultWithExactReturnedHitTotal(messages1, tookMs, 0, 1, 1, 0, aggregations1);
     SearchResult<LogMessage> searchResult2 =
-        new SearchResult<>(messages2, tookMs + 1, 0, 1, 1, 0, aggregations2);
+        searchResultWithExactReturnedHitTotal(messages2, tookMs + 1, 0, 1, 1, 0, aggregations2);
 
     SearchResult<LogMessage> aggSearchResult =
         new SearchResultAggregatorImpl<>(searchQuery)
@@ -372,9 +394,9 @@ public class SearchResultAggregatorImplTest {
             SpanUtil.makeSpansWithTimeDifference(11, 20, 1000 * 60, startTime2));
 
     SearchResult<LogMessage> searchResult1 =
-        new SearchResult<>(messages1, tookMs, 0, 1, 1, 0, aggregations1);
+        searchResultWithExactReturnedHitTotal(messages1, tookMs, 0, 1, 1, 0, aggregations1);
     SearchResult<LogMessage> searchResult2 =
-        new SearchResult<>(messages2, tookMs + 1, 0, 1, 1, 0, aggregations2);
+        searchResultWithExactReturnedHitTotal(messages2, tookMs + 1, 0, 1, 1, 0, aggregations2);
 
     SearchResult<LogMessage> aggSearchResult =
         new SearchResultAggregatorImpl<>(searchQuery)
@@ -422,9 +444,9 @@ public class SearchResultAggregatorImplTest {
         MessageUtil.makeMessagesWithTimeDifference(11, 20, 1000 * 60, startTime2);
 
     SearchResult<LogMessage> searchResult1 =
-        new SearchResult<>(messages1, tookMs, 0, 1, 1, 0, null);
+        searchResultWithExactReturnedHitTotal(messages1, tookMs, 0, 1, 1, 0, null);
     SearchResult<LogMessage> searchResult2 =
-        new SearchResult<>(messages2, tookMs + 1, 0, 1, 1, 0, null);
+        searchResultWithExactReturnedHitTotal(messages2, tookMs + 1, 0, 1, 1, 0, null);
 
     SearchQuery searchQuery =
         new SearchQuery(
@@ -436,7 +458,8 @@ public class SearchResultAggregatorImplTest {
             QueryBuilderUtil.generateQueryBuilder("Message1", searchStartMs, searchEndMs),
             null,
             createDateHistogramAggregatorFactoriesBuilder(
-                "1", LogMessage.SystemField.TIME_SINCE_EPOCH.fieldName, "6m", 1));
+                "1", LogMessage.SystemField.TIME_SINCE_EPOCH.fieldName, "6m", 1),
+            SearchQuery.TotalHitsPolicy.defaultPolicy());
     List<SearchResult<LogMessage>> searchResults = new ArrayList<>(2);
     searchResults.add(searchResult1);
     searchResults.add(searchResult2);
@@ -455,6 +478,96 @@ public class SearchResultAggregatorImplTest {
     }
 
     assertThat(aggSearchResult.internalAggregations).isNull();
+  }
+
+  @Test
+  public void testSearchResultAggregatorMergesTotalHits() throws IOException {
+    SearchResult<LogMessage> exactResult =
+        new SearchResult<>(
+            Collections.emptyList(), 10, 0, 1, 1, 1, SearchResult.TotalHits.equalTo(7), null);
+    SearchResult<LogMessage> lowerBoundResult =
+        new SearchResult<>(
+            Collections.emptyList(),
+            11,
+            0,
+            1,
+            1,
+            1,
+            SearchResult.TotalHits.greaterThanOrEqualTo(5),
+            null);
+    SearchQuery searchQuery =
+        new SearchQuery(
+            MessageUtil.TEST_DATASET_NAME,
+            0,
+            1,
+            0,
+            Collections.emptyList(),
+            QueryBuilderUtil.generateQueryBuilder("Message1", 0L, 1L),
+            null,
+            null,
+            SearchQuery.TotalHitsPolicy.threshold(20));
+
+    SearchResult<LogMessage> aggSearchResult =
+        new SearchResultAggregatorImpl<>(searchQuery)
+            .aggregate(List.of(exactResult, lowerBoundResult), true);
+
+    assertThat(aggSearchResult.totalHits)
+        .isEqualTo(SearchResult.TotalHits.greaterThanOrEqualTo(12));
+  }
+
+  @Test
+  public void testSearchResultAggregatorCapsExactMergedTotalHitsAtThreshold() throws IOException {
+    SearchResult<LogMessage> firstResult =
+        new SearchResult<>(
+            Collections.emptyList(), 10, 0, 1, 1, 1, SearchResult.TotalHits.equalTo(6), null);
+    SearchResult<LogMessage> secondResult =
+        new SearchResult<>(
+            Collections.emptyList(), 11, 0, 1, 1, 1, SearchResult.TotalHits.equalTo(6), null);
+    SearchQuery searchQuery =
+        new SearchQuery(
+            MessageUtil.TEST_DATASET_NAME,
+            0,
+            1,
+            0,
+            Collections.emptyList(),
+            QueryBuilderUtil.generateQueryBuilder("Message1", 0L, 1L),
+            null,
+            null,
+            SearchQuery.TotalHitsPolicy.threshold(10));
+
+    SearchResult<LogMessage> aggSearchResult =
+        new SearchResultAggregatorImpl<>(searchQuery)
+            .aggregate(List.of(firstResult, secondResult), true);
+
+    assertThat(aggSearchResult.totalHits)
+        .isEqualTo(SearchResult.TotalHits.greaterThanOrEqualTo(10));
+  }
+
+  @Test
+  public void testSearchResultAggregatorExactPolicyKeepsExactMergedTotalHits() throws IOException {
+    SearchResult<LogMessage> firstResult =
+        new SearchResult<>(
+            Collections.emptyList(), 10, 0, 1, 1, 1, SearchResult.TotalHits.equalTo(6), null);
+    SearchResult<LogMessage> secondResult =
+        new SearchResult<>(
+            Collections.emptyList(), 11, 0, 1, 1, 1, SearchResult.TotalHits.equalTo(6), null);
+    SearchQuery searchQuery =
+        new SearchQuery(
+            MessageUtil.TEST_DATASET_NAME,
+            0,
+            1,
+            0,
+            Collections.emptyList(),
+            QueryBuilderUtil.generateQueryBuilder("Message1", 0L, 1L),
+            null,
+            null,
+            SearchQuery.TotalHitsPolicy.exact());
+
+    SearchResult<LogMessage> aggSearchResult =
+        new SearchResultAggregatorImpl<>(searchQuery)
+            .aggregate(List.of(firstResult, secondResult), true);
+
+    assertThat(aggSearchResult.totalHits).isEqualTo(SearchResult.TotalHits.equalTo(12));
   }
 
   @Test
@@ -486,7 +599,7 @@ public class SearchResultAggregatorImplTest {
             SpanUtil.makeSpansWithTimeDifference(11, 20, 1000 * 60, startTime2));
 
     SearchResult<LogMessage> searchResult1 =
-        new SearchResult<>(
+        searchResultWithExactReturnedHitTotal(
             Collections.emptyList(),
             tookMs,
             0,
@@ -495,7 +608,7 @@ public class SearchResultAggregatorImplTest {
             2,
             InternalAggregations.from(List.of(histogram1)));
     SearchResult<LogMessage> searchResult2 =
-        new SearchResult<>(
+        searchResultWithExactReturnedHitTotal(
             Collections.emptyList(),
             tookMs + 1,
             0,
@@ -514,7 +627,8 @@ public class SearchResultAggregatorImplTest {
             QueryBuilderUtil.generateQueryBuilder("Message1", histogramStartMs, histogramEndMs),
             null,
             createDateHistogramAggregatorFactoriesBuilder(
-                "1", LogMessage.SystemField.TIME_SINCE_EPOCH.fieldName, "6m", 1));
+                "1", LogMessage.SystemField.TIME_SINCE_EPOCH.fieldName, "6m", 1),
+            SearchQuery.TotalHitsPolicy.defaultPolicy());
     List<SearchResult<LogMessage>> searchResults = new ArrayList<>(2);
     searchResults.add(searchResult1);
     searchResults.add(searchResult2);
@@ -561,10 +675,10 @@ public class SearchResultAggregatorImplTest {
             SpanUtil.makeSpansWithTimeDifference(1, 10, 1000 * 60, startTime1));
 
     SearchResult<LogMessage> searchResult1 =
-        new SearchResult<>(
+        searchResultWithExactReturnedHitTotal(
             messages1, tookMs, 1, 1, 1, 0, InternalAggregations.from(List.of(histogram1)));
     SearchResult<LogMessage> searchResult2 =
-        new SearchResult<>(messages2, tookMs + 1, 0, 1, 1, 0, null);
+        searchResultWithExactReturnedHitTotal(messages2, tookMs + 1, 0, 1, 1, 0, null);
 
     SearchQuery searchQuery =
         new SearchQuery(
@@ -576,7 +690,8 @@ public class SearchResultAggregatorImplTest {
             QueryBuilderUtil.generateQueryBuilder("Message1", startTimeMs, endTimeMs),
             null,
             createDateHistogramAggregatorFactoriesBuilder(
-                "1", LogMessage.SystemField.TIME_SINCE_EPOCH.fieldName, "6m", 1));
+                "1", LogMessage.SystemField.TIME_SINCE_EPOCH.fieldName, "6m", 1),
+            SearchQuery.TotalHitsPolicy.defaultPolicy());
     List<SearchResult<LogMessage>> searchResults = new ArrayList<>(2);
     searchResults.add(searchResult1);
     searchResults.add(searchResult2);
@@ -629,10 +744,10 @@ public class SearchResultAggregatorImplTest {
             SpanUtil.makeSpansWithTimeDifference(11, 20, 1000 * 60, startTime2));
 
     SearchResult<LogMessage> searchResult1 =
-        new SearchResult<>(
+        searchResultWithExactReturnedHitTotal(
             messages1, tookMs, 0, 2, 2, 2, InternalAggregations.from(List.of(histogram1)));
     SearchResult<LogMessage> searchResult2 =
-        new SearchResult<>(
+        searchResultWithExactReturnedHitTotal(
             Collections.emptyList(),
             tookMs + 1,
             0,
@@ -651,7 +766,8 @@ public class SearchResultAggregatorImplTest {
             QueryBuilderUtil.generateQueryBuilder("Message1", histogramStartMs, histogramEndMs),
             null,
             createDateHistogramAggregatorFactoriesBuilder(
-                "1", LogMessage.SystemField.TIME_SINCE_EPOCH.fieldName, "10m", 1));
+                "1", LogMessage.SystemField.TIME_SINCE_EPOCH.fieldName, "10m", 1),
+            SearchQuery.TotalHitsPolicy.defaultPolicy());
     List<SearchResult<LogMessage>> searchResults = new ArrayList<>(2);
     searchResults.add(searchResult1);
     searchResults.add(searchResult2);
@@ -720,7 +836,8 @@ public class SearchResultAggregatorImplTest {
                 interval,
                 0,
                 histogramStartMs,
-                histogramEndMs));
+                histogramEndMs),
+            SearchQuery.TotalHitsPolicy.defaultPolicy());
 
     try {
       return messageSearchResult.internalAggregations.get("1");
@@ -849,7 +966,8 @@ public class SearchResultAggregatorImplTest {
             0,
             QueryBuilderUtil.generateQueryBuilder("*:*", histogramStartMs, histogramEndMs),
             null,
-            searchQuery.aggregatorFactoriesBuilder);
+            searchQuery.aggregatorFactoriesBuilder,
+            SearchQuery.TotalHitsPolicy.defaultPolicy());
 
     try {
       return messageSearchResult.internalAggregations;

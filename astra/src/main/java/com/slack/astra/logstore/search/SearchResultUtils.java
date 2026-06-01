@@ -139,7 +139,8 @@ public class SearchResultUtils {
         searchRequest.getChunkIdsList(),
         queryBuilder,
         SourceFieldFilter.fromProto(searchRequest.getSourceFieldFilter()),
-        aggregatorFactoriesBuilder);
+        aggregatorFactoriesBuilder,
+        fromTrackTotalHitsProto(searchRequest.getTrackTotalHits()));
   }
 
   public static SearchResult<LogMessage> fromSearchResultProtoOrEmpty(
@@ -168,6 +169,7 @@ public class SearchResultUtils {
         protoSearchResult.getTotalNodes(),
         protoSearchResult.getTotalSnapshots(),
         protoSearchResult.getSnapshotsWithReplicas(),
+        fromTotalHitsProto(protoSearchResult),
         OpenSearchInternalAggregation.fromByteArray(
             protoSearchResult.getInternalAggregations().toByteArray()));
   }
@@ -218,6 +220,7 @@ public class SearchResultUtils {
     searchResultBuilder.setTotalNodes(searchResult.totalNodes);
     searchResultBuilder.setTotalSnapshots(searchResult.totalSnapshots);
     searchResultBuilder.setSnapshotsWithReplicas(searchResult.snapshotsWithReplicas);
+    setTotalHitsProto(searchResultBuilder, searchResult.totalHits);
 
     // Set hits
     ArrayList<String> protoHits = new ArrayList<>(searchResult.hits.size());
@@ -236,5 +239,46 @@ public class SearchResultUtils {
     searchResultBuilder.setInternalAggregations(bytes);
     span.finish();
     return searchResultBuilder.build();
+  }
+
+  private static SearchQuery.TotalHitsPolicy fromTrackTotalHitsProto(
+      AstraSearch.SearchRequest.TrackTotalHits trackTotalHits) {
+    return switch (trackTotalHits.getPolicyCase()) {
+      case EXACT -> SearchQuery.TotalHitsPolicy.exact();
+      case DISABLED -> SearchQuery.TotalHitsPolicy.disabled();
+      case THRESHOLD ->
+          SearchQuery.TotalHitsPolicy.threshold(trackTotalHits.getThreshold().getValue());
+      case POLICY_NOT_SET -> SearchQuery.TotalHitsPolicy.defaultPolicy();
+    };
+  }
+
+  private static SearchResult.TotalHits fromTotalHitsProto(
+      AstraSearch.SearchResult protoSearchResult) {
+    if (!protoSearchResult.hasTotalHits()) {
+      return SearchResult.TotalHits.untracked();
+    }
+    AstraSearch.SearchResult.TotalHits totalHits = protoSearchResult.getTotalHits();
+    return switch (totalHits.getValueCase()) {
+      case EQUAL_TO -> SearchResult.TotalHits.equalTo(totalHits.getEqualTo());
+      case GREATER_THAN_OR_EQUAL_TO ->
+          SearchResult.TotalHits.greaterThanOrEqualTo(totalHits.getGreaterThanOrEqualTo());
+      case VALUE_NOT_SET -> SearchResult.TotalHits.untracked();
+    };
+  }
+
+  private static void setTotalHitsProto(
+      AstraSearch.SearchResult.Builder searchResultBuilder, SearchResult.TotalHits totalHits) {
+    switch (totalHits) {
+      case SearchResult.TotalHits.EqualTo exact -> {
+        searchResultBuilder.setTotalHits(
+            AstraSearch.SearchResult.TotalHits.newBuilder().setEqualTo(exact.value()));
+      }
+      case SearchResult.TotalHits.GreaterThanOrEqualTo lowerBound -> {
+        searchResultBuilder.setTotalHits(
+            AstraSearch.SearchResult.TotalHits.newBuilder()
+                .setGreaterThanOrEqualTo(lowerBound.value()));
+      }
+      case SearchResult.TotalHits.Untracked ignored -> {}
+    }
   }
 }

@@ -424,7 +424,8 @@ public class IndexingChunkManagerTest {
             Collections.emptyList(),
             QueryBuilderUtil.generateQueryBuilder("Message1", 0L, MAX_TIME),
             null,
-            createGenericDateHistogramAggregatorFactoriesBuilder());
+            createGenericDateHistogramAggregatorFactoriesBuilder(),
+            SearchQuery.TotalHitsPolicy.defaultPolicy());
     SearchResult<LogMessage> results = chunkManager.query(searchQuery, Duration.ofMillis(3000));
     assertThat(results.hits.size()).isEqualTo(1);
 
@@ -483,7 +484,8 @@ public class IndexingChunkManagerTest {
                         Collections.emptyList(),
                         QueryBuilderUtil.generateQueryBuilder("Message101", 0L, MAX_TIME),
                         null,
-                        createGenericDateHistogramAggregatorFactoriesBuilder()),
+                        createGenericDateHistogramAggregatorFactoriesBuilder(),
+                        SearchQuery.TotalHitsPolicy.defaultPolicy()),
                     Duration.ofMillis(3000))
                 .hits
                 .size())
@@ -513,7 +515,8 @@ public class IndexingChunkManagerTest {
                         Collections.emptyList(),
                         QueryBuilderUtil.generateQueryBuilder("Message102", 0L, MAX_TIME),
                         null,
-                        createGenericDateHistogramAggregatorFactoriesBuilder()),
+                        createGenericDateHistogramAggregatorFactoriesBuilder(),
+                        SearchQuery.TotalHitsPolicy.defaultPolicy()),
                     Duration.ofMillis(3000))
                 .hits
                 .size())
@@ -596,7 +599,8 @@ public class IndexingChunkManagerTest {
             Collections.emptyList(),
             QueryBuilderUtil.generateQueryBuilder(searchString, startTimeEpochMs, endTimeEpochMs),
             null,
-            createGenericDateHistogramAggregatorFactoriesBuilder());
+            createGenericDateHistogramAggregatorFactoriesBuilder(),
+            SearchQuery.TotalHitsPolicy.defaultPolicy());
     return chunkManager.query(searchQuery, Duration.ofMillis(3000)).hits.size();
   }
 

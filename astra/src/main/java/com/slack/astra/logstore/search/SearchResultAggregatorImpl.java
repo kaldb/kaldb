@@ -20,6 +20,31 @@ import org.opensearch.search.aggregations.pipeline.PipelineAggregator;
  */
 public class SearchResultAggregatorImpl<T extends LogMessage> implements SearchResultAggregator<T> {
 
+  private static SearchResult.TotalHits reduceTotalHits(
+      SearchQuery.TotalHitsPolicy totalHitsPolicy,
+      long totalHitsValue,
+      boolean allTotalHitsExact,
+      boolean hasUntrackedTotalHits) {
+    if (!totalHitsPolicy.enabled() || hasUntrackedTotalHits) {
+      return SearchResult.TotalHits.untracked();
+    }
+    return switch (totalHitsPolicy) {
+      case SearchQuery.TotalHitsPolicy.Exact ignored ->
+          allTotalHitsExact
+              ? SearchResult.TotalHits.equalTo(totalHitsValue)
+              : SearchResult.TotalHits.greaterThanOrEqualTo(totalHitsValue);
+      case SearchQuery.TotalHitsPolicy.Threshold threshold -> {
+        if (totalHitsValue > threshold.threshold()) {
+          yield SearchResult.TotalHits.greaterThanOrEqualTo(threshold.threshold());
+        }
+        yield allTotalHitsExact
+            ? SearchResult.TotalHits.equalTo(totalHitsValue)
+            : SearchResult.TotalHits.greaterThanOrEqualTo(totalHitsValue);
+      }
+      case SearchQuery.TotalHitsPolicy.Disabled ignored -> SearchResult.TotalHits.untracked();
+    };
+  }
+
   private final SearchQuery searchQuery;
 
   public SearchResultAggregatorImpl(SearchQuery searchQuery) {
@@ -35,6 +60,9 @@ public class SearchResultAggregatorImpl<T extends LogMessage> implements SearchR
     int totalNodes = 0;
     int totalSnapshots = 0;
     int snapshpotReplicas = 0;
+    long totalHitsValue = 0;
+    boolean allTotalHitsExact = true;
+    boolean hasUntrackedTotalHits = false;
     List<InternalAggregations> internalAggregationList = new ArrayList<>();
 
     for (SearchResult<T> searchResult : searchResults) {
@@ -43,6 +71,14 @@ public class SearchResultAggregatorImpl<T extends LogMessage> implements SearchR
       totalNodes += searchResult.totalNodes;
       totalSnapshots += searchResult.totalSnapshots;
       snapshpotReplicas += searchResult.snapshotsWithReplicas;
+      switch (searchResult.totalHits) {
+        case SearchResult.TotalHits.EqualTo exact -> totalHitsValue += exact.value();
+        case SearchResult.TotalHits.GreaterThanOrEqualTo lowerBound -> {
+          totalHitsValue += lowerBound.value();
+          allTotalHitsExact = false;
+        }
+        case SearchResult.TotalHits.Untracked ignored -> hasUntrackedTotalHits = true;
+      }
       if (searchResult.internalAggregations != null) {
         internalAggregationList.add(searchResult.internalAggregations);
       }
@@ -90,6 +126,9 @@ public class SearchResultAggregatorImpl<T extends LogMessage> implements SearchR
     span.tag("finalAggregation", String.valueOf(finalAggregation));
     span.finish();
 
+    SearchResult.TotalHits totalHits =
+        reduceTotalHits(
+            searchQuery.totalHitsPolicy, totalHitsValue, allTotalHitsExact, hasUntrackedTotalHits);
     return new SearchResult<>(
         resultHits,
         tookMicros,
@@ -97,6 +136,7 @@ public class SearchResultAggregatorImpl<T extends LogMessage> implements SearchR
         totalNodes,
         totalSnapshots,
         snapshpotReplicas,
+        totalHits,
         internalAggregations);
   }
 }

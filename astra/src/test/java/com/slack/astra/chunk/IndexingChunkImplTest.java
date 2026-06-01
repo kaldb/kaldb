@@ -180,7 +180,8 @@ public class IndexingChunkImplTest {
               Collections.emptyList(),
               QueryBuilderUtil.generateQueryBuilder("*:*", 0L, MAX_TIME),
               null,
-              createGenericDateHistogramAggregatorFactoriesBuilder()));
+              createGenericDateHistogramAggregatorFactoriesBuilder(),
+              SearchQuery.TotalHitsPolicy.defaultPolicy()));
 
       chunk.query(
           new SearchQuery(
@@ -191,7 +192,8 @@ public class IndexingChunkImplTest {
               Collections.emptyList(),
               QueryBuilderUtil.generateQueryBuilder("Message1", 0L, MAX_TIME),
               null,
-              createGenericDateHistogramAggregatorFactoriesBuilder()));
+              createGenericDateHistogramAggregatorFactoriesBuilder(),
+              SearchQuery.TotalHitsPolicy.defaultPolicy()));
 
       SearchResult<LogMessage> results =
           chunk.query(
@@ -203,7 +205,8 @@ public class IndexingChunkImplTest {
                   Collections.emptyList(),
                   QueryBuilderUtil.generateQueryBuilder("Message*", 0L, MAX_TIME),
                   null,
-                  createGenericDateHistogramAggregatorFactoriesBuilder()));
+                  createGenericDateHistogramAggregatorFactoriesBuilder(),
+                  SearchQuery.TotalHitsPolicy.defaultPolicy()));
       assertThat(results.hits.size()).isEqualTo(10);
 
       assertThat(getCount(MESSAGES_RECEIVED_COUNTER, registry)).isEqualTo(100);
@@ -325,7 +328,8 @@ public class IndexingChunkImplTest {
                           QueryBuilderUtil.generateQueryBuilder(
                               searchString, startTimeMs, endTimeMs),
                           null,
-                          createGenericDateHistogramAggregatorFactoriesBuilder()))
+                          createGenericDateHistogramAggregatorFactoriesBuilder(),
+                          SearchQuery.TotalHitsPolicy.defaultPolicy()))
                   .hits
                   .size())
           .isEqualTo(expectedResultCount);
@@ -356,7 +360,8 @@ public class IndexingChunkImplTest {
                   Collections.emptyList(),
                   QueryBuilderUtil.generateQueryBuilder("Message1", 0L, MAX_TIME),
                   null,
-                  createGenericDateHistogramAggregatorFactoriesBuilder()));
+                  createGenericDateHistogramAggregatorFactoriesBuilder(),
+                  SearchQuery.TotalHitsPolicy.defaultPolicy()));
       assertThat(results.hits.size()).isEqualTo(1);
 
       assertThat(getCount(MESSAGES_RECEIVED_COUNTER, registry)).isEqualTo(100);
@@ -426,7 +431,8 @@ public class IndexingChunkImplTest {
                   Collections.emptyList(),
                   QueryBuilderUtil.generateQueryBuilder("Message1", 0L, MAX_TIME),
                   null,
-                  createGenericDateHistogramAggregatorFactoriesBuilder()));
+                  createGenericDateHistogramAggregatorFactoriesBuilder(),
+                  SearchQuery.TotalHitsPolicy.defaultPolicy()));
       assertThat(resultsBeforeCommit.hits.size()).isEqualTo(0);
 
       // Snapshot forces commit and refresh
@@ -442,7 +448,8 @@ public class IndexingChunkImplTest {
                   Collections.emptyList(),
                   QueryBuilderUtil.generateQueryBuilder("Message1", 0L, MAX_TIME),
                   null,
-                  createGenericDateHistogramAggregatorFactoriesBuilder()));
+                  createGenericDateHistogramAggregatorFactoriesBuilder(),
+                  SearchQuery.TotalHitsPolicy.defaultPolicy()));
       assertThat(resultsAfterPreSnapshot.hits.size()).isEqualTo(1);
     }
   }
@@ -637,7 +644,8 @@ public class IndexingChunkImplTest {
               Collections.emptyList(),
               QueryBuilderUtil.generateQueryBuilder("Message1", 0L, MAX_TIME),
               null,
-              createGenericDateHistogramAggregatorFactoriesBuilder());
+              createGenericDateHistogramAggregatorFactoriesBuilder(),
+              SearchQuery.TotalHitsPolicy.defaultPolicy());
       assertThat(chunk.isReadOnly()).isTrue();
       SearchResult<LogMessage> resultsAfterPreSnapshot = chunk.query(searchQuery);
       assertThat(resultsAfterPreSnapshot.hits.size()).isEqualTo(1);
@@ -814,7 +822,8 @@ public class IndexingChunkImplTest {
               Collections.emptyList(),
               QueryBuilderUtil.generateQueryBuilder("Message1", 0L, MAX_TIME),
               null,
-              createGenericDateHistogramAggregatorFactoriesBuilder());
+              createGenericDateHistogramAggregatorFactoriesBuilder(),
+              SearchQuery.TotalHitsPolicy.defaultPolicy());
       assertThat(chunk.isReadOnly()).isTrue();
       SearchResult<LogMessage> resultsAfterPreSnapshot = chunk.query(searchQuery);
       assertThat(resultsAfterPreSnapshot.hits.size()).isEqualTo(1);

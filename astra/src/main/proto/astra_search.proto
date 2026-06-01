@@ -28,6 +28,34 @@ message SearchRequest {
   // The full agg JSON object, to be used in the leaf and query nodes and parsed by OpenSearch
   string aggregation_json = 10;
 
+  // Controls OpenSearch-compatible hits.total counting. If unset, Astra counts accurately up to
+  // OpenSearch's default threshold.
+  TrackTotalHits track_total_hits = 11;
+
+  message TrackTotalHits {
+    oneof policy {
+      // Count matched documents accurately up to the provided threshold.
+      Threshold threshold = 1;
+
+      // Count every matched document exactly.
+      Exact exact = 2;
+
+      // Do not track hits.total.
+      Disabled disabled = 3;
+    }
+
+    message Threshold {
+      // Maximum matched-document count to track exactly before reporting a lower bound.
+      int32 value = 1;
+    }
+
+    // Exact total-hit tracking policy.
+    message Exact {}
+
+    // Disabled total-hit tracking policy.
+    message Disabled {}
+  }
+
   message SourceFieldFilter {
     // Whether or not to include/exclude _all_ fields
     optional bool includeAll = 1;
@@ -232,6 +260,20 @@ message SearchResult {
   int32 total_nodes = 7;
   int32 total_snapshots = 8;
   int32 snapshots_with_replicas = 9;
+
+  // OpenSearch-compatible hits.total metadata. If unset, hits.total was not tracked and should be
+  // omitted from OpenSearch-compatible responses.
+  TotalHits total_hits = 10;
+
+  message TotalHits {
+    oneof value {
+      // Exact matched-document count.
+      int64 equal_to = 1;
+
+      // Lower bound for the matched-document count.
+      int64 greater_than_or_equal_to = 2;
+    }
+  }
 }
 
 // Based off of https://github.com/protocolbuffers/protobuf/blob/main/src/google/protobuf/struct.proto

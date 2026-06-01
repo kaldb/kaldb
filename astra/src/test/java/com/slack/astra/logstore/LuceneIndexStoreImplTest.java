@@ -22,6 +22,7 @@ import com.slack.astra.logstore.LogMessage.ReservedField;
 import com.slack.astra.logstore.schema.SchemaAwareLogDocumentBuilderImpl;
 import com.slack.astra.logstore.search.AstraSearcherManager;
 import com.slack.astra.logstore.search.LogIndexSearcherImpl;
+import com.slack.astra.logstore.search.SearchQuery;
 import com.slack.astra.logstore.search.SearchResult;
 import com.slack.astra.metadata.core.AstraMetadataTestUtils;
 import com.slack.astra.metadata.core.CuratorBuilder;
@@ -139,7 +140,8 @@ public class LuceneIndexStoreImplTest {
               100,
               QueryBuilderUtil.generateQueryBuilder("nested.key1:value1", 0L, MAX_TIME),
               null,
-              createGenericDateHistogramAggregatorFactoriesBuilder());
+              createGenericDateHistogramAggregatorFactoriesBuilder(),
+              SearchQuery.TotalHitsPolicy.defaultPolicy());
       assertThat(result1.hits.size()).isEqualTo(1);
 
       SearchResult<LogMessage> result2 =
@@ -148,7 +150,8 @@ public class LuceneIndexStoreImplTest {
               100,
               QueryBuilderUtil.generateQueryBuilder("duplicateproperty:duplicate1", 0L, MAX_TIME),
               null,
-              createGenericDateHistogramAggregatorFactoriesBuilder());
+              createGenericDateHistogramAggregatorFactoriesBuilder(),
+              SearchQuery.TotalHitsPolicy.defaultPolicy());
       assertThat(result2.hits.size()).isEqualTo(1);
 
       SearchResult<LogMessage> result3 =
@@ -157,7 +160,8 @@ public class LuceneIndexStoreImplTest {
               100,
               QueryBuilderUtil.generateQueryBuilder("nested.duplicateproperty:2", 0L, MAX_TIME),
               null,
-              createGenericDateHistogramAggregatorFactoriesBuilder());
+              createGenericDateHistogramAggregatorFactoriesBuilder(),
+              SearchQuery.TotalHitsPolicy.defaultPolicy());
       assertThat(result3.hits.size()).isEqualTo(1);
     }
 
@@ -213,7 +217,8 @@ public class LuceneIndexStoreImplTest {
               100,
               QueryBuilderUtil.generateQueryBuilder("nested.key1:value1", 0L, MAX_TIME),
               null,
-              aggregatorFactoriesBuilder);
+              aggregatorFactoriesBuilder,
+              SearchQuery.TotalHitsPolicy.defaultPolicy());
       assertThat(result1.hits.size()).isEqualTo(1);
       assertThat(Objects.requireNonNull(result1.internalAggregations).get("1").getName())
           .isEqualTo("1");

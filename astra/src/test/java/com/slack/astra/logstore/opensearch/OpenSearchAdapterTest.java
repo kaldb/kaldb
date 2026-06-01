@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import brave.Tracing;
 import com.google.common.collect.ImmutableMap;
 import com.slack.astra.logstore.LogMessage;
+import com.slack.astra.logstore.search.SearchQuery;
 import com.slack.astra.logstore.search.SearchResult;
 import com.slack.astra.metadata.schema.FieldType;
 import com.slack.astra.metadata.schema.LuceneFieldDef;
@@ -214,7 +215,8 @@ public class OpenSearchAdapterTest {
     logStoreAndSearcherRule.logStore.refresh();
 
     SearchResult<LogMessage> searchResult =
-        logStoreAndSearcherRule.logSearcher.search("foo", 10, null, null, null);
+        logStoreAndSearcherRule.logSearcher.search(
+            "foo", 10, null, null, null, SearchQuery.TotalHitsPolicy.defaultPolicy());
 
     assertThat(searchResult.hits).hasSize(1);
     assertThat(searchResult.hits.get(0).getIndex()).isEqualTo("foo");

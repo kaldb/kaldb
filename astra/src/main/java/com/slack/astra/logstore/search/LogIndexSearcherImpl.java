@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
@@ -30,7 +31,10 @@ import org.apache.lucene.search.SearcherManager;
 import org.apache.lucene.search.Sort;
 import org.apache.lucene.search.SortField;
 import org.apache.lucene.search.SortField.Type;
+import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.search.TopFieldCollector;
+import org.apache.lucene.search.TotalHitCountCollector;
+import org.apache.lucene.search.TotalHits;
 import org.opensearch.index.query.QueryBuilder;
 import org.opensearch.search.aggregations.AggregatorFactories;
 import org.opensearch.search.aggregations.InternalAggregations;
@@ -89,13 +93,12 @@ public class LogIndexSearcherImpl implements LogIndexSearcher<LogMessage> {
       int howMany,
       QueryBuilder queryBuilder,
       SourceFieldFilter sourceFieldFilter,
-      AggregatorFactories.Builder aggregatorFactoriesBuilder) {
+      AggregatorFactories.Builder aggregatorFactoriesBuilder,
+      SearchQuery.TotalHitsPolicy totalHitsPolicy) {
 
     ensureNonEmptyString(dataset, "dataset should be a non-empty string");
     ensureTrue(howMany >= 0, "hits requested should not be negative.");
-    ensureTrue(
-        howMany > 0 || aggregatorFactoriesBuilder != null,
-        "Hits or aggregation should be requested.");
+    Objects.requireNonNull(totalHitsPolicy, "totalHitsPolicy should not be null.");
 
     ScopedSpan span = Tracing.currentTracer().startScopedSpan("LogIndexSearcherImpl.search");
     span.tag("dataset", dataset);
@@ -119,22 +122,56 @@ public class LogIndexSearcherImpl implements LogIndexSearcher<LogMessage> {
         TopFieldCollector topFieldCollector =
             howMany > 0
                 ? buildTopFieldCollector(
-                    howMany, aggregationExecution != null ? Integer.MAX_VALUE : howMany)
+                    howMany, totalHitsThreshold(aggregationExecution, totalHitsPolicy))
+                : null;
+        TotalHitCountCollector totalHitCountCollector =
+            topFieldCollector == null && aggregationExecution != null && totalHitsPolicy.enabled()
+                ? new TotalHitCountCollector()
                 : null;
 
-        Collector collector =
-            topFieldCollector != null && aggregationExecution != null
-                ? MultiCollector.wrap(topFieldCollector, aggregationExecution.collector())
-                : topFieldCollector != null ? topFieldCollector : aggregationExecution.collector();
-        searcher.search(query, collector);
+        if (topFieldCollector == null && aggregationExecution == null) {
+          SearchResult.TotalHits totalHits =
+              totalHitsPolicy.enabled()
+                  ? thresholdExactTotalHits(searcher.count(query), totalHitsPolicy)
+                  : SearchResult.TotalHits.untracked();
+          elapsedTime.stop();
+          return new SearchResult<>(
+              Collections.emptyList(),
+              elapsedTime.elapsed(TimeUnit.MICROSECONDS),
+              0,
+              0,
+              1,
+              1,
+              totalHits,
+              null);
+        }
 
+        List<Collector> collectors = new ArrayList<>(3);
         if (topFieldCollector != null) {
-          ScoreDoc[] hits = topFieldCollector.topDocs().scoreDocs;
+          collectors.add(topFieldCollector);
+        }
+        if (aggregationExecution != null) {
+          collectors.add(aggregationExecution.collector());
+        }
+        if (totalHitCountCollector != null) {
+          collectors.add(totalHitCountCollector);
+        }
+        searcher.search(query, MultiCollector.wrap(collectors));
+
+        SearchResult.TotalHits totalHits;
+        if (topFieldCollector != null) {
+          TopDocs topDocs = topFieldCollector.topDocs();
+          totalHits = totalHitsFromTopDocs(topDocs, aggregationExecution != null, totalHitsPolicy);
+          ScoreDoc[] hits = topDocs.scoreDocs;
           results = new ArrayList<>(hits.length);
           for (ScoreDoc hit : hits) {
             results.add(buildLogMessage(searcher, hit, sourceFieldFilter));
           }
         } else {
+          totalHits =
+              totalHitCountCollector == null
+                  ? SearchResult.TotalHits.untracked()
+                  : thresholdExactTotalHits(totalHitCountCollector.getTotalHits(), totalHitsPolicy);
           results = Collections.emptyList();
         }
         if (aggregationExecution != null) {
@@ -143,7 +180,14 @@ public class LogIndexSearcherImpl implements LogIndexSearcher<LogMessage> {
 
         elapsedTime.stop();
         return new SearchResult<>(
-            results, elapsedTime.elapsed(TimeUnit.MICROSECONDS), 0, 0, 1, 1, internalAggregations);
+            results,
+            elapsedTime.elapsed(TimeUnit.MICROSECONDS),
+            0,
+            0,
+            1,
+            1,
+            totalHits,
+            internalAggregations);
       } finally {
         searcherManager.release(searcher);
       }
@@ -199,6 +243,52 @@ public class LogIndexSearcherImpl implements LogIndexSearcher<LogMessage> {
       throws IOException {
     SortField sortField = new SortField(SystemField.TIME_SINCE_EPOCH.fieldName, Type.LONG, true);
     return TopFieldCollector.create(new Sort(sortField), howMany, null, totalHitsThreshold);
+  }
+
+  private static int totalHitsThreshold(
+      OpenSearchAdapter.AggregationExecution aggregationExecution,
+      SearchQuery.TotalHitsPolicy totalHitsPolicy) {
+    if (aggregationExecution != null) {
+      return Integer.MAX_VALUE;
+    }
+    if (!totalHitsPolicy.enabled()) {
+      return 0;
+    }
+    return totalHitsPolicy.isExact() ? Integer.MAX_VALUE : totalHitsPolicy.threshold();
+  }
+
+  private static SearchResult.TotalHits totalHitsFromTopDocs(
+      TopDocs topDocs,
+      boolean exactBecauseOfAggregation,
+      SearchQuery.TotalHitsPolicy totalHitsPolicy) {
+    if (!totalHitsPolicy.enabled()) {
+      return SearchResult.TotalHits.untracked();
+    }
+    if (exactBecauseOfAggregation) {
+      return thresholdExactTotalHits(topDocs.totalHits.value, totalHitsPolicy);
+    }
+    if (!totalHitsPolicy.isExact() && topDocs.totalHits.value > totalHitsPolicy.threshold()) {
+      return SearchResult.TotalHits.greaterThanOrEqualTo(totalHitsPolicy.threshold());
+    }
+    return totalHitsFromLucene(topDocs.totalHits);
+  }
+
+  private static SearchResult.TotalHits thresholdExactTotalHits(
+      long exactTotalHits, SearchQuery.TotalHitsPolicy totalHitsPolicy) {
+    if (!totalHitsPolicy.enabled()) {
+      return SearchResult.TotalHits.untracked();
+    }
+    if (totalHitsPolicy.isExact() || exactTotalHits <= totalHitsPolicy.threshold()) {
+      return SearchResult.TotalHits.equalTo(exactTotalHits);
+    }
+    return SearchResult.TotalHits.greaterThanOrEqualTo(totalHitsPolicy.threshold());
+  }
+
+  private static SearchResult.TotalHits totalHitsFromLucene(TotalHits totalHits) {
+    return switch (totalHits.relation) {
+      case EQUAL_TO -> SearchResult.TotalHits.equalTo(totalHits.value);
+      case GREATER_THAN_OR_EQUAL_TO -> SearchResult.TotalHits.greaterThanOrEqualTo(totalHits.value);
+    };
   }
 
   @Override

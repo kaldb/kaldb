@@ -8,6 +8,7 @@ import com.slack.astra.logstore.LuceneIndexStoreConfig;
 import com.slack.astra.logstore.LuceneIndexStoreImpl;
 import com.slack.astra.logstore.schema.SchemaAwareLogDocumentBuilderImpl;
 import com.slack.astra.logstore.search.LogIndexSearcherImpl;
+import com.slack.astra.logstore.search.SearchQuery;
 import com.slack.astra.logstore.search.SearchResult;
 import com.slack.astra.metadata.schema.FieldType;
 import com.slack.astra.metadata.schema.LuceneFieldDef;
@@ -64,7 +65,8 @@ public class TemporaryLogStoreAndSearcherExtension implements AfterEachCallback 
             howMany,
             queryBuilder,
             null,
-            new AggregatorFactories.Builder().addAggregator(dateHistogramAggregationBuilder));
+            new AggregatorFactories.Builder().addAggregator(dateHistogramAggregationBuilder),
+            SearchQuery.TotalHitsPolicy.defaultPolicy());
     return results.hits;
   }
 

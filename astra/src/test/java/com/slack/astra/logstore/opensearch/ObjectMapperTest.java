@@ -140,7 +140,8 @@ public class ObjectMapperTest {
         QueryBuilderUtil.generateQueryBuilder("", 0L, MAX_TIME),
         null,
         createTermsAggregatorFactoriesBuilder(
-            name, List.of(), fieldName, null, 1, 1, Map.of("_count", "asc")));
+            name, List.of(), fieldName, null, 1, 1, Map.of("_count", "asc")),
+        SearchQuery.TotalHitsPolicy.defaultPolicy());
   }
 
   // Error doing map update errorMsg=can't merge a non object mapping [alerts] with an object

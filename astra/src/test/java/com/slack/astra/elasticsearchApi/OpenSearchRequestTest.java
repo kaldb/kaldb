@@ -2,6 +2,7 @@ package com.slack.astra.elasticsearchApi;
 
 import static com.slack.astra.server.ManagerApiGrpc.MAX_TIME;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -537,6 +538,78 @@ public class OpenSearchRequestTest {
     assertThat(request.getDataset()).isEqualTo("_all");
     assertThat(request.getHowMany()).isEqualTo(5);
     assertThat(request.getQuery()).isEqualTo("{\"match_all\":{}}");
+  }
+
+  @Test
+  public void testTrackTotalHitsDefaultsToOpenSearchThreshold() throws Exception {
+    String searchBody = "{\"size\":5,\"query\":{\"match_all\":{}}}";
+
+    OpenSearchRequest openSearchRequest = new OpenSearchRequest();
+    AstraSearch.SearchRequest request =
+        openSearchRequest.parseSingleSearchRequest("test", searchBody);
+
+    assertThat(request.getTrackTotalHits().getPolicyCase())
+        .isEqualTo(AstraSearch.SearchRequest.TrackTotalHits.PolicyCase.THRESHOLD);
+    assertThat(request.getTrackTotalHits().getThreshold().getValue()).isEqualTo(10000);
+  }
+
+  @Test
+  public void testTrackTotalHitsParsesExactTrue() throws Exception {
+    String searchBody = "{\"track_total_hits\":true,\"query\":{\"match_all\":{}}}";
+
+    OpenSearchRequest openSearchRequest = new OpenSearchRequest();
+    AstraSearch.SearchRequest request =
+        openSearchRequest.parseSingleSearchRequest("test", searchBody);
+
+    assertThat(request.getTrackTotalHits().getPolicyCase())
+        .isEqualTo(AstraSearch.SearchRequest.TrackTotalHits.PolicyCase.EXACT);
+  }
+
+  @Test
+  public void testTrackTotalHitsParsesDisabledFalse() throws Exception {
+    String searchBody = "{\"track_total_hits\":false,\"query\":{\"match_all\":{}}}";
+
+    OpenSearchRequest openSearchRequest = new OpenSearchRequest();
+    AstraSearch.SearchRequest request =
+        openSearchRequest.parseSingleSearchRequest("test", searchBody);
+
+    assertThat(request.getTrackTotalHits().getPolicyCase())
+        .isEqualTo(AstraSearch.SearchRequest.TrackTotalHits.PolicyCase.DISABLED);
+  }
+
+  @Test
+  public void testTrackTotalHitsParsesIntegerThreshold() throws Exception {
+    String searchBody = "{\"track_total_hits\":7,\"query\":{\"match_all\":{}}}";
+
+    OpenSearchRequest openSearchRequest = new OpenSearchRequest();
+    AstraSearch.SearchRequest request =
+        openSearchRequest.parseSingleSearchRequest("test", searchBody);
+
+    assertThat(request.getTrackTotalHits().getPolicyCase())
+        .isEqualTo(AstraSearch.SearchRequest.TrackTotalHits.PolicyCase.THRESHOLD);
+    assertThat(request.getTrackTotalHits().getThreshold().getValue()).isEqualTo(7);
+  }
+
+  @Test
+  public void testTrackTotalHitsRejectsNonIntegerThreshold() {
+    String searchBody = "{\"track_total_hits\":7.5,\"query\":{\"match_all\":{}}}";
+
+    OpenSearchRequest openSearchRequest = new OpenSearchRequest();
+
+    assertThatExceptionOfType(IllegalArgumentException.class)
+        .isThrownBy(() -> openSearchRequest.parseSingleSearchRequest("test", searchBody))
+        .withMessage("track_total_hits must be a boolean or non-negative integer");
+  }
+
+  @Test
+  public void testTrackTotalHitsRejectsNegativeThreshold() {
+    String searchBody = "{\"track_total_hits\":-1,\"query\":{\"match_all\":{}}}";
+
+    OpenSearchRequest openSearchRequest = new OpenSearchRequest();
+
+    assertThatExceptionOfType(IllegalArgumentException.class)
+        .isThrownBy(() -> openSearchRequest.parseSingleSearchRequest("test", searchBody))
+        .withMessage("track_total_hits must be a boolean or non-negative integer");
   }
 
   @Test

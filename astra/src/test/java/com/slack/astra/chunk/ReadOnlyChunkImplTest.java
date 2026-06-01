@@ -197,7 +197,8 @@ public class ReadOnlyChunkImplTest {
                     Instant.now().minus(1, ChronoUnit.MINUTES).toEpochMilli(),
                     Instant.now().toEpochMilli()),
                 null,
-                createGenericDateHistogramAggregatorFactoriesBuilder()));
+                createGenericDateHistogramAggregatorFactoriesBuilder(),
+                SearchQuery.TotalHitsPolicy.defaultPolicy()));
     assertThat(logMessageSearchResult.hits.size()).isEqualTo(10);
 
     await()
@@ -251,7 +252,8 @@ public class ReadOnlyChunkImplTest {
                     Instant.now().minus(1, ChronoUnit.MINUTES).toEpochMilli(),
                     Instant.now().toEpochMilli()),
                 null,
-                createGenericDateHistogramAggregatorFactoriesBuilder()));
+                createGenericDateHistogramAggregatorFactoriesBuilder(),
+                SearchQuery.TotalHitsPolicy.defaultPolicy()));
     assertThat(logMessageEmptySearchResult).isEqualTo(SearchResult.empty());
     assertThat(readOnlyChunk.info()).isNull();
 
@@ -346,7 +348,8 @@ public class ReadOnlyChunkImplTest {
                     Instant.now().minus(1, ChronoUnit.MINUTES).toEpochMilli(),
                     Instant.now().toEpochMilli()),
                 null,
-                createGenericDateHistogramAggregatorFactoriesBuilder()));
+                createGenericDateHistogramAggregatorFactoriesBuilder(),
+                SearchQuery.TotalHitsPolicy.defaultPolicy()));
     assertThat(logMessageSearchResult.hits.size()).isEqualTo(10);
     assertThat(searchMetadataStore.listSync().get(0).isSearchable()).isTrue();
     assertThat(meterRegistry.get(CHUNK_ASSIGNMENT_TIMER).tag("successful", "true").timer().count())
@@ -385,7 +388,8 @@ public class ReadOnlyChunkImplTest {
                     Instant.now().minus(1, ChronoUnit.MINUTES).toEpochMilli(),
                     Instant.now().toEpochMilli()),
                 null,
-                createGenericDateHistogramAggregatorFactoriesBuilder()));
+                createGenericDateHistogramAggregatorFactoriesBuilder(),
+                SearchQuery.TotalHitsPolicy.defaultPolicy()));
     assertThat(logMessageEmptySearchResult).isEqualTo(SearchResult.empty());
     assertThat(readOnlyChunk.info()).isNull();
     assertThat(searchMetadataStore.listSync()).isEmpty();
@@ -651,7 +655,8 @@ public class ReadOnlyChunkImplTest {
                 Instant.now().minus(1, ChronoUnit.MINUTES).toEpochMilli(),
                 Instant.now().toEpochMilli()),
             null,
-            createGenericDateHistogramAggregatorFactoriesBuilder());
+            createGenericDateHistogramAggregatorFactoriesBuilder(),
+            SearchQuery.TotalHitsPolicy.defaultPolicy());
     SearchResult<LogMessage> logMessageSearchResult = readOnlyChunk.query(query);
     assertThat(logMessageSearchResult.hits.size()).isEqualTo(10);
     assertThat(meterRegistry.get(CHUNK_ASSIGNMENT_TIMER).tag("successful", "true").timer().count())
@@ -789,7 +794,8 @@ public class ReadOnlyChunkImplTest {
                     Instant.now().minus(1, ChronoUnit.MINUTES).toEpochMilli(),
                     Instant.now().toEpochMilli()),
                 null,
-                createGenericDateHistogramAggregatorFactoriesBuilder()));
+                createGenericDateHistogramAggregatorFactoriesBuilder(),
+                SearchQuery.TotalHitsPolicy.defaultPolicy()));
     assertThat(logMessageSearchResult.hits.size()).isEqualTo(10);
 
     // ensure we registered a search node for this cache assignment

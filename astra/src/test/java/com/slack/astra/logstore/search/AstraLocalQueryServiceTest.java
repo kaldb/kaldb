@@ -6,7 +6,6 @@ import static com.slack.astra.server.AstraConfig.DEFAULT_START_STOP_DURATION;
 import static com.slack.astra.testlib.ChunkManagerUtil.makeChunkManagerUtil;
 import static com.slack.astra.testlib.MetricsUtil.getCount;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.AssertionsForClassTypes.assertThatExceptionOfType;
 
 import brave.Tracing;
 import com.adobe.testing.s3mock.junit5.S3MockExtension;
@@ -25,7 +24,6 @@ import com.slack.astra.testlib.SpanUtil;
 import com.slack.astra.util.GrpcCleanupExtension;
 import com.slack.astra.util.JsonUtil;
 import com.slack.service.murron.trace.Trace;
-import io.grpc.StatusRuntimeException;
 import io.grpc.inprocess.InProcessChannelBuilder;
 import io.grpc.inprocess.InProcessServerBuilder;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -256,6 +254,9 @@ public class AstraLocalQueryServiceTest {
     assertThat(response.getTotalSnapshots()).isEqualTo(1);
     assertThat(response.getSnapshotsWithReplicas()).isEqualTo(1);
     assertThat(response.getHitsList().asByteStringList().size()).isZero();
+    assertThat(response.getTotalHits().getValueCase())
+        .isEqualTo(AstraSearch.SearchResult.TotalHits.ValueCase.EQUAL_TO);
+    assertThat(response.getTotalHits().getEqualTo()).isEqualTo(1);
 
     // Test histogram buckets
     InternalAggregations internalAggregations =
@@ -301,6 +302,9 @@ public class AstraLocalQueryServiceTest {
     assertThat(response.getTotalNodes()).isEqualTo(1);
     assertThat(response.getTotalSnapshots()).isEqualTo(1);
     assertThat(response.getSnapshotsWithReplicas()).isEqualTo(1);
+    assertThat(response.getTotalHits().getValueCase())
+        .isEqualTo(AstraSearch.SearchResult.TotalHits.ValueCase.EQUAL_TO);
+    assertThat(response.getTotalHits().getEqualTo()).isEqualTo(1);
 
     // Test hit contents
     assertThat(response.getHitsList().asByteStringList().size()).isEqualTo(1);
@@ -322,7 +326,7 @@ public class AstraLocalQueryServiceTest {
   }
 
   @Test
-  public void testAstraBadArgSearch() throws Throwable {
+  public void testAstraCountOnlySearchUsesDefaultTotalHitsPolicy() throws IOException {
     IndexingChunkManager<LogMessage> chunkManager = chunkManagerUtil.chunkManager;
 
     final Instant startTime = Instant.now();
@@ -339,20 +343,21 @@ public class AstraLocalQueryServiceTest {
 
     AstraSearch.SearchRequest.Builder searchRequestBuilder = AstraSearch.SearchRequest.newBuilder();
 
-    assertThatExceptionOfType(IllegalArgumentException.class)
-        .isThrownBy(
-            () ->
-                astraLocalQueryService.doSearch(
-                    searchRequestBuilder
-                        .setDataset(MessageUtil.TEST_DATASET_NAME)
-                        .setQuery(
-                            buildQueryFromQueryString(
-                                "Message1", chunk1StartTimeMs, chunk1EndTimeMs))
-                        .setStartTimeEpochMs(chunk1StartTimeMs)
-                        .setEndTimeEpochMs(chunk1EndTimeMs)
-                        .setHowMany(0)
-                        .setAggregationJson("")
-                        .build()));
+    AstraSearch.SearchResult response =
+        astraLocalQueryService.doSearch(
+            searchRequestBuilder
+                .setDataset(MessageUtil.TEST_DATASET_NAME)
+                .setQuery(buildQueryFromQueryString("Message1", chunk1StartTimeMs, chunk1EndTimeMs))
+                .setStartTimeEpochMs(chunk1StartTimeMs)
+                .setEndTimeEpochMs(chunk1EndTimeMs)
+                .setHowMany(0)
+                .setAggregationJson("")
+                .build());
+
+    assertThat(response.getHitsCount()).isZero();
+    assertThat(response.getTotalHits().getValueCase())
+        .isEqualTo(AstraSearch.SearchResult.TotalHits.ValueCase.EQUAL_TO);
+    assertThat(response.getTotalHits().getEqualTo()).isEqualTo(1);
   }
 
   @Test
@@ -435,7 +440,44 @@ public class AstraLocalQueryServiceTest {
   }
 
   @Test
-  public void testAstraGrpcSearchThrowsException() throws IOException {
+  public void testAstraSearchCountOnly() throws IOException {
+    IndexingChunkManager<LogMessage> chunkManager = chunkManagerUtil.chunkManager;
+
+    final Instant startTime = Instant.now();
+    List<Trace.Span> messages = SpanUtil.makeSpansWithTimeDifference(1, 100, 1000, startTime);
+    int offset = 1;
+    for (Trace.Span m : messages) {
+      chunkManager.addMessage(m, m.toString().length(), TEST_KAFKA_PARITION_ID, offset);
+      offset++;
+    }
+
+    final long chunk1StartTimeMs = startTime.toEpochMilli();
+    final long chunk1EndTimeMs = chunk1StartTimeMs + (10 * 1000);
+
+    AstraSearch.SearchResult response =
+        astraLocalQueryService.doSearch(
+            AstraSearch.SearchRequest.newBuilder()
+                .setDataset(MessageUtil.TEST_DATASET_NAME)
+                .setQuery(buildQueryFromQueryString("Message1", chunk1StartTimeMs, chunk1EndTimeMs))
+                .setStartTimeEpochMs(chunk1StartTimeMs)
+                .setEndTimeEpochMs(chunk1EndTimeMs)
+                .setHowMany(0)
+                .setAggregationJson("")
+                .setTrackTotalHits(
+                    AstraSearch.SearchRequest.TrackTotalHits.newBuilder()
+                        .setExact(
+                            AstraSearch.SearchRequest.TrackTotalHits.Exact.getDefaultInstance())
+                        .build())
+                .build());
+
+    assertThat(response.getHitsCount()).isZero();
+    assertThat(response.getTotalHits().getValueCase())
+        .isEqualTo(AstraSearch.SearchResult.TotalHits.ValueCase.EQUAL_TO);
+    assertThat(response.getTotalHits().getEqualTo()).isEqualTo(1);
+  }
+
+  @Test
+  public void testAstraGrpcSearchCountOnly() throws IOException {
     // Load test data into chunk manager.
     IndexingChunkManager<LogMessage> chunkManager = chunkManagerUtil.chunkManager;
 
@@ -470,19 +512,20 @@ public class AstraLocalQueryServiceTest {
     // Build a bad search request.
     final long chunk1StartTimeMs = startTime.toEpochMilli();
     final long chunk1EndTimeMs = chunk1StartTimeMs + (10 * 1000);
-    assertThatExceptionOfType(StatusRuntimeException.class)
-        .isThrownBy(
-            () ->
-                blockingStub.search(
-                    AstraSearch.SearchRequest.newBuilder()
-                        .setDataset(MessageUtil.TEST_DATASET_NAME)
-                        .setQuery(
-                            buildQueryFromQueryString(
-                                "Message1", chunk1StartTimeMs, chunk1EndTimeMs))
-                        .setStartTimeEpochMs(chunk1StartTimeMs)
-                        .setEndTimeEpochMs(chunk1EndTimeMs)
-                        .setHowMany(0)
-                        .setAggregationJson("")
-                        .build()));
+    AstraSearch.SearchResult response =
+        blockingStub.search(
+            AstraSearch.SearchRequest.newBuilder()
+                .setDataset(MessageUtil.TEST_DATASET_NAME)
+                .setQuery(buildQueryFromQueryString("Message1", chunk1StartTimeMs, chunk1EndTimeMs))
+                .setStartTimeEpochMs(chunk1StartTimeMs)
+                .setEndTimeEpochMs(chunk1EndTimeMs)
+                .setHowMany(0)
+                .setAggregationJson("")
+                .build());
+
+    assertThat(response.getHitsCount()).isZero();
+    assertThat(response.getTotalHits().getValueCase())
+        .isEqualTo(AstraSearch.SearchResult.TotalHits.ValueCase.EQUAL_TO);
+    assertThat(response.getTotalHits().getEqualTo()).isEqualTo(1);
   }
 }

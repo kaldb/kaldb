@@ -630,7 +630,8 @@ public class ReadOnlyChunkImpl<T> implements Chunk<T> {
           query.howMany,
           query.queryBuilder,
           query.sourceFieldFilter,
-          query.aggregatorFactoriesBuilder);
+          query.aggregatorFactoriesBuilder,
+          query.totalHitsPolicy);
     } else {
       return (SearchResult<T>) SearchResult.empty();
     }
