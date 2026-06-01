@@ -527,6 +527,63 @@ public class LogIndexSearcherImplTest {
   }
 
   @Test
+  public void testReturnedHitsDoNotControlTotalHits() throws IOException {
+    Instant time = Instant.ofEpochSecond(1593365471);
+    loadTestData(time);
+
+    SearchResult<LogMessage> apples =
+        strictLogStore.logSearcher.search(
+            TEST_DATASET_NAME,
+            1,
+            QueryBuilderUtil.generateQueryBuilder("apple", 0L, MAX_TIME),
+            null,
+            null);
+
+    assertThat(apples.hits).hasSize(1);
+    assertThat(apples.totalHits).isEqualTo(3);
+    assertThat(apples.totalHitsRelation).isEqualTo(SearchResult.TotalHitsRelation.EQUAL_TO);
+  }
+
+  @Test
+  public void testCountOnlySearchReturnsTotalHitsWithoutHits() throws IOException {
+    Instant time = Instant.ofEpochSecond(1593365471);
+    loadTestData(time);
+
+    SearchResult<LogMessage> apples =
+        strictLogStore.logSearcher.search(
+            TEST_DATASET_NAME,
+            0,
+            QueryBuilderUtil.generateQueryBuilder("apple", 0L, MAX_TIME),
+            null,
+            null,
+            SearchQuery.TotalHitsPolicy.exact());
+
+    assertThat(apples.hits).isEmpty();
+    assertThat(apples.totalHits).isEqualTo(3);
+    assertThat(apples.totalHitsRelation).isEqualTo(SearchResult.TotalHitsRelation.EQUAL_TO);
+  }
+
+  @Test
+  public void testThresholdedTotalHitsReturnLowerBound() throws IOException {
+    Instant time = Instant.ofEpochSecond(1593365471);
+    loadTestData(time);
+
+    SearchResult<LogMessage> apples =
+        strictLogStore.logSearcher.search(
+            TEST_DATASET_NAME,
+            1,
+            QueryBuilderUtil.generateQueryBuilder("apple", 0L, MAX_TIME),
+            null,
+            null,
+            SearchQuery.TotalHitsPolicy.threshold(2));
+
+    assertThat(apples.hits).hasSize(1);
+    assertThat(apples.totalHits).isEqualTo(2);
+    assertThat(apples.totalHitsRelation)
+        .isEqualTo(SearchResult.TotalHitsRelation.GREATER_THAN_OR_EQUAL_TO);
+  }
+
+  @Test
   public void testSearchWithIncludeFilters() throws IOException {
     TemporaryLogStoreAndSearcherExtension featureFlagEnabledStrictLogStore =
         new TemporaryLogStoreAndSearcherExtension(true);
@@ -2266,19 +2323,21 @@ public class LogIndexSearcherImplTest {
   }
 
   @Test
-  public void testSearchOrHistogramQuery() {
+  public void testSearchOrHistogramQueryAllowsCountOnly() throws IOException {
     Instant time = Instant.ofEpochSecond(1593365471);
     loadTestData(time);
-    assertThatExceptionOfType(IllegalArgumentException.class)
-        .isThrownBy(
-            () ->
-                strictLogStore.logSearcher.search(
-                    TEST_DATASET_NAME,
-                    0,
-                    QueryBuilderUtil.generateQueryBuilder(
-                        "test", time.toEpochMilli(), time.plusSeconds(1).toEpochMilli()),
-                    null,
-                    null));
+    SearchResult<LogMessage> searchResult =
+        strictLogStore.logSearcher.search(
+            TEST_DATASET_NAME,
+            0,
+            QueryBuilderUtil.generateQueryBuilder(
+                "test", time.toEpochMilli(), time.plusSeconds(1).toEpochMilli()),
+            null,
+            null);
+
+    assertThat(searchResult.hits).isEmpty();
+    assertThat(searchResult.totalHits).isZero();
+    assertThat(searchResult.totalHitsRelation).isEqualTo(SearchResult.TotalHitsRelation.EQUAL_TO);
   }
 
   @Test

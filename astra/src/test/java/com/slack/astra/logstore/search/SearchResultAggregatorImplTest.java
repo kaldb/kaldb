@@ -634,6 +634,51 @@ public class SearchResultAggregatorImplTest {
   }
 
   @Test
+  public void testSearchResultAggregatorMergesTotalHits() throws IOException {
+    SearchResult<LogMessage> exactResult =
+        new SearchResult<>(
+            Collections.emptyList(),
+            10,
+            0,
+            1,
+            1,
+            1,
+            7,
+            SearchResult.TotalHitsRelation.EQUAL_TO,
+            null);
+    SearchResult<LogMessage> lowerBoundResult =
+        new SearchResult<>(
+            Collections.emptyList(),
+            11,
+            0,
+            1,
+            1,
+            1,
+            5,
+            SearchResult.TotalHitsRelation.GREATER_THAN_OR_EQUAL_TO,
+            null);
+    SearchQuery searchQuery =
+        new SearchQuery(
+            MessageUtil.TEST_DATASET_NAME,
+            0,
+            1,
+            0,
+            Collections.emptyList(),
+            QueryBuilderUtil.generateQueryBuilder("Message1", 0L, 1L),
+            null,
+            null,
+            SearchQuery.TotalHitsPolicy.threshold(5));
+
+    SearchResult<LogMessage> aggSearchResult =
+        new SearchResultAggregatorImpl<>(searchQuery)
+            .aggregate(List.of(exactResult, lowerBoundResult), true);
+
+    assertThat(aggSearchResult.totalHits).isEqualTo(12);
+    assertThat(aggSearchResult.totalHitsRelation)
+        .isEqualTo(SearchResult.TotalHitsRelation.GREATER_THAN_OR_EQUAL_TO);
+  }
+
+  @Test
   public void testSimpleSearchResultsAggNoHits() throws IOException {
     long tookMs = 10;
     int bucketCount = 13;

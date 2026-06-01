@@ -9,6 +9,18 @@ import org.opensearch.core.xcontent.MediaTypeRegistry;
 import org.opensearch.search.aggregations.InternalAggregations;
 
 public class SearchResult<T> {
+  /** Describes whether totalHits is an exact value or an OpenSearch-compatible lower bound. */
+  public enum TotalHitsRelation {
+    EQUAL_TO("eq"),
+    GREATER_THAN_OR_EQUAL_TO("gte");
+
+    /** OpenSearch response value for hits.total.relation. */
+    public final String openSearchName;
+
+    TotalHitsRelation(String openSearchName) {
+      this.openSearchName = openSearchName;
+    }
+  }
 
   private static final SearchResult EMPTY =
       new SearchResult<>(Collections.emptyList(), 0, 0, 1, 0, 0, null);
@@ -30,6 +42,9 @@ public class SearchResult<T> {
   public final int totalSnapshots;
   public final int snapshotsWithReplicas;
 
+  public final long totalHits;
+  public final TotalHitsRelation totalHitsRelation;
+
   public final InternalAggregations internalAggregations;
 
   /** Creates a search result that carries the full top-level OpenSearch aggregation collection. */
@@ -41,12 +56,37 @@ public class SearchResult<T> {
       int totalSnapshots,
       int snapshotsWithReplicas,
       InternalAggregations internalAggregations) {
+    this(
+        hits,
+        tookMicros,
+        failedNodes,
+        totalNodes,
+        totalSnapshots,
+        snapshotsWithReplicas,
+        hits.size(),
+        TotalHitsRelation.EQUAL_TO,
+        internalAggregations);
+  }
+
+  /** Creates a search result with explicit OpenSearch hits.total metadata. */
+  public SearchResult(
+      List<T> hits,
+      long tookMicros,
+      int failedNodes,
+      int totalNodes,
+      int totalSnapshots,
+      int snapshotsWithReplicas,
+      long totalHits,
+      TotalHitsRelation totalHitsRelation,
+      InternalAggregations internalAggregations) {
     this.hits = hits;
     this.tookMicros = tookMicros;
     this.failedNodes = failedNodes;
     this.totalNodes = totalNodes;
     this.totalSnapshots = totalSnapshots;
     this.snapshotsWithReplicas = snapshotsWithReplicas;
+    this.totalHits = totalHits;
+    this.totalHitsRelation = totalHitsRelation;
     this.internalAggregations = internalAggregations;
   }
 
@@ -65,6 +105,10 @@ public class SearchResult<T> {
         + totalSnapshots
         + ", snapshotsWithReplicas="
         + snapshotsWithReplicas
+        + ", totalHits="
+        + totalHits
+        + ", totalHitsRelation="
+        + totalHitsRelation
         + ", internalAggregations="
         + aggregationString(internalAggregations)
         + '}';
@@ -82,6 +126,8 @@ public class SearchResult<T> {
     if (totalNodes != that.totalNodes) return false;
     if (totalSnapshots != that.totalSnapshots) return false;
     if (snapshotsWithReplicas != that.snapshotsWithReplicas) return false;
+    if (totalHits != that.totalHits) return false;
+    if (totalHitsRelation != that.totalHitsRelation) return false;
     if (!hits.equals(that.hits)) return false;
 
     // todo - this is pending a PR to OpenSearch to address
@@ -102,6 +148,8 @@ public class SearchResult<T> {
         totalNodes,
         totalSnapshots,
         snapshotsWithReplicas,
+        totalHits,
+        totalHitsRelation,
         aggregationString(internalAggregations));
   }
 

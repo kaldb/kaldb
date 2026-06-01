@@ -5,6 +5,7 @@ import static com.slack.astra.logstore.search.SearchResultUtils.toValueProto;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 
+import com.slack.astra.logstore.LogMessage;
 import com.slack.astra.metadata.schema.FieldType;
 import com.slack.astra.proto.schema.Schema;
 import com.slack.astra.proto.service.AstraSearch;
@@ -23,7 +24,7 @@ import org.opensearch.search.aggregations.bucket.terms.TermsAggregationBuilder;
 
 public class SearchResultUtilsTest {
   @Test
-  public void shouldRejectZeroHitRequestWithoutAggregations() {
+  public void shouldAcceptZeroHitRequestWithoutAggregations() {
     AstraSearch.SearchRequest searchRequest =
         AstraSearch.SearchRequest.newBuilder()
             .setDataset("test-data")
@@ -34,9 +35,10 @@ public class SearchResultUtilsTest {
             .setAggregationJson("")
             .build();
 
-    assertThatIllegalArgumentException()
-        .isThrownBy(() -> SearchResultUtils.fromSearchRequest(searchRequest))
-        .withMessage("Hits or aggregation should be requested.");
+    SearchQuery output = SearchResultUtils.fromSearchRequest(searchRequest);
+
+    assertThat(output.howMany).isZero();
+    assertThat(output.aggregatorFactoriesBuilder).isNull();
   }
 
   @Test
@@ -129,6 +131,48 @@ public class SearchResultUtilsTest {
     assertThat(dateHistogramAggregationBuilder.extendedBounds().getMax()).isEqualTo(1676500240688L);
     assertThat(dateHistogramAggregationBuilder.format()).isEqualTo("epoch_millis");
     assertThat(dateHistogramAggregationBuilder.offset()).isEqualTo(5000L);
+  }
+
+  @Test
+  public void shouldConvertTrackTotalHitsPolicyFromProto() {
+    AstraSearch.SearchRequest searchRequest =
+        AstraSearch.SearchRequest.newBuilder()
+            .setHowMany(1)
+            .setQuery("{\"match_all\":{}}")
+            .setTrackTotalHits(
+                AstraSearch.SearchRequest.TrackTotalHits.newBuilder()
+                    .setMode(
+                        AstraSearch.SearchRequest.TrackTotalHits.Mode.TRACK_TOTAL_HITS_THRESHOLD)
+                    .setThreshold(7)
+                    .build())
+            .build();
+
+    SearchQuery output = SearchResultUtils.fromSearchRequest(searchRequest);
+
+    assertThat(output.totalHitsPolicy).isEqualTo(SearchQuery.TotalHitsPolicy.threshold(7));
+  }
+
+  @Test
+  public void shouldRoundTripSearchResultTotalHitsThroughProto() throws Exception {
+    SearchResult<LogMessage> searchResult =
+        new SearchResult<>(
+            List.of(),
+            11,
+            0,
+            1,
+            1,
+            1,
+            7,
+            SearchResult.TotalHitsRelation.GREATER_THAN_OR_EQUAL_TO,
+            null);
+
+    AstraSearch.SearchResult protoSearchResult =
+        SearchResultUtils.toSearchResultProto(searchResult);
+    SearchResult<LogMessage> output = SearchResultUtils.fromSearchResultProto(protoSearchResult);
+
+    assertThat(output.totalHits).isEqualTo(7);
+    assertThat(output.totalHitsRelation)
+        .isEqualTo(SearchResult.TotalHitsRelation.GREATER_THAN_OR_EQUAL_TO);
   }
 
   @Test

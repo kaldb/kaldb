@@ -1,5 +1,6 @@
 package com.slack.astra.elasticsearchApi.searchResponse;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import java.util.ArrayList;
 import java.util.List;
@@ -8,6 +9,7 @@ import java.util.Map;
 public class HitsMetadata {
 
   @JsonProperty("total")
+  @JsonInclude(JsonInclude.Include.NON_NULL)
   private final Map<String, Object> hitsTotal;
 
   @JsonProperty("max_score")

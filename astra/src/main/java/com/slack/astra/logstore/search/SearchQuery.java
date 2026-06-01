@@ -31,6 +31,47 @@ public class SearchQuery {
   private static final SortFieldSpec DEFAULT_SORT_FIELD =
       new SortFieldSpec(LogMessage.SystemField.TIME_SINCE_EPOCH.fieldName, SortDirection.DESC);
 
+  /**
+   * Controls whether result metadata should include an OpenSearch-compatible hits.total value and
+   * how many matches should be counted exactly before returning a lower bound.
+   *
+   * @param enabled whether total-hit tracking is enabled
+   * @param threshold maximum exact count before a lower-bound relation may be returned
+   */
+  public record TotalHitsPolicy(boolean enabled, int threshold) {
+    public static final int DEFAULT_THRESHOLD = 10_000;
+    public static final int EXACT_THRESHOLD = Integer.MAX_VALUE;
+
+    public TotalHitsPolicy {
+      ensureTrue(threshold >= 0, "total hits threshold should not be negative.");
+    }
+
+    /** Returns the OpenSearch default total-hit counting policy. */
+    public static TotalHitsPolicy defaultPolicy() {
+      return threshold(DEFAULT_THRESHOLD);
+    }
+
+    /** Returns a policy that asks Lucene to count every matching document exactly. */
+    public static TotalHitsPolicy exact() {
+      return new TotalHitsPolicy(true, EXACT_THRESHOLD);
+    }
+
+    /** Returns a policy that disables hits.total tracking in the compatibility response. */
+    public static TotalHitsPolicy disabled() {
+      return new TotalHitsPolicy(false, 0);
+    }
+
+    /** Returns a policy that counts accurately up to the provided threshold. */
+    public static TotalHitsPolicy threshold(int threshold) {
+      return new TotalHitsPolicy(true, threshold);
+    }
+
+    /** Returns whether this policy requests exact total-hit counting. */
+    public boolean isExact() {
+      return enabled && threshold == EXACT_THRESHOLD;
+    }
+  }
+
   // TODO: Remove the dataset field from this class since it is not a lucene level concept.
   @Deprecated public final String dataset;
 
@@ -43,6 +84,7 @@ public class SearchQuery {
   public final SourceFieldFilter sourceFieldFilter;
   public final long startTimeEpochMs;
   public final long endTimeEpochMs;
+  public final TotalHitsPolicy totalHitsPolicy;
 
   public SearchQuery(
       String dataset,
@@ -63,7 +105,8 @@ public class SearchQuery {
         chunkIds,
         queryBuilder,
         sourceFieldFilter,
-        aggregatorFactoriesBuilder);
+        aggregatorFactoriesBuilder,
+        TotalHitsPolicy.defaultPolicy());
   }
 
   public SearchQuery(
@@ -77,6 +120,32 @@ public class SearchQuery {
       QueryBuilder queryBuilder,
       SourceFieldFilter sourceFieldFilter,
       AggregatorFactories.Builder aggregatorFactoriesBuilder) {
+    this(
+        dataset,
+        startTimeEpochMs,
+        endTimeEpochMs,
+        howMany,
+        startFrom,
+        sortFieldSpecs,
+        chunkIds,
+        queryBuilder,
+        sourceFieldFilter,
+        aggregatorFactoriesBuilder,
+        TotalHitsPolicy.defaultPolicy());
+  }
+
+  public SearchQuery(
+      String dataset,
+      long startTimeEpochMs,
+      long endTimeEpochMs,
+      int howMany,
+      int startFrom,
+      List<SortFieldSpec> sortFieldSpecs,
+      List<String> chunkIds,
+      QueryBuilder queryBuilder,
+      SourceFieldFilter sourceFieldFilter,
+      AggregatorFactories.Builder aggregatorFactoriesBuilder,
+      TotalHitsPolicy totalHitsPolicy) {
     this.dataset = dataset;
     this.howMany = howMany;
     this.startFrom = startFrom;
@@ -90,14 +159,11 @@ public class SearchQuery {
     this.startTimeEpochMs = startTimeEpochMs;
     this.endTimeEpochMs = endTimeEpochMs;
     this.aggregatorFactoriesBuilder = aggregatorFactoriesBuilder;
+    this.totalHitsPolicy = Objects.requireNonNull(totalHitsPolicy, "totalHitsPolicy");
 
     ensureTrue(howMany >= 0, "hits requested should not be negative.");
     ensureTrue(startFrom >= 0, "from should not be negative.");
     ensureTrue(startFrom <= Integer.MAX_VALUE - howMany, "from plus size is too large.");
-    // Reject unsupported no-op requests before they fan out to every chunk.
-    ensureTrue(
-        howMany > 0 || aggregatorFactoriesBuilder != null,
-        "Hits or aggregation should be requested.");
   }
 
   /** Returns the number of leaf hits needed before the final global offset is applied. */
@@ -192,6 +258,8 @@ public class SearchQuery {
         + queryBuilder
         + ", sourceFieldFilter="
         + sourceFieldFilter
+        + ", totalHitsPolicy="
+        + totalHitsPolicy
         + ", aggregatorFactoriesBuilder="
         + aggregatorFactoriesBuilder
         + '}';

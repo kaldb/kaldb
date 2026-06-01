@@ -35,6 +35,25 @@ message SearchRequest {
   // Astra's OpenSearch compatibility layer.
   string sort_json = 11;
 
+  // Controls OpenSearch-compatible hits.total counting. If unset, Astra counts accurately up to
+  // OpenSearch's default threshold.
+  TrackTotalHits track_total_hits = 13;
+
+  message TrackTotalHits {
+    enum Mode {
+      TRACK_TOTAL_HITS_MODE_UNSPECIFIED = 0;
+      TRACK_TOTAL_HITS_THRESHOLD = 1;
+      TRACK_TOTAL_HITS_EXACT = 2;
+      TRACK_TOTAL_HITS_DISABLED = 3;
+    }
+
+    // Counting mode requested by the OpenSearch track_total_hits field.
+    Mode mode = 1;
+
+    // Threshold used when mode is TRACK_TOTAL_HITS_THRESHOLD.
+    int32 threshold = 2;
+  }
+
   message SourceFieldFilter {
     // Whether or not to include/exclude _all_ fields
     optional bool includeAll = 1;
@@ -231,6 +250,12 @@ message SearchRequest {
 }
 
 message SearchResult {
+  enum TotalHitsRelation {
+    TOTAL_HITS_RELATION_UNSPECIFIED = 0;
+    TOTAL_HITS_EQUAL_TO = 1;
+    TOTAL_HITS_GREATER_THAN_OR_EQUAL_TO = 2;
+  }
+
   repeated string hits = 3;
   bytes internal_aggregations = 4;
   int64 took_micros = 5;
@@ -239,6 +264,12 @@ message SearchResult {
   int32 total_nodes = 7;
   int32 total_snapshots = 8;
   int32 snapshots_with_replicas = 9;
+
+  // Matched document count or lower bound, depending on total_hits_relation.
+  int64 total_hits = 10;
+
+  // Whether total_hits is exact or a lower bound. Unspecified means hits.total was not tracked.
+  TotalHitsRelation total_hits_relation = 11;
 }
 
 // Based off of https://github.com/protocolbuffers/protobuf/blob/main/src/google/protobuf/struct.proto
