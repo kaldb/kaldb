@@ -12,11 +12,13 @@ import com.slack.astra.logstore.LogStore;
 import com.slack.astra.logstore.LuceneIndexStoreConfig;
 import com.slack.astra.logstore.LuceneIndexStoreImpl;
 import com.slack.astra.logstore.schema.SchemaAwareLogDocumentBuilderImpl;
+import com.slack.astra.proto.schema.Schema;
 import com.slack.astra.proto.service.AstraSearch;
 import com.slack.astra.testlib.MessageUtil;
 import com.slack.astra.testlib.SpanUtil;
 import com.slack.astra.util.QueryBuilderUtil;
 import com.slack.service.murron.trace.Trace;
+import com.slack.service.murron.trace.Trace.KeyValue;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.io.File;
@@ -27,6 +29,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.BeforeEach;
@@ -34,9 +37,29 @@ import org.junit.jupiter.api.Test;
 import org.opensearch.search.aggregations.InternalAggregation;
 import org.opensearch.search.aggregations.InternalAggregations;
 import org.opensearch.search.aggregations.bucket.histogram.InternalDateHistogram;
+import org.opensearch.search.aggregations.bucket.terms.InternalMultiTerms;
 import org.opensearch.search.aggregations.bucket.terms.StringTerms;
 
 public class SearchResultAggregatorImplTest {
+  private static Trace.Span makeDimensionSpan(
+      int id, Instant timestamp, String country, String browser) {
+    return SpanUtil.makeSpan(
+        id,
+        "dimension-message-" + id,
+        timestamp,
+        List.of(
+            Trace.KeyValue.newBuilder()
+                .setKey("country")
+                .setFieldType(Schema.SchemaFieldType.KEYWORD)
+                .setVStr(country)
+                .build(),
+            Trace.KeyValue.newBuilder()
+                .setKey("browser")
+                .setFieldType(Schema.SchemaFieldType.KEYWORD)
+                .setVStr(browser)
+                .build()));
+  }
+
   @BeforeEach
   public void setUp() throws Exception {
     Tracing.newBuilder().build();
@@ -436,6 +459,205 @@ public class SearchResultAggregatorImplTest {
         .isEqualTo(messages1.size() + messages2.size());
   }
 
+  /** Verifies compound multi_terms buckets are reduced across shard search results. */
+  @Test
+  public void testSearchResultAggregatorReducesMultiTermsBuckets() throws IOException {
+    Instant startTime = Instant.now().minusSeconds(10);
+    long searchStartMs = startTime.toEpochMilli();
+    long searchEndMs = startTime.plusSeconds(1).toEpochMilli();
+    List<Trace.Span> shard1Rows =
+        List.of(
+            makeDimensionSpan(1, startTime.plusMillis(1), "US", "Chrome"),
+            makeDimensionSpan(2, startTime.plusMillis(2), "CA", "Safari"));
+    List<Trace.Span> shard2Rows =
+        List.of(
+            makeDimensionSpan(3, startTime.plusMillis(3), "US", "Chrome"),
+            makeDimensionSpan(4, startTime.plusMillis(4), "US", "Safari"));
+    Map<List<Object>, Long> expectedBuckets =
+        Map.of(
+            List.of("US", "Chrome"), 2L,
+            List.of("CA", "Safari"), 1L,
+            List.of("US", "Safari"), 1L);
+    SearchQuery searchQuery =
+        SearchResultUtils.fromSearchRequest(
+            AstraSearch.SearchRequest.newBuilder()
+                .setDataset(MessageUtil.TEST_DATASET_NAME)
+                .setStartTimeEpochMs(searchStartMs)
+                .setEndTimeEpochMs(searchEndMs)
+                .setHowMany(0)
+                .setAggregationJson(
+                    """
+                    {
+                      "dimensions": {
+                        "multi_terms": {
+                          "terms": [
+                            {
+                              "field": "country"
+                            },
+                            {
+                              "field": "browser"
+                            }
+                          ],
+                          "size": 10,
+                          "order": {
+                            "_count": "desc"
+                          }
+                        }
+                      }
+                    }
+                    """)
+                .build());
+
+    InternalAggregations shard1Aggregations =
+        makeAggregations(searchQuery, searchStartMs, searchEndMs, shard1Rows);
+    InternalAggregations shard2Aggregations =
+        makeAggregations(searchQuery, searchStartMs, searchEndMs, shard2Rows);
+
+    SearchResult<LogMessage> result =
+        new SearchResultAggregatorImpl<LogMessage>(searchQuery)
+            .aggregate(
+                List.of(
+                    new SearchResult<>(List.of(), 0, 0, 1, 1, 0, shard1Aggregations),
+                    new SearchResult<>(List.of(), 0, 0, 1, 1, 0, shard2Aggregations)),
+                true);
+
+    InternalMultiTerms dimensions =
+        (InternalMultiTerms) Objects.requireNonNull(result.internalAggregations).get("dimensions");
+    Map<List<Object>, Long> actualBuckets =
+        dimensions.getBuckets().stream()
+            .collect(
+                Collectors.toMap(
+                    InternalMultiTerms.Bucket::getKey, InternalMultiTerms.Bucket::getDocCount));
+    assertThat(actualBuckets).isEqualTo(expectedBuckets);
+  }
+
+  @Test
+  void testBucketSortPipelineAggregation() throws IOException {
+    // Commit d428686b358f7b40d382f41b76475bc899fc7cd8 moved distributed
+    // aggregation merging to OpenSearch's topLevelReduce API, which has the full aggregation tree
+    // needed to run pipeline aggregations during final reduction.
+    //
+    // SQL equivalent:
+    // SELECT bucket_field, COUNT(*) AS doc_count
+    // FROM spans
+    // GROUP BY bucket_field
+    // ORDER BY doc_count DESC
+    // LIMIT 1 OFFSET 1
+    long tookMs = 10;
+    Instant startTime1 = Instant.now();
+    Instant startTime2 = startTime1.plus(1, ChronoUnit.HOURS);
+    long searchStartMs = startTime1.toEpochMilli();
+    long searchEndMs = startTime1.plus(2, ChronoUnit.HOURS).toEpochMilli();
+
+    SearchQuery searchQuery = buildBucketSortAggregationQuery(searchStartMs, searchEndMs);
+
+    SearchResult<LogMessage> searchResult1 =
+        new SearchResult<>(
+            Collections.emptyList(),
+            tookMs,
+            0,
+            1,
+            1,
+            0,
+            makeAggregations(
+                searchQuery,
+                searchStartMs,
+                searchEndMs,
+                makeBucketFieldSpans(startTime1, "A", "A", "B")));
+    SearchResult<LogMessage> searchResult2 =
+        new SearchResult<>(
+            Collections.emptyList(),
+            tookMs + 1,
+            0,
+            1,
+            1,
+            0,
+            makeAggregations(
+                searchQuery,
+                searchStartMs,
+                searchEndMs,
+                makeBucketFieldSpans(startTime2, "A", "C", "C")));
+
+    SearchResult<LogMessage> aggSearchResult =
+        new SearchResultAggregatorImpl<>(searchQuery)
+            .aggregate(List.of(searchResult1, searchResult2), true);
+
+    assertThat(aggSearchResult.hits).isEmpty();
+    assertThat(aggSearchResult.tookMicros).isEqualTo(tookMs + 1);
+    assertThat(aggSearchResult.failedNodes).isZero();
+    assertThat(aggSearchResult.snapshotsWithReplicas).isZero();
+    assertThat(aggSearchResult.totalSnapshots).isEqualTo(2);
+
+    StringTerms combined =
+        (StringTerms) Objects.requireNonNull(aggSearchResult.internalAggregations.get("by_bucket"));
+    assertThat(combined.getBuckets()).hasSize(1);
+    assertThat(combined.getBuckets().getFirst().getKeyAsString()).isEqualTo("C");
+    assertThat(combined.getBuckets().getFirst().getDocCount()).isEqualTo(2);
+  }
+
+  @Test
+  void testBucketSelectorPipelineAggregation() throws IOException {
+    // Commit d428686b358f7b40d382f41b76475bc899fc7cd8 moved distributed
+    // aggregation merging to OpenSearch's topLevelReduce API, which has the full aggregation tree
+    // needed to run pipeline aggregations during final reduction.
+    //
+    // SQL equivalent:
+    // SELECT bucket_field, COUNT(*) AS doc_count
+    // FROM spans
+    // GROUP BY bucket_field
+    // HAVING COUNT(*) > 1
+    long tookMs = 10;
+    Instant startTime1 = Instant.now();
+    Instant startTime2 = startTime1.plus(1, ChronoUnit.HOURS);
+    long searchStartMs = startTime1.toEpochMilli();
+    long searchEndMs = startTime1.plus(2, ChronoUnit.HOURS).toEpochMilli();
+
+    SearchQuery searchQuery = buildBucketSelectorAggregationQuery(searchStartMs, searchEndMs);
+
+    SearchResult<LogMessage> searchResult1 =
+        new SearchResult<>(
+            Collections.emptyList(),
+            tookMs,
+            0,
+            1,
+            1,
+            0,
+            makeAggregations(
+                searchQuery,
+                searchStartMs,
+                searchEndMs,
+                makeBucketFieldSpans(startTime1, "A", "B")));
+    SearchResult<LogMessage> searchResult2 =
+        new SearchResult<>(
+            Collections.emptyList(),
+            tookMs + 1,
+            0,
+            1,
+            1,
+            0,
+            makeAggregations(
+                searchQuery,
+                searchStartMs,
+                searchEndMs,
+                makeBucketFieldSpans(startTime2, "A", "C")));
+
+    SearchResult<LogMessage> aggSearchResult =
+        new SearchResultAggregatorImpl<>(searchQuery)
+            .aggregate(List.of(searchResult1, searchResult2), true);
+
+    assertThat(aggSearchResult.hits).isEmpty();
+    assertThat(aggSearchResult.tookMicros).isEqualTo(tookMs + 1);
+    assertThat(aggSearchResult.failedNodes).isZero();
+    assertThat(aggSearchResult.snapshotsWithReplicas).isZero();
+    assertThat(aggSearchResult.totalSnapshots).isEqualTo(2);
+
+    StringTerms combined =
+        (StringTerms) Objects.requireNonNull(aggSearchResult.internalAggregations.get("by_bucket"));
+    assertThat(combined.getBuckets()).hasSize(1);
+    assertThat(combined.getBuckets().getFirst().getKeyAsString()).isEqualTo("A");
+    assertThat(combined.getBuckets().getFirst().getDocCount()).isEqualTo(2);
+  }
+
   @Test
   public void testSimpleSearchResultsAggWithNoHistograms() throws IOException {
     long tookMs = 10;
@@ -758,6 +980,94 @@ public class SearchResultAggregatorImplTest {
       logStore.close();
       logStore.cleanup();
     }
+  }
+
+  private List<Trace.Span> makeBucketFieldSpans(Instant startTime, String... bucketValues) {
+    List<Trace.Span> result = new ArrayList<>();
+    for (int i = 0; i < bucketValues.length; i++) {
+      KeyValue bucketTag =
+          KeyValue.newBuilder()
+              .setKey("bucket_field")
+              .setFieldType(Schema.SchemaFieldType.KEYWORD)
+              .setVStr(bucketValues[i])
+              .build();
+      result.add(
+          SpanUtil.makeSpan(
+              i + 1,
+              "bucket-field-" + (i + 1),
+              startTime.plus(i, ChronoUnit.MINUTES),
+              List.of(bucketTag)));
+    }
+    return result;
+  }
+
+  private SearchQuery buildBucketSortAggregationQuery(long searchStartMs, long searchEndMs) {
+    return SearchResultUtils.fromSearchRequest(
+        AstraSearch.SearchRequest.newBuilder()
+            .setDataset(MessageUtil.TEST_DATASET_NAME)
+            .setStartTimeEpochMs(searchStartMs)
+            .setEndTimeEpochMs(searchEndMs)
+            .setHowMany(0)
+            .setAggregationJson(
+                """
+                {
+                  "by_bucket": {
+                    "terms": {
+                      "field": "bucket_field",
+                      "size": 10,
+                      "min_doc_count": 1
+                    },
+                    "aggs": {
+                      "page": {
+                        "bucket_sort": {
+                          "sort": [
+                            {
+                              "_count": {
+                                "order": "desc"
+                              }
+                            }
+                          ],
+                          "from": 1,
+                          "size": 1
+                        }
+                      }
+                    }
+                  }
+                }
+                """)
+            .build());
+  }
+
+  private SearchQuery buildBucketSelectorAggregationQuery(long searchStartMs, long searchEndMs) {
+    return SearchResultUtils.fromSearchRequest(
+        AstraSearch.SearchRequest.newBuilder()
+            .setDataset(MessageUtil.TEST_DATASET_NAME)
+            .setStartTimeEpochMs(searchStartMs)
+            .setEndTimeEpochMs(searchEndMs)
+            .setHowMany(0)
+            .setAggregationJson(
+                """
+                {
+                  "by_bucket": {
+                    "terms": {
+                      "field": "bucket_field",
+                      "size": 10,
+                      "min_doc_count": 1
+                    },
+                    "aggs": {
+                      "having": {
+                        "bucket_selector": {
+                          "buckets_path": {
+                            "c": "_count"
+                          },
+                          "script": "params.c > 1"
+                        }
+                      }
+                    }
+                  }
+                }
+                """)
+            .build());
   }
 
   private SearchQuery buildSiblingAggregationQuery(

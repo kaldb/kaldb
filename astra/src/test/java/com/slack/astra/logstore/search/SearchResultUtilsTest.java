@@ -18,6 +18,7 @@ import org.opensearch.index.query.QueryStringQueryBuilder;
 import org.opensearch.index.query.TermsQueryBuilder;
 import org.opensearch.search.aggregations.AggregationBuilder;
 import org.opensearch.search.aggregations.bucket.histogram.DateHistogramAggregationBuilder;
+import org.opensearch.search.aggregations.bucket.terms.MultiTermsAggregationBuilder;
 import org.opensearch.search.aggregations.bucket.terms.TermsAggregationBuilder;
 
 public class SearchResultUtilsTest {
@@ -143,6 +144,49 @@ public class SearchResultUtilsTest {
             aggregationBuilder ->
                 aggregationBuilder.getName().equals("services")
                     && aggregationBuilder instanceof TermsAggregationBuilder);
+  }
+
+  /** Verifies multi_terms requests are parsed into the native OpenSearch aggregation builder. */
+  @Test
+  public void shouldParseMultiTermsAggregationWithFieldAndScriptSources() {
+    AstraSearch.SearchRequest searchRequest =
+        AstraSearch.SearchRequest.newBuilder()
+            .setAggregationJson(
+                """
+                {
+                  "dimensions": {
+                    "multi_terms": {
+                      "terms": [
+                        {
+                          "field": "country"
+                        },
+                        {
+                          "script": {
+                            "source": "doc['browser'].value"
+                          },
+                          "value_type": "string"
+                        }
+                      ],
+                      "size": 5,
+                      "order": {
+                        "_count": "desc"
+                      }
+                    }
+                  }
+                }""")
+            .build();
+
+    SearchQuery output = SearchResultUtils.fromSearchRequest(searchRequest);
+    assertThat(output.aggregatorFactoriesBuilder).isNotNull();
+    assertThat(output.aggregatorFactoriesBuilder.getAggregatorFactories()).hasSize(1);
+
+    AggregationBuilder aggregationBuilder =
+        output.aggregatorFactoriesBuilder.getAggregatorFactories().iterator().next();
+    assertThat(aggregationBuilder).isInstanceOf(MultiTermsAggregationBuilder.class);
+    MultiTermsAggregationBuilder multiTermsAggregationBuilder =
+        (MultiTermsAggregationBuilder) aggregationBuilder;
+    assertThat(multiTermsAggregationBuilder.getName()).isEqualTo("dimensions");
+    assertThat(multiTermsAggregationBuilder.size()).isEqualTo(5);
   }
 
   @Test
