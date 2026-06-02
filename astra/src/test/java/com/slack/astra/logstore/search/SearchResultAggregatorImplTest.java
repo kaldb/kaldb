@@ -663,6 +663,8 @@ public class SearchResultAggregatorImplTest {
             0,
             1,
             0,
+            0,
+            Collections.emptyList(),
             Collections.emptyList(),
             QueryBuilderUtil.generateQueryBuilder("Message1", 0L, 1L),
             null,
