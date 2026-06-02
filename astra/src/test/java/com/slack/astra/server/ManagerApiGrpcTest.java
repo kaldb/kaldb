@@ -1081,6 +1081,12 @@ public class ManagerApiGrpcTest {
             List.of(new DatasetPartitionMetadata(1, MAX_TIME, List.of("1"))),
             "",
             true));
+    await()
+        .untilAsserted(
+            () ->
+                assertThat(datasetMetadataStore.listSync())
+                    .extracting(DatasetMetadata::getName)
+                    .containsExactlyInAnyOrder("dataset-a", "dataset-b"));
 
     StatusRuntimeException throwable =
         (StatusRuntimeException)
