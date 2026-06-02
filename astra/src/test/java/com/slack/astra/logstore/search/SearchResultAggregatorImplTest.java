@@ -585,8 +585,8 @@ public class SearchResultAggregatorImplTest {
     assertThat(aggSearchResult.hits).isEmpty();
     assertThat(aggSearchResult.tookMicros).isEqualTo(tookMs + 1);
     assertThat(aggSearchResult.failedNodes).isZero();
-    assertThat(aggSearchResult.snapshotsWithReplicas).isZero();
-    assertThat(aggSearchResult.totalSnapshots).isEqualTo(2);
+    assertThat(aggSearchResult.fulfilledSnapshots).isZero();
+    assertThat(aggSearchResult.requestedSnapshots).isEqualTo(2);
 
     StringTerms combined =
         (StringTerms) Objects.requireNonNull(aggSearchResult.internalAggregations.get("by_bucket"));
@@ -648,8 +648,8 @@ public class SearchResultAggregatorImplTest {
     assertThat(aggSearchResult.hits).isEmpty();
     assertThat(aggSearchResult.tookMicros).isEqualTo(tookMs + 1);
     assertThat(aggSearchResult.failedNodes).isZero();
-    assertThat(aggSearchResult.snapshotsWithReplicas).isZero();
-    assertThat(aggSearchResult.totalSnapshots).isEqualTo(2);
+    assertThat(aggSearchResult.fulfilledSnapshots).isZero();
+    assertThat(aggSearchResult.requestedSnapshots).isEqualTo(2);
 
     StringTerms combined =
         (StringTerms) Objects.requireNonNull(aggSearchResult.internalAggregations.get("by_bucket"));
