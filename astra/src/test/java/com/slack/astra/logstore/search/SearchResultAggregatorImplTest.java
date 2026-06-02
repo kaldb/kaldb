@@ -65,6 +65,35 @@ public class SearchResultAggregatorImplTest {
     Tracing.newBuilder().build();
   }
 
+  // The coordinator synthesizes missingQueryableSnapshotCoverage / failedDistributedSubrequest
+  // results and feeds them back through this aggregator. Verify they compose correctly with a
+  // real per-node result so the requested/fulfilled gap survives aggregation.
+  @Test
+  public void testAggregatePreservesSyntheticMissingCoverageResults() {
+    SearchResult<LogMessage> realNodeResult =
+        new SearchResult<>(Collections.emptyList(), 5, 0, 1, 3, 3, null);
+    SearchResult<LogMessage> failedSubrequest = SearchResult.failedDistributedSubrequest(2);
+    SearchResult<LogMessage> missingMetadata = SearchResult.missingQueryableSnapshotCoverage(4);
+
+    SearchQuery searchQuery =
+        new SearchQuery(
+            MessageUtil.TEST_DATASET_NAME, 0, 1, 10, Collections.emptyList(), null, null, null);
+
+    SearchResult<LogMessage> aggregated =
+        new SearchResultAggregatorImpl<LogMessage>(searchQuery)
+            .aggregate(List.of(realNodeResult, failedSubrequest, missingMetadata), true);
+
+    // requested = 3 + 2 + 4; fulfilled = 3 + 0 + 0 → 6 missing
+    assertThat(aggregated.requestedSnapshots).isEqualTo(9);
+    assertThat(aggregated.fulfilledSnapshots).isEqualTo(3);
+    assertThat(aggregated.failedSnapshots()).isEqualTo(6);
+
+    // failedNodes/totalNodes only get bumped by the subrequest case (1/1), not by the
+    // coordinator-only missing-metadata case.
+    assertThat(aggregated.failedNodes).isEqualTo(1);
+    assertThat(aggregated.totalNodes).isEqualTo(2);
+  }
+
   @Test
   public void testSimpleSearchResultsAggWithOneResult() throws IOException {
     long tookMs = 10;
@@ -122,8 +151,8 @@ public class SearchResultAggregatorImplTest {
     assertThat(aggSearchResult.tookMicros).isEqualTo(tookMs + 1);
     assertThat(aggSearchResult.hits.size()).isEqualTo(howMany);
     assertThat(aggSearchResult.failedNodes).isEqualTo(0);
-    assertThat(aggSearchResult.snapshotsWithReplicas).isEqualTo(0);
-    assertThat(aggSearchResult.totalSnapshots).isEqualTo(2);
+    assertThat(aggSearchResult.fulfilledSnapshots).isEqualTo(0);
+    assertThat(aggSearchResult.requestedSnapshots).isEqualTo(2);
 
     LogMessage hit = aggSearchResult.hits.get(0);
     assertThat(hit.getId()).contains("Message20");
@@ -196,8 +225,8 @@ public class SearchResultAggregatorImplTest {
     assertThat(aggSearchResult.tookMicros).isEqualTo(tookMs + 1);
     assertThat(aggSearchResult.hits.size()).isEqualTo(howMany);
     assertThat(aggSearchResult.failedNodes).isEqualTo(0);
-    assertThat(aggSearchResult.snapshotsWithReplicas).isEqualTo(0);
-    assertThat(aggSearchResult.totalSnapshots).isEqualTo(2);
+    assertThat(aggSearchResult.fulfilledSnapshots).isEqualTo(0);
+    assertThat(aggSearchResult.requestedSnapshots).isEqualTo(2);
 
     for (LogMessage m : aggSearchResult.hits) {
       assertThat(messages2.contains(m)).isTrue();
@@ -292,8 +321,8 @@ public class SearchResultAggregatorImplTest {
     assertThat(aggSearchResult.tookMicros).isEqualTo(tookMs + 3);
     assertThat(aggSearchResult.hits.size()).isEqualTo(howMany);
     assertThat(aggSearchResult.failedNodes).isEqualTo(1);
-    assertThat(aggSearchResult.snapshotsWithReplicas).isEqualTo(2);
-    assertThat(aggSearchResult.totalSnapshots).isEqualTo(4);
+    assertThat(aggSearchResult.fulfilledSnapshots).isEqualTo(2);
+    assertThat(aggSearchResult.requestedSnapshots).isEqualTo(4);
 
     for (LogMessage m : aggSearchResult.hits) {
       assertThat(messages4.contains(m)).isTrue();
@@ -556,8 +585,8 @@ public class SearchResultAggregatorImplTest {
     assertThat(aggSearchResult.hits).isEmpty();
     assertThat(aggSearchResult.tookMicros).isEqualTo(tookMs + 1);
     assertThat(aggSearchResult.failedNodes).isZero();
-    assertThat(aggSearchResult.snapshotsWithReplicas).isZero();
-    assertThat(aggSearchResult.totalSnapshots).isEqualTo(2);
+    assertThat(aggSearchResult.fulfilledSnapshots).isZero();
+    assertThat(aggSearchResult.requestedSnapshots).isEqualTo(2);
 
     StringTerms combined =
         (StringTerms) Objects.requireNonNull(aggSearchResult.internalAggregations.get("by_bucket"));
@@ -619,8 +648,8 @@ public class SearchResultAggregatorImplTest {
     assertThat(aggSearchResult.hits).isEmpty();
     assertThat(aggSearchResult.tookMicros).isEqualTo(tookMs + 1);
     assertThat(aggSearchResult.failedNodes).isZero();
-    assertThat(aggSearchResult.snapshotsWithReplicas).isZero();
-    assertThat(aggSearchResult.totalSnapshots).isEqualTo(2);
+    assertThat(aggSearchResult.fulfilledSnapshots).isZero();
+    assertThat(aggSearchResult.requestedSnapshots).isEqualTo(2);
 
     StringTerms combined =
         (StringTerms) Objects.requireNonNull(aggSearchResult.internalAggregations.get("by_bucket"));
@@ -669,8 +698,8 @@ public class SearchResultAggregatorImplTest {
     assertThat(aggSearchResult.tookMicros).isEqualTo(tookMs + 1);
     assertThat(aggSearchResult.hits.size()).isEqualTo(howMany);
     assertThat(aggSearchResult.failedNodes).isEqualTo(0);
-    assertThat(aggSearchResult.snapshotsWithReplicas).isEqualTo(0);
-    assertThat(aggSearchResult.totalSnapshots).isEqualTo(2);
+    assertThat(aggSearchResult.fulfilledSnapshots).isEqualTo(0);
+    assertThat(aggSearchResult.requestedSnapshots).isEqualTo(2);
 
     for (LogMessage m : aggSearchResult.hits) {
       assertThat(messages2.contains(m)).isTrue();
@@ -747,8 +776,8 @@ public class SearchResultAggregatorImplTest {
     assertThat(aggSearchResult.hits.size()).isZero();
     assertThat(aggSearchResult.tookMicros).isEqualTo(tookMs + 1);
     assertThat(aggSearchResult.failedNodes).isEqualTo(0);
-    assertThat(aggSearchResult.snapshotsWithReplicas).isEqualTo(2);
-    assertThat(aggSearchResult.totalSnapshots).isEqualTo(3);
+    assertThat(aggSearchResult.fulfilledSnapshots).isEqualTo(2);
+    assertThat(aggSearchResult.requestedSnapshots).isEqualTo(3);
 
     InternalDateHistogram internalDateHistogram =
         Objects.requireNonNull(
@@ -809,8 +838,8 @@ public class SearchResultAggregatorImplTest {
     assertThat(aggSearchResult.tookMicros).isEqualTo(tookMs + 1);
     assertThat(aggSearchResult.hits.size()).isEqualTo(howMany);
     assertThat(aggSearchResult.failedNodes).isEqualTo(1);
-    assertThat(aggSearchResult.snapshotsWithReplicas).isEqualTo(0);
-    assertThat(aggSearchResult.totalSnapshots).isEqualTo(2);
+    assertThat(aggSearchResult.fulfilledSnapshots).isEqualTo(0);
+    assertThat(aggSearchResult.requestedSnapshots).isEqualTo(2);
 
     for (LogMessage m : aggSearchResult.hits) {
       assertThat(messages2.contains(m)).isTrue();
@@ -884,8 +913,8 @@ public class SearchResultAggregatorImplTest {
     assertThat(aggSearchResult.hits.size()).isZero();
     assertThat(aggSearchResult.tookMicros).isEqualTo(tookMs + 1);
     assertThat(aggSearchResult.failedNodes).isEqualTo(0);
-    assertThat(aggSearchResult.snapshotsWithReplicas).isEqualTo(2);
-    assertThat(aggSearchResult.totalSnapshots).isEqualTo(3);
+    assertThat(aggSearchResult.fulfilledSnapshots).isEqualTo(2);
+    assertThat(aggSearchResult.requestedSnapshots).isEqualTo(3);
 
     InternalDateHistogram internalDateHistogram =
         Objects.requireNonNull(

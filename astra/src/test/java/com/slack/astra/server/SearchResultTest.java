@@ -32,6 +32,21 @@ public class SearchResultTest {
 
   public SearchResultTest() throws IOException {}
 
+  private static AggregatorFactories.Builder createTwoAverageAggregations() {
+    AvgAggregationBuilder foo = new AvgAggregationBuilder("foo");
+    foo.field(LogMessage.SystemField.TIME_SINCE_EPOCH.fieldName);
+    foo.missing("2");
+
+    AvgAggregationBuilder bar = new AvgAggregationBuilder("bar");
+    bar.field(LogMessage.SystemField.TIME_SINCE_EPOCH.fieldName);
+    bar.missing("2");
+
+    AggregatorFactories.Builder builder = new AggregatorFactories.Builder();
+    builder.addAggregator(foo);
+    builder.addAggregator(bar);
+    return builder;
+  }
+
   @Test
   public void testSearchResultObjectConversions() throws Exception {
     Tracing.newBuilder().build();
@@ -67,8 +82,8 @@ public class SearchResultTest {
     assertThat(protoSearchResult.getTookMicros()).isEqualTo(1);
     assertThat(protoSearchResult.getFailedNodes()).isEqualTo(1);
     assertThat(protoSearchResult.getTotalNodes()).isEqualTo(5);
-    assertThat(protoSearchResult.getTotalSnapshots()).isEqualTo(7);
-    assertThat(protoSearchResult.getSnapshotsWithReplicas()).isEqualTo(7);
+    assertThat(protoSearchResult.getRequestedSnapshots()).isEqualTo(7);
+    assertThat(protoSearchResult.getFulfilledSnapshots()).isEqualTo(7);
     assertThat(protoSearchResult.getInternalAggregations().toByteArray())
         .isEqualTo(OpenSearchInternalAggregation.toByteArray(internalAggregations));
 
@@ -76,6 +91,63 @@ public class SearchResultTest {
         SearchResultUtils.fromSearchResultProto(protoSearchResult);
 
     assertThat(convertedSearchResult).isEqualTo(searchResult);
+  }
+
+  /** Verifies equality and hashCode when both results have null aggregations. */
+  @Test
+  public void testSearchResultEqualsAndHashCodeHandleNullAggregation() {
+    SearchResult<LogMessage> searchResultA = new SearchResult<>(List.of(), 1, 0, 0, 1, 0, null);
+    SearchResult<LogMessage> searchResultB = new SearchResult<>(List.of(), 1, 0, 0, 1, 0, null);
+
+    assertThat(searchResultA).isEqualTo(searchResultB);
+    assertThat(searchResultA.hashCode()).isEqualTo(searchResultB.hashCode());
+  }
+
+  // The (requested, fulfilled, failedNodes, totalNodes) tuple of each missing-coverage factory
+  // is a load-bearing invariant: it determines _shards.failed and node-health counters in the
+  // OpenSearch response. Any drift here would silently regress the user-visible response.
+  /** Verifies the local hard-failure factory tuple used for shard accounting. */
+  @Test
+  public void testLocalHardFailureFactoryInvariant() {
+    SearchResult<LogMessage> r = SearchResult.localHardFailure();
+    assertThat(r.requestedSnapshots).isEqualTo(1);
+    assertThat(r.fulfilledSnapshots).isEqualTo(0);
+    assertThat(r.failedNodes).isEqualTo(1);
+    assertThat(r.totalNodes).isEqualTo(1);
+    assertThat(r.failedSnapshots()).isEqualTo(1);
+  }
+
+  /** Verifies the local soft-failure factory tuple used for shard accounting. */
+  @Test
+  public void testLocalSoftFailureFactoryInvariant() {
+    SearchResult<LogMessage> r = SearchResult.localSoftFailure();
+    assertThat(r.requestedSnapshots).isEqualTo(1);
+    assertThat(r.fulfilledSnapshots).isEqualTo(0);
+    assertThat(r.failedNodes).isEqualTo(0);
+    assertThat(r.totalNodes).isEqualTo(0);
+    assertThat(r.failedSnapshots()).isEqualTo(1);
+  }
+
+  /** Verifies the failed distributed-subrequest factory tuple for N assigned snapshots. */
+  @Test
+  public void testFailedDistributedSubrequestFactoryInvariant() {
+    SearchResult<LogMessage> r = SearchResult.failedDistributedSubrequest(7);
+    assertThat(r.requestedSnapshots).isEqualTo(7);
+    assertThat(r.fulfilledSnapshots).isEqualTo(0);
+    assertThat(r.failedNodes).isEqualTo(1);
+    assertThat(r.totalNodes).isEqualTo(1);
+    assertThat(r.failedSnapshots()).isEqualTo(7);
+  }
+
+  /** Verifies the missing-queryable-coverage factory tuple when no node was contacted. */
+  @Test
+  public void testMissingQueryableSnapshotCoverageFactoryInvariant() {
+    SearchResult<LogMessage> r = SearchResult.missingQueryableSnapshotCoverage(4);
+    assertThat(r.requestedSnapshots).isEqualTo(4);
+    assertThat(r.fulfilledSnapshots).isEqualTo(0);
+    assertThat(r.failedNodes).isEqualTo(0);
+    assertThat(r.totalNodes).isEqualTo(0);
+    assertThat(r.failedSnapshots()).isEqualTo(4);
   }
 
   @Test
@@ -105,20 +177,5 @@ public class SearchResultTest {
     assertThat(bar).isNotNull();
     assertThat(foo.getName()).isEqualTo("foo");
     assertThat(bar.getName()).isEqualTo("bar");
-  }
-
-  private static AggregatorFactories.Builder createTwoAverageAggregations() {
-    AvgAggregationBuilder foo = new AvgAggregationBuilder("foo");
-    foo.field(LogMessage.SystemField.TIME_SINCE_EPOCH.fieldName);
-    foo.missing("2");
-
-    AvgAggregationBuilder bar = new AvgAggregationBuilder("bar");
-    bar.field(LogMessage.SystemField.TIME_SINCE_EPOCH.fieldName);
-    bar.missing("2");
-
-    AggregatorFactories.Builder builder = new AggregatorFactories.Builder();
-    builder.addAggregator(foo);
-    builder.addAggregator(bar);
-    return builder;
   }
 }

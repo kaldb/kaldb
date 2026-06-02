@@ -33,16 +33,16 @@ public class SearchResultAggregatorImpl<T extends LogMessage> implements SearchR
     long tookMicros = 0;
     int failedNodes = 0;
     int totalNodes = 0;
-    int totalSnapshots = 0;
-    int snapshpotReplicas = 0;
+    int requestedSnapshots = 0;
+    int fulfilledSnapshots = 0;
     List<InternalAggregations> internalAggregationList = new ArrayList<>();
 
     for (SearchResult<T> searchResult : searchResults) {
       tookMicros = Math.max(tookMicros, searchResult.tookMicros);
       failedNodes += searchResult.failedNodes;
       totalNodes += searchResult.totalNodes;
-      totalSnapshots += searchResult.totalSnapshots;
-      snapshpotReplicas += searchResult.snapshotsWithReplicas;
+      requestedSnapshots += searchResult.requestedSnapshots;
+      fulfilledSnapshots += searchResult.fulfilledSnapshots;
       if (searchResult.internalAggregations != null) {
         internalAggregationList.add(searchResult.internalAggregations);
       }
@@ -95,8 +95,8 @@ public class SearchResultAggregatorImpl<T extends LogMessage> implements SearchR
         tookMicros,
         failedNodes,
         totalNodes,
-        totalSnapshots,
-        snapshpotReplicas,
+        requestedSnapshots,
+        fulfilledSnapshots,
         internalAggregations);
   }
 }

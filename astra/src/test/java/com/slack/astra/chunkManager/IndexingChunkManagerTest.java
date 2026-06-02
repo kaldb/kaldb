@@ -536,8 +536,8 @@ public class IndexingChunkManagerTest {
       List<String> chunkIds,
       String searchString,
       int expectedHitCount,
-      int totalSnapshots,
-      int expectedSnapshotsWithReplicas,
+      int expectedRequestedSnapshots,
+      int expectedFulfilledSnapshots,
       int expectedFailedNodes) {
 
     AstraLocalQueryService<LogMessage> astraLocalQueryService =
@@ -558,8 +558,8 @@ public class IndexingChunkManagerTest {
                 .build());
 
     assertThat(response.getHitsList().size()).isEqualTo(expectedHitCount);
-    assertThat(response.getTotalSnapshots()).isEqualTo(totalSnapshots);
-    assertThat(response.getSnapshotsWithReplicas()).isEqualTo(expectedSnapshotsWithReplicas);
+    assertThat(response.getRequestedSnapshots()).isEqualTo(expectedRequestedSnapshots);
+    assertThat(response.getFulfilledSnapshots()).isEqualTo(expectedFulfilledSnapshots);
     assertThat(response.getFailedNodes()).isEqualTo(expectedFailedNodes);
   }
 
@@ -567,8 +567,8 @@ public class IndexingChunkManagerTest {
       ChunkManager<LogMessage> chunkManager,
       String searchString,
       int expectedHitCount,
-      int totalSnapshots,
-      int expectedSnapshotsWithReplicas,
+      int expectedRequestedSnapshots,
+      int expectedFulfilledSnapshots,
       int expectedFailedNodes) {
 
     testChunkManagerSearch(
@@ -576,8 +576,8 @@ public class IndexingChunkManagerTest {
         Collections.emptyList(),
         searchString,
         expectedHitCount,
-        totalSnapshots,
-        expectedSnapshotsWithReplicas,
+        expectedRequestedSnapshots,
+        expectedFulfilledSnapshots,
         expectedFailedNodes);
   }
 
@@ -973,9 +973,9 @@ public class IndexingChunkManagerTest {
     // this worked but was kinda flaky since it messes with shutdown and refresh intervals
     chunk.setLogSearcher(new AlreadyClosedLogIndexSearcherImpl());
 
-    testChunkManagerSearch(chunkManager, "Message18", 0, 2, 2, 1);
-    testChunkManagerSearch(chunkManager, "Message1", 1, 2, 2, 1);
-    testChunkManagerSearch(chunkManager, "Message25", 1, 2, 2, 1);
+    testChunkManagerSearch(chunkManager, "Message18", 0, 3, 2, 1);
+    testChunkManagerSearch(chunkManager, "Message1", 1, 3, 2, 1);
+    testChunkManagerSearch(chunkManager, "Message25", 1, 3, 2, 1);
   }
 
   @Test
@@ -1031,9 +1031,9 @@ public class IndexingChunkManagerTest {
                 ((ReadWriteChunk<LogMessage>) chunk)
                     .setLogSearcher(new AlreadyClosedLogIndexSearcherImpl()));
 
-    testChunkManagerSearch(chunkManager, "Message1", 0, 0, 0, 3);
-    testChunkManagerSearch(chunkManager, "Message11", 0, 0, 0, 3);
-    testChunkManagerSearch(chunkManager, "Message21", 0, 0, 0, 3);
+    testChunkManagerSearch(chunkManager, "Message1", 0, 3, 0, 3);
+    testChunkManagerSearch(chunkManager, "Message11", 0, 3, 0, 3);
+    testChunkManagerSearch(chunkManager, "Message21", 0, 3, 0, 3);
 
     // Query interface throws search exceptions.
     chunkManager

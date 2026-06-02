@@ -230,8 +230,13 @@ message SearchResult {
 
   int32 failed_nodes = 6;
   int32 total_nodes = 7;
-  int32 total_snapshots = 8;
-  int32 snapshots_with_replicas = 9;
+  // Logical snapshot coverage requested by the search. Aggregators should sum this across leaves.
+  // Drives `_shards.total` in the OpenSearch response shape.
+  int32 requested_snapshots = 8;
+  // Subset of requested logical snapshot coverage that was actually served.
+  // Aggregators should increment this only for snapshots that produced usable coverage.
+  // `requested_snapshots - fulfilled_snapshots` drives `_shards.failed`.
+  int32 fulfilled_snapshots = 9;
 }
 
 // Based off of https://github.com/protocolbuffers/protobuf/blob/main/src/google/protobuf/struct.proto

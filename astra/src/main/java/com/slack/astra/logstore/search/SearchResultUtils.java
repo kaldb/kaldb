@@ -166,8 +166,8 @@ public class SearchResultUtils {
         protoSearchResult.getTookMicros(),
         protoSearchResult.getFailedNodes(),
         protoSearchResult.getTotalNodes(),
-        protoSearchResult.getTotalSnapshots(),
-        protoSearchResult.getSnapshotsWithReplicas(),
+        protoSearchResult.getRequestedSnapshots(),
+        protoSearchResult.getFulfilledSnapshots(),
         OpenSearchInternalAggregation.fromByteArray(
             protoSearchResult.getInternalAggregations().toByteArray()));
   }
@@ -208,16 +208,16 @@ public class SearchResultUtils {
     span.tag("tookMicros", String.valueOf(searchResult.tookMicros));
     span.tag("failedNodes", String.valueOf(searchResult.failedNodes));
     span.tag("totalNodes", String.valueOf(searchResult.totalNodes));
-    span.tag("totalSnapshots", String.valueOf(searchResult.totalSnapshots));
-    span.tag("snapshotsWithReplicas", String.valueOf(searchResult.snapshotsWithReplicas));
+    span.tag("requestedSnapshots", String.valueOf(searchResult.requestedSnapshots));
+    span.tag("fulfilledSnapshots", String.valueOf(searchResult.fulfilledSnapshots));
     span.tag("hits", String.valueOf(searchResult.hits.size()));
 
     AstraSearch.SearchResult.Builder searchResultBuilder = AstraSearch.SearchResult.newBuilder();
     searchResultBuilder.setTookMicros(searchResult.tookMicros);
     searchResultBuilder.setFailedNodes(searchResult.failedNodes);
     searchResultBuilder.setTotalNodes(searchResult.totalNodes);
-    searchResultBuilder.setTotalSnapshots(searchResult.totalSnapshots);
-    searchResultBuilder.setSnapshotsWithReplicas(searchResult.snapshotsWithReplicas);
+    searchResultBuilder.setRequestedSnapshots(searchResult.requestedSnapshots);
+    searchResultBuilder.setFulfilledSnapshots(searchResult.fulfilledSnapshots);
 
     // Set hits
     ArrayList<String> protoHits = new ArrayList<>(searchResult.hits.size());

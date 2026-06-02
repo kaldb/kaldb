@@ -661,7 +661,7 @@ public class AstraIndexerTest {
     assertThat(searchResult.tookMicros).isNotZero();
     assertThat(searchResult.failedNodes).isZero();
     assertThat(searchResult.totalNodes).isEqualTo(1);
-    assertThat(searchResult.totalSnapshots).isEqualTo(1);
-    assertThat(searchResult.snapshotsWithReplicas).isEqualTo(1);
+    assertThat(searchResult.requestedSnapshots).isEqualTo(1);
+    assertThat(searchResult.fulfilledSnapshots).isEqualTo(1);
   }
 }

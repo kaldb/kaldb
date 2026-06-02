@@ -22,6 +22,7 @@ import com.slack.astra.elasticsearchApi.searchResponse.HitsMetadata;
 import com.slack.astra.elasticsearchApi.searchResponse.SearchResponseHit;
 import com.slack.astra.elasticsearchApi.searchResponse.SearchResponseMetadata;
 import com.slack.astra.logstore.opensearch.OpenSearchInternalAggregation;
+import com.slack.astra.logstore.search.SearchResult;
 import com.slack.astra.metadata.dataset.DatasetMetadata;
 import com.slack.astra.metadata.dataset.DatasetMetadataStore;
 import com.slack.astra.proto.service.AstraSearch;
@@ -206,6 +207,7 @@ public class ElasticsearchApiService {
   private EsSearchResponse doSearch(AstraSearch.SearchRequest searchRequest) {
     ScopedSpan span = Tracing.currentTracer().startScopedSpan("ElasticsearchApiService.doSearch");
     AstraSearch.SearchResult searchResult = searcher.doSearch(searchRequest);
+    int failedSnapshots = SearchResult.failedSnapshots(searchResult);
 
     span.tag("requestDataset", searchRequest.getDataset());
     span.tag("requestHowMany", String.valueOf(searchRequest.getHowMany()));
@@ -213,9 +215,8 @@ public class ElasticsearchApiService {
     span.tag("resultTookMicros", String.valueOf(searchResult.getTookMicros()));
     span.tag("resultFailedNodes", String.valueOf(searchResult.getFailedNodes()));
     span.tag("resultTotalNodes", String.valueOf(searchResult.getTotalNodes()));
-    span.tag("resultTotalSnapshots", String.valueOf(searchResult.getTotalNodes()));
-    span.tag(
-        "resultSnapshotsWithReplicas", String.valueOf(searchResult.getSnapshotsWithReplicas()));
+    span.tag("resultRequestedSnapshots", String.valueOf(searchResult.getRequestedSnapshots()));
+    span.tag("resultFulfilledSnapshots", String.valueOf(searchResult.getFulfilledSnapshots()));
 
     try {
       HitsMetadata hits = getHits(searchResult);
@@ -223,7 +224,7 @@ public class ElasticsearchApiService {
           .hits(hits)
           .aggregations(parseAggregations(searchResult.getInternalAggregations()))
           .took(Duration.of(searchResult.getTookMicros(), ChronoUnit.MICROS).toMillis())
-          .shardsMetadata(searchResult.getTotalNodes(), searchResult.getFailedNodes())
+          .shardsMetadata(searchResult.getRequestedSnapshots(), failedSnapshots)
           .debugMetadata(Map.of())
           .status(200)
           .build();
@@ -232,7 +233,7 @@ public class ElasticsearchApiService {
       span.error(e);
       return new EsSearchResponse.Builder()
           .took(Duration.of(searchResult.getTookMicros(), ChronoUnit.MICROS).toMillis())
-          .shardsMetadata(searchResult.getTotalNodes(), searchResult.getFailedNodes())
+          .shardsMetadata(searchResult.getRequestedSnapshots(), failedSnapshots)
           .status(500)
           .build();
     } finally {
