@@ -376,28 +376,58 @@ public class AstraDistributedQueryService extends AstraQueryServiceBase implemen
   }
 
   /*
-   If there is only one node hosting the snapshot use that
-   If the same snapshot exists on indexer and cache node prefer cache
-   If there are multiple cache nodes, pick a cache node at random
+   If there is only one node hosting the snapshot use that.
+   Prefer a searchable live indexer when one is available.
+   Otherwise, fall back to a searchable cache node when one is available.
+   If there are multiple nodes in the same tier, pick one at random.
   */
   private static SearchMetadata pickSearchNodeToQuery(
       List<SearchMetadata> queryableSearchMetadataNodes) {
     if (queryableSearchMetadataNodes.size() == 1) {
       return queryableSearchMetadataNodes.get(0);
-    } else {
-      List<SearchMetadata> cacheNodeHostedSearchMetadata = new ArrayList<>();
-      for (SearchMetadata searchMetadata : queryableSearchMetadataNodes) {
-        if (!searchMetadata.snapshotName.startsWith("LIVE")) {
-          cacheNodeHostedSearchMetadata.add(searchMetadata);
-        }
-      }
-      if (cacheNodeHostedSearchMetadata.size() == 1) {
-        return cacheNodeHostedSearchMetadata.get(0);
+    }
+
+    List<SearchMetadata> liveIndexSearchMetadata = new ArrayList<>();
+    List<SearchMetadata> cacheNodeHostedSearchMetadata = new ArrayList<>();
+    for (SearchMetadata searchMetadata : queryableSearchMetadataNodes) {
+      if (searchMetadata.snapshotName.startsWith(LIVE_SNAPSHOT_PREFIX)) {
+        liveIndexSearchMetadata.add(searchMetadata);
       } else {
-        return cacheNodeHostedSearchMetadata.get(
-            ThreadLocalRandom.current().nextInt(cacheNodeHostedSearchMetadata.size()));
+        cacheNodeHostedSearchMetadata.add(searchMetadata);
       }
     }
+
+    List<SearchMetadata> searchableLiveIndexSearchMetadata = new ArrayList<>();
+    for (SearchMetadata searchMetadata : liveIndexSearchMetadata) {
+      if (searchMetadata.isSearchable()) {
+        searchableLiveIndexSearchMetadata.add(searchMetadata);
+      }
+    }
+
+    if (!searchableLiveIndexSearchMetadata.isEmpty()) {
+      return searchableLiveIndexSearchMetadata.get(
+          ThreadLocalRandom.current().nextInt(searchableLiveIndexSearchMetadata.size()));
+    }
+
+    List<SearchMetadata> searchableCacheNodeHostedSearchMetadata = new ArrayList<>();
+    for (SearchMetadata searchMetadata : cacheNodeHostedSearchMetadata) {
+      if (searchMetadata.isSearchable()) {
+        searchableCacheNodeHostedSearchMetadata.add(searchMetadata);
+      }
+    }
+
+    if (!searchableCacheNodeHostedSearchMetadata.isEmpty()) {
+      return searchableCacheNodeHostedSearchMetadata.get(
+          ThreadLocalRandom.current().nextInt(searchableCacheNodeHostedSearchMetadata.size()));
+    }
+
+    if (!liveIndexSearchMetadata.isEmpty()) {
+      return liveIndexSearchMetadata.get(
+          ThreadLocalRandom.current().nextInt(liveIndexSearchMetadata.size()));
+    }
+
+    return cacheNodeHostedSearchMetadata.get(
+        ThreadLocalRandom.current().nextInt(cacheNodeHostedSearchMetadata.size()));
   }
 
   private AstraServiceGrpc.AstraServiceFutureStub getStub(String url) {
