@@ -20,6 +20,8 @@ import brave.Tracing;
 import com.adobe.testing.s3mock.junit5.S3MockExtension;
 import com.slack.astra.blobfs.BlobStore;
 import com.slack.astra.blobfs.S3TestUtils;
+import com.slack.astra.blobfs.nrt.NrtBlobStore;
+import com.slack.astra.blobfs.nrt.NrtSnapshotPublisher;
 import com.slack.astra.logstore.LogMessage;
 import com.slack.astra.logstore.LuceneIndexStoreImpl;
 import com.slack.astra.logstore.schema.SchemaAwareLogDocumentBuilderImpl;
@@ -636,8 +638,8 @@ public class ReadOnlyChunkImplTest {
     await()
         .until(
             () ->
-                readOnlyChunk.getChunkMetadataState()
-                    == Metadata.CacheSlotMetadata.CacheSlotState.LIVE);
+                readOnlyChunk.getLastKnownAssignmentState()
+                    == Metadata.CacheNodeAssignment.CacheNodeAssignmentState.LIVE);
 
     SearchQuery query =
         new SearchQuery(
@@ -808,6 +810,146 @@ public class ReadOnlyChunkImplTest {
       assertThat(files.findFirst().isPresent()).isFalse();
     }
 
+    curatorFramework.unwrap().close();
+  }
+
+  @Test
+  public void shouldLoadLiveChunkAfterNrtManifestIsPublished() throws Exception {
+    AstraConfigs.AstraConfig AstraConfig = makeCacheConfig();
+    AstraConfigs.MetadataStoreConfig metadataStoreConfig =
+        AstraConfigs.MetadataStoreConfig.newBuilder()
+            .setMode(AstraConfigs.MetadataStoreMode.ZOOKEEPER_EXCLUSIVE)
+            .setZookeeperConfig(
+                AstraConfigs.ZookeeperConfig.newBuilder()
+                    .setZkConnectString(testingServer.getConnectString())
+                    .setZkPathPrefix("shouldLoadLiveChunkAfterNrtManifestIsPublished")
+                    .setZkSessionTimeoutMs(1000)
+                    .setZkConnectionTimeoutMs(1000)
+                    .setSleepBetweenRetriesMs(1000)
+                    .setZkCacheInitTimeoutMs(1000)
+                    .build())
+            .build();
+
+    AsyncCuratorFramework curatorFramework =
+        CuratorBuilder.build(meterRegistry, metadataStoreConfig.getZookeeperConfig());
+    ReplicaMetadataStore replicaMetadataStore =
+        new ReplicaMetadataStore(curatorFramework, metadataStoreConfig, meterRegistry);
+    SnapshotMetadataStore snapshotMetadataStore =
+        new SnapshotMetadataStore(curatorFramework, metadataStoreConfig, meterRegistry);
+    SearchMetadataStore searchMetadataStore =
+        new SearchMetadataStore(curatorFramework, metadataStoreConfig, meterRegistry, true);
+    CacheSlotMetadataStore cacheSlotMetadataStore =
+        new CacheSlotMetadataStore(curatorFramework, metadataStoreConfig, meterRegistry);
+    CacheNodeAssignmentStore cacheNodeAssignmentStore =
+        new CacheNodeAssignmentStore(curatorFramework, metadataStoreConfig, meterRegistry);
+    CacheNodeMetadataStore cacheNodeMetadataStore =
+        new CacheNodeMetadataStore(curatorFramework, metadataStoreConfig, meterRegistry);
+
+    String replicaId = "foo";
+    String snapshotId = "LIVE_boo";
+    String assignmentId = "dog";
+    String cacheNodeId = "baz";
+    String replicaSet = "cat";
+    String partitionId = "partition-1";
+
+    SnapshotMetadata liveSnapshot =
+        new SnapshotMetadata(
+            snapshotId,
+            Instant.now().minus(1, ChronoUnit.MINUTES).toEpochMilli(),
+            Instant.now().toEpochMilli(),
+            0,
+            partitionId,
+            0,
+            SnapshotMetadata.SnapshotType.LIVE,
+            SnapshotMetadata.IndexType.LUCENE,
+            "",
+            0,
+            SnapshotMetadata.DEFAULT_VERSION);
+    snapshotMetadataStore.createSync(liveSnapshot);
+    initializeCacheNodeAssignment(
+        cacheNodeAssignmentStore, assignmentId, snapshotId, cacheNodeId, replicaSet, replicaId);
+    initializeCacheNode(cacheNodeMetadataStore, cacheNodeId, "some-host.name", 1, replicaSet, true);
+
+    SearchContext searchContext =
+        SearchContext.fromConfig(AstraConfig.getCacheConfig().getServerConfig());
+    ReadOnlyChunkImpl<LogMessage> readOnlyChunk =
+        new ReadOnlyChunkImpl<>(
+            curatorFramework,
+            meterRegistry,
+            blobStore,
+            searchContext,
+            AstraConfig.getS3Config().getS3Bucket(),
+            AstraConfig.getCacheConfig().getDataDirectory(),
+            AstraConfig.getCacheConfig().getReplicaSet(),
+            cacheSlotMetadataStore,
+            replicaMetadataStore,
+            snapshotMetadataStore,
+            searchMetadataStore,
+            cacheNodeAssignmentStore,
+            cacheNodeAssignmentStore.getSync(cacheNodeId, assignmentId),
+            snapshotMetadataStore.findSync(snapshotId),
+            cacheNodeMetadataStore);
+
+    assertThat(readOnlyChunk.getChunkMetadataState())
+        .isEqualTo(Metadata.CacheSlotMetadata.CacheSlotState.FREE);
+
+    LuceneIndexStoreImpl logStore =
+        LuceneIndexStoreImpl.makeLogStore(
+            Files.newTemporaryFolder(),
+            Duration.ofSeconds(60),
+            Duration.ofSeconds(60),
+            true,
+            SchemaAwareLogDocumentBuilderImpl.FieldConflictPolicy.CONVERT_VALUE_AND_DUPLICATE_FIELD,
+            meterRegistry);
+    addMessages(logStore, 1, 10, true);
+    NrtSnapshotPublisher publisher =
+        new NrtSnapshotPublisher(
+            blobStore, new NrtBlobStore(blobStore), snapshotMetadataStore, "indexer-1");
+    SnapshotMetadata published =
+        publisher.publish(
+            logStore,
+            new SnapshotMetadata(
+                snapshotId,
+                liveSnapshot.startTimeEpochMs,
+                liveSnapshot.endTimeEpochMs,
+                10,
+                partitionId,
+                0,
+                SnapshotMetadata.SnapshotType.LIVE,
+                SnapshotMetadata.IndexType.LUCENE,
+                "",
+                0,
+                SnapshotMetadata.DEFAULT_VERSION),
+            1);
+    logStore.close();
+
+    await()
+        .until(
+            () ->
+                readOnlyChunk.getLastKnownAssignmentState()
+                    == Metadata.CacheNodeAssignment.CacheNodeAssignmentState.LIVE);
+    await().until(() -> searchMetadataStore.listSync().size() == 1);
+    assertThat(readOnlyChunk.info().chunkId).isEqualTo(snapshotId);
+    assertThat(readOnlyChunk.getDataDirectory()).isNotNull();
+    assertThat(published.snapshotPath).isNotBlank();
+
+    SearchResult<LogMessage> logMessageSearchResult =
+        readOnlyChunk.query(
+            new SearchQuery(
+                MessageUtil.TEST_DATASET_NAME,
+                Instant.now().minus(1, ChronoUnit.MINUTES).toEpochMilli(),
+                Instant.now().toEpochMilli(),
+                500,
+                Collections.emptyList(),
+                QueryBuilderUtil.generateQueryBuilder(
+                    "*:*",
+                    Instant.now().minus(1, ChronoUnit.MINUTES).toEpochMilli(),
+                    Instant.now().toEpochMilli()),
+                null,
+                createGenericDateHistogramAggregatorFactoriesBuilder()));
+    assertThat(logMessageSearchResult.hits.size()).isEqualTo(10);
+
+    readOnlyChunk.close();
     curatorFramework.unwrap().close();
   }
 

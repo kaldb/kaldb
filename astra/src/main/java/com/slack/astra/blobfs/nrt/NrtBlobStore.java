@@ -24,7 +24,8 @@ public class NrtBlobStore {
         "%s/%s/partitions/%s/chunks/%s", NRT_ROOT, NRT_VERSION, partitionId, snapshotId);
   }
 
-  static String filesPath(String partitionId, String snapshotId) {
+  /** Returns the blob path that stores the immutable files for one NRT snapshot. */
+  public static String filesPath(String partitionId, String snapshotId) {
     return String.format("%s/files", chunkPrefix(partitionId, snapshotId));
   }
 
