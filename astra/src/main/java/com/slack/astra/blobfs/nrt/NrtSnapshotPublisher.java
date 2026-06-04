@@ -49,6 +49,11 @@ public class NrtSnapshotPublisher {
     return files;
   }
 
+  private static long calculateTotalSizeInBytes(
+      NrtBlobStore.FileEntry schemaFile, List<NrtBlobStore.FileEntry> files) {
+    return schemaFile.length() + files.stream().mapToLong(NrtBlobStore.FileEntry::length).sum();
+  }
+
   private static NrtBlobStore.FileEntry buildFileEntry(
       String filesPath, Path indexDirectory, String fileName) throws Exception {
     Path filePath = indexDirectory.resolve(fileName);
@@ -112,6 +117,7 @@ public class NrtSnapshotPublisher {
           buildFileEntries(filesPath, indexDirectory, indexCommit.getFileNames());
       NrtBlobStore.FileEntry schemaFile =
           buildFileEntry(filesPath, indexDirectory, ReadWriteChunk.SCHEMA_FILE_NAME);
+      long sizeInBytesOnDisk = calculateTotalSizeInBytes(schemaFile, files);
       NrtBlobStore.NrtManifest manifest =
           new NrtBlobStore.NrtManifest(
               MANIFEST_VERSION,
@@ -123,6 +129,7 @@ public class NrtSnapshotPublisher {
               indexCommit.getGeneration(),
               startOffsetInclusive,
               liveSnapshotMetadata.maxOffset,
+              sizeInBytesOnDisk,
               liveSnapshotMetadata.startTimeEpochMs,
               liveSnapshotMetadata.endTimeEpochMs,
               schemaFile,
@@ -137,7 +144,7 @@ public class NrtSnapshotPublisher {
               liveSnapshotMetadata.endTimeEpochMs,
               liveSnapshotMetadata.maxOffset,
               liveSnapshotMetadata.partitionId,
-              liveSnapshotMetadata.sizeInBytesOnDisk,
+              manifest.sizeInBytesOnDisk(),
               liveSnapshotMetadata.snapshotType,
               liveSnapshotMetadata.indexType,
               snapshotPath,

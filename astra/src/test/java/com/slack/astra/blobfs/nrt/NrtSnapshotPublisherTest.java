@@ -40,6 +40,7 @@ class NrtSnapshotPublisherTest {
 
     assertThat(updated.snapshotGeneration).isEqualTo(1);
     assertThat(updated.snapshotPath).isEqualTo(context.snapshotPath);
+    assertThat(updated.sizeInBytesOnDisk).isEqualTo(236);
     verify(context.snapshotMetadataStore).updateSync(updated);
 
     ArgumentCaptor<String> manifestCaptor = ArgumentCaptor.forClass(String.class);
@@ -48,6 +49,7 @@ class NrtSnapshotPublisherTest {
     NrtBlobStore.NrtManifest manifest = NrtBlobStore.deserializeManifest(manifestCaptor.getValue());
     assertThat(manifest.manifestGeneration()).isEqualTo(1);
     assertThat(manifest.startOffsetInclusive()).isEqualTo(10);
+    assertThat(manifest.sizeInBytesOnDisk()).isEqualTo(236);
     assertThat(manifest.schemaFile().key())
         .isEqualTo(context.filesPath + "/" + ReadWriteChunk.SCHEMA_FILE_NAME);
     assertThat(manifest.schemaFile().checksum()).hasSize(64);
@@ -180,6 +182,7 @@ class NrtSnapshotPublisherTest {
         7,
         0,
         25,
+        236,
         1000,
         2000,
         new NrtBlobStore.FileEntry(

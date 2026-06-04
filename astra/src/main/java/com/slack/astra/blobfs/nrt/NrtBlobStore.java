@@ -130,6 +130,7 @@ public class NrtBlobStore {
       long luceneCommitGeneration,
       long startOffsetInclusive,
       long maxIndexedOffsetInclusive,
+      long sizeInBytesOnDisk,
       long startTimeEpochMs,
       long endTimeEpochMs,
       FileEntry schemaFile,
@@ -146,6 +147,7 @@ public class NrtBlobStore {
       checkArgument(
           maxIndexedOffsetInclusive >= startOffsetInclusive,
           "maxIndexedOffsetInclusive must be greater than or equal to startOffsetInclusive");
+      checkArgument(sizeInBytesOnDisk >= 0, "sizeInBytesOnDisk must be non-negative");
       checkArgument(startTimeEpochMs > 0, "startTimeEpochMs must be positive");
       checkArgument(
           endTimeEpochMs >= startTimeEpochMs,

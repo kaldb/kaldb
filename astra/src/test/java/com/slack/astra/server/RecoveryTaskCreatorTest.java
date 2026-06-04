@@ -1852,6 +1852,7 @@ public class RecoveryTaskCreatorTest {
             1,
             0,
             maxIndexedOffsetInclusive,
+            2,
             snapshotMetadata.startTimeEpochMs,
             snapshotMetadata.endTimeEpochMs,
             new NrtBlobStore.FileEntry("schema.json", "files/schema.json", 1, "a"),

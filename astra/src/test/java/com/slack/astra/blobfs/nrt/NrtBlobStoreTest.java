@@ -19,6 +19,7 @@ class NrtBlobStoreTest {
     NrtManifest deserializedManifest = NrtBlobStore.deserializeManifest(manifestJson);
 
     assertThat(deserializedManifest).isEqualTo(manifest);
+    assertThat(deserializedManifest.sizeInBytesOnDisk()).isEqualTo(300);
   }
 
   @Test
@@ -36,6 +37,7 @@ class NrtBlobStoreTest {
                     1,
                     10,
                     9,
+                    0,
                     1000,
                     2000,
                     fileEntry("schema"),
@@ -54,6 +56,7 @@ class NrtBlobStoreTest {
                     1,
                     10,
                     10,
+                    0,
                     1000,
                     2000,
                     fileEntry("schema"),
@@ -100,6 +103,7 @@ class NrtBlobStoreTest {
         4,
         1000,
         2300,
+        300,
         1700000000000L,
         1700000059000L,
         fileEntry("schema"),
