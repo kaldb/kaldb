@@ -921,7 +921,6 @@ public class ReadOnlyChunkImplTest {
                 0,
                 SnapshotMetadata.DEFAULT_VERSION),
             1);
-    logStore.close();
 
     await()
         .until(
@@ -931,6 +930,8 @@ public class ReadOnlyChunkImplTest {
     await().until(() -> searchMetadataStore.listSync().size() == 1);
     assertThat(readOnlyChunk.info().chunkId).isEqualTo(snapshotId);
     assertThat(readOnlyChunk.getDataDirectory()).isNotNull();
+    Path firstDataDirectory = readOnlyChunk.getDataDirectory();
+    assertThat(java.nio.file.Files.exists(firstDataDirectory)).isTrue();
     assertThat(published.snapshotPath).isNotBlank();
 
     SearchResult<LogMessage> logMessageSearchResult =
@@ -949,7 +950,49 @@ public class ReadOnlyChunkImplTest {
                 createGenericDateHistogramAggregatorFactoriesBuilder()));
     assertThat(logMessageSearchResult.hits.size()).isEqualTo(10);
 
+    addMessages(logStore, 11, 20, true);
+    SnapshotMetadata refreshedLiveSnapshot =
+        new SnapshotMetadata(
+            snapshotId,
+            liveSnapshot.startTimeEpochMs,
+            liveSnapshot.endTimeEpochMs,
+            20,
+            partitionId,
+            0,
+            SnapshotMetadata.SnapshotType.LIVE,
+            SnapshotMetadata.IndexType.LUCENE,
+            published.snapshotPath,
+            published.snapshotGeneration,
+            SnapshotMetadata.DEFAULT_VERSION);
+    SnapshotMetadata republished = publisher.publish(logStore, refreshedLiveSnapshot, 11);
+
+    await().until(() -> readOnlyChunk.getDataDirectory() != null);
+    await().until(() -> !readOnlyChunk.getDataDirectory().equals(firstDataDirectory));
+    await()
+        .until(
+            () ->
+                !java.nio.file.Files.exists(firstDataDirectory)
+                    && readOnlyChunk.getDataDirectory().toString().contains(snapshotId));
+    assertThat(republished.snapshotGeneration).isEqualTo(2);
+
+    SearchResult<LogMessage> refreshedSearchResult =
+        readOnlyChunk.query(
+            new SearchQuery(
+                MessageUtil.TEST_DATASET_NAME,
+                Instant.now().minus(1, ChronoUnit.MINUTES).toEpochMilli(),
+                Instant.now().toEpochMilli(),
+                500,
+                Collections.emptyList(),
+                QueryBuilderUtil.generateQueryBuilder(
+                    "*:*",
+                    Instant.now().minus(1, ChronoUnit.MINUTES).toEpochMilli(),
+                    Instant.now().toEpochMilli()),
+                null,
+                createGenericDateHistogramAggregatorFactoriesBuilder()));
+    assertThat(refreshedSearchResult.hits.size()).isEqualTo(20);
+
     readOnlyChunk.close();
+    logStore.close();
     curatorFramework.unwrap().close();
   }
 

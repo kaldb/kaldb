@@ -374,7 +374,16 @@ public class ReadOnlyChunkImpl<T> implements Chunk<T> {
           (LogIndexSearcher<T>)
               new LogIndexSearcherImpl(
                   new AstraSearcherManager(stagingDirectory), chunkSchema.fieldDefMap);
+      Path previousDataDirectory = this.dataDirectory;
       this.dataDirectory = stagingDirectory;
+      if (previousDataDirectory != null && !previousDataDirectory.equals(stagingDirectory)) {
+        try {
+          FileUtils.deleteDirectory(previousDataDirectory.toFile());
+        } catch (IOException e) {
+          LOG.warn(
+              "Failed to delete previous live snapshot directory {}", previousDataDirectory, e);
+        }
+      }
 
       if (getCacheNodeAssignment() != null) {
         cacheNodeAssignmentStore.updateAssignmentState(
