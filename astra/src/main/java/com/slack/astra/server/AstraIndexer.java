@@ -4,6 +4,7 @@ import static com.google.common.base.Preconditions.checkNotNull;
 import static com.slack.astra.server.AstraConfig.DEFAULT_START_STOP_DURATION;
 
 import com.google.common.util.concurrent.AbstractExecutionThreadService;
+import com.slack.astra.blobfs.BlobStore;
 import com.slack.astra.chunkManager.ChunkRollOverException;
 import com.slack.astra.chunkManager.IndexingChunkManager;
 import com.slack.astra.logstore.LogMessage;
@@ -33,6 +34,7 @@ public class AstraIndexer extends AbstractExecutionThreadService {
   private final AstraConfigs.KafkaConfig kafkaConfig;
   private final AstraKafkaConsumer kafkaConsumer;
   private final IndexingChunkManager<LogMessage> chunkManager;
+  private final BlobStore blobStore;
 
   /**
    * This class contains the code to needed to run a single instance of an Astra indexer. A single
@@ -58,12 +60,31 @@ public class AstraIndexer extends AbstractExecutionThreadService {
       AstraConfigs.IndexerConfig indexerConfig,
       AstraConfigs.KafkaConfig kafkaConfig,
       MeterRegistry meterRegistry) {
+    this(
+        chunkManager,
+        curatorFramework,
+        metadataStoreConfig,
+        indexerConfig,
+        kafkaConfig,
+        meterRegistry,
+        null);
+  }
+
+  public AstraIndexer(
+      IndexingChunkManager<LogMessage> chunkManager,
+      AsyncCuratorFramework curatorFramework,
+      AstraConfigs.MetadataStoreConfig metadataStoreConfig,
+      AstraConfigs.IndexerConfig indexerConfig,
+      AstraConfigs.KafkaConfig kafkaConfig,
+      MeterRegistry meterRegistry,
+      BlobStore blobStore) {
     checkNotNull(chunkManager, "Chunk manager can't be null");
     this.curatorFramework = curatorFramework;
     this.metadataStoreConfig = metadataStoreConfig;
     this.indexerConfig = indexerConfig;
     this.kafkaConfig = kafkaConfig;
     this.meterRegistry = meterRegistry;
+    this.blobStore = blobStore;
 
     // Create a chunk manager
     this.chunkManager = chunkManager;
@@ -102,13 +123,22 @@ public class AstraIndexer extends AbstractExecutionThreadService {
     // TODO: Move this to it's own config var.
     final long maxMessagesPerRecoveryTask = indexerConfig.getMaxMessagesPerChunk();
     RecoveryTaskCreator recoveryTaskCreator =
-        new RecoveryTaskCreator(
-            snapshotMetadataStore,
-            recoveryTaskMetadataStore,
-            partitionId,
-            maxOffsetDelay,
-            maxMessagesPerRecoveryTask,
-            meterRegistry);
+        blobStore == null
+            ? new RecoveryTaskCreator(
+                snapshotMetadataStore,
+                recoveryTaskMetadataStore,
+                partitionId,
+                maxOffsetDelay,
+                maxMessagesPerRecoveryTask,
+                meterRegistry)
+            : new RecoveryTaskCreator(
+                snapshotMetadataStore,
+                recoveryTaskMetadataStore,
+                partitionId,
+                maxOffsetDelay,
+                maxMessagesPerRecoveryTask,
+                meterRegistry,
+                blobStore);
 
     long currentEndOffsetForPartition = kafkaConsumer.getEndOffSetForPartition();
     long currentBeginningOffsetForPartition = kafkaConsumer.getBeginningOffsetForPartition();

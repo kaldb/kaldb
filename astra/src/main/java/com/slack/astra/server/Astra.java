@@ -189,7 +189,8 @@ public class Astra {
               astraConfig.getMetadataStoreConfig(),
               astraConfig.getIndexerConfig(),
               astraConfig.getIndexerConfig().getKafkaConfig(),
-              meterRegistry);
+              meterRegistry,
+              blobStore);
       services.add(indexer);
 
       AstraLocalQueryService<LogMessage> searcher =

@@ -19,6 +19,9 @@ import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.when;
 
 import brave.Tracing;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.slack.astra.blobfs.BlobStore;
+import com.slack.astra.blobfs.nrt.NrtBlobStore;
 import com.slack.astra.chunk.ChunkInfo;
 import com.slack.astra.metadata.core.AstraMetadataTestUtils;
 import com.slack.astra.metadata.core.CuratorBuilder;
@@ -870,6 +873,114 @@ public class RecoveryTaskCreatorTest {
   }
 
   @Test
+  public void testDetermineStartingOffsetUsesValidNrtSeedWhenNewerThanSealedSnapshot()
+      throws Exception {
+    BlobStore blobStore = mock(BlobStore.class);
+    RecoveryTaskCreator recoveryTaskCreator =
+        new RecoveryTaskCreator(
+            snapshotMetadataStore,
+            recoveryTaskStore,
+            partitionId,
+            100,
+            TEST_MAX_MESSAGES_PER_RECOVERY_TASK,
+            meterRegistry,
+            blobStore);
+
+    long startTime = Instant.now().toEpochMilli();
+    SnapshotMetadata sealedSnapshot =
+        new SnapshotMetadata("sealed", startTime, startTime + 10, 100, partitionId, 100);
+    SnapshotMetadata liveSnapshot =
+        new SnapshotMetadata(
+            "live",
+            startTime,
+            startTime + 10,
+            150,
+            partitionId,
+            0,
+            SnapshotMetadata.SnapshotType.LIVE,
+            SnapshotMetadata.IndexType.LUCENE,
+            "nrt/live",
+            2,
+            SnapshotMetadata.DEFAULT_VERSION);
+    snapshotMetadataStore.createSync(sealedSnapshot);
+    snapshotMetadataStore.createSync(liveSnapshot);
+
+    when(blobStore.readFileData(liveSnapshot.snapshotPath, false))
+        .thenReturn(manifestJson(liveSnapshot));
+
+    assertThat(recoveryTaskCreator.determineStartingOffset(160, 0, indexerConfig)).isEqualTo(151);
+  }
+
+  @Test
+  public void testDetermineStartingOffsetFallsBackWhenNrtManifestMissingStaleOrInvalid()
+      throws Exception {
+    BlobStore blobStore = mock(BlobStore.class);
+    RecoveryTaskCreator recoveryTaskCreator =
+        new RecoveryTaskCreator(
+            snapshotMetadataStore,
+            recoveryTaskStore,
+            partitionId,
+            100,
+            TEST_MAX_MESSAGES_PER_RECOVERY_TASK,
+            meterRegistry,
+            blobStore);
+
+    long startTime = Instant.now().toEpochMilli();
+    SnapshotMetadata sealedSnapshot =
+        new SnapshotMetadata("sealed", startTime, startTime + 10, 100, partitionId, 100);
+    SnapshotMetadata missingManifestSnapshot =
+        new SnapshotMetadata(
+            "live-missing",
+            startTime,
+            startTime + 10,
+            140,
+            partitionId,
+            0,
+            SnapshotMetadata.SnapshotType.LIVE,
+            SnapshotMetadata.IndexType.LUCENE,
+            "",
+            2,
+            SnapshotMetadata.DEFAULT_VERSION);
+    SnapshotMetadata staleManifestSnapshot =
+        new SnapshotMetadata(
+            "live-stale",
+            startTime,
+            startTime + 10,
+            140,
+            partitionId,
+            0,
+            SnapshotMetadata.SnapshotType.LIVE,
+            SnapshotMetadata.IndexType.LUCENE,
+            "nrt/live-stale",
+            2,
+            SnapshotMetadata.DEFAULT_VERSION);
+    SnapshotMetadata invalidManifestSnapshot =
+        new SnapshotMetadata(
+            "live-invalid",
+            startTime,
+            startTime + 10,
+            140,
+            partitionId,
+            0,
+            SnapshotMetadata.SnapshotType.LIVE,
+            SnapshotMetadata.IndexType.LUCENE,
+            "nrt/live-invalid",
+            3,
+            SnapshotMetadata.DEFAULT_VERSION);
+    snapshotMetadataStore.createSync(sealedSnapshot);
+    snapshotMetadataStore.createSync(missingManifestSnapshot);
+    snapshotMetadataStore.createSync(staleManifestSnapshot);
+    snapshotMetadataStore.createSync(invalidManifestSnapshot);
+
+    when(blobStore.readFileData(staleManifestSnapshot.snapshotPath, false))
+        .thenReturn(manifestJson(staleManifestSnapshot, "live-stale", partitionId, 2, 90));
+    when(blobStore.readFileData(invalidManifestSnapshot.snapshotPath, false))
+        .thenReturn(manifestJson(invalidManifestSnapshot, "different-id", partitionId, 3, 140));
+
+    assertThat(recoveryTaskCreator.determineStartingOffset(160, 0, indexerConfig)).isEqualTo(101);
+  }
+
+  @Test
   public void testDetermineStartingOffsetOnlyMultipleRecoveryBehind() {
     RecoveryTaskCreator recoveryTaskCreator =
         new RecoveryTaskCreator(
@@ -1050,7 +1161,7 @@ public class RecoveryTaskCreatorTest {
     assertThat(getCount(STALE_SNAPSHOT_DELETE_SUCCESS, meterRegistry)).isEqualTo(0);
     assertThat(getCount(RECOVERY_TASKS_CREATED, meterRegistry)).isEqualTo(0);
 
-    // Live partition is cleaned up, no delay.
+    // Live partition remains in metadata, no delay.
     SnapshotMetadata livePartition1 =
         new SnapshotMetadata(
             name + "live1", startTime, ChunkInfo.MAX_FUTURE_TIME, maxOffset, partitionId, 0);
@@ -1061,12 +1172,11 @@ public class RecoveryTaskCreatorTest {
     assertThat(recoveryTaskCreator.determineStartingOffset(250, 0, indexerConfig)).isEqualTo(201);
     assertThat(AstraMetadataTestUtils.listSyncUncached(recoveryTaskStore)).isEmpty();
     assertThat(AstraMetadataTestUtils.listSyncUncached(snapshotMetadataStore))
-        .containsExactlyInAnyOrder(partition1, partition11);
-    assertThat(getCount(STALE_SNAPSHOT_DELETE_SUCCESS, meterRegistry)).isEqualTo(1);
+        .containsExactlyInAnyOrder(partition1, partition11, livePartition1);
+    assertThat(getCount(STALE_SNAPSHOT_DELETE_SUCCESS, meterRegistry)).isEqualTo(0);
     assertThat(getCount(RECOVERY_TASKS_CREATED, meterRegistry)).isEqualTo(0);
 
-    // Multiple live partitions for the same partition are cleaned up, no delay.
-    snapshotMetadataStore.createSync(livePartition1);
+    // Multiple live partitions for the same partition remain in metadata, no delay.
     SnapshotMetadata livePartition11 =
         new SnapshotMetadata(
             name + "live11", startTime, ChunkInfo.MAX_FUTURE_TIME, maxOffset, partitionId, 0);
@@ -1077,13 +1187,11 @@ public class RecoveryTaskCreatorTest {
     assertThat(recoveryTaskCreator.determineStartingOffset(250, 0, indexerConfig)).isEqualTo(201);
     assertThat(AstraMetadataTestUtils.listSyncUncached(recoveryTaskStore)).isEmpty();
     assertThat(AstraMetadataTestUtils.listSyncUncached(snapshotMetadataStore))
-        .containsExactlyInAnyOrder(partition1, partition11);
-    assertThat(getCount(STALE_SNAPSHOT_DELETE_SUCCESS, meterRegistry)).isEqualTo(3);
+        .containsExactlyInAnyOrder(partition1, partition11, livePartition1, livePartition11);
+    assertThat(getCount(STALE_SNAPSHOT_DELETE_SUCCESS, meterRegistry)).isEqualTo(0);
     assertThat(getCount(RECOVERY_TASKS_CREATED, meterRegistry)).isEqualTo(0);
 
     // Live partitions from multiple stores exist.
-    snapshotMetadataStore.createSync(livePartition1);
-    snapshotMetadataStore.createSync(livePartition11);
     SnapshotMetadata livePartition2 =
         new SnapshotMetadata(
             name + "2", startTime, ChunkInfo.MAX_FUTURE_TIME, maxOffset * 5, "2", 0);
@@ -1095,17 +1203,16 @@ public class RecoveryTaskCreatorTest {
                     .listSync()
                     .containsAll(List.of(livePartition1, livePartition11, livePartition2)));
     assertThat(AstraMetadataTestUtils.listSyncUncached(snapshotMetadataStore))
-        .contains(partition1, partition11, livePartition1, livePartition2);
+        .contains(partition1, partition11, livePartition1, livePartition11, livePartition2);
     assertThat(recoveryTaskCreator.determineStartingOffset(250, 0, indexerConfig)).isEqualTo(201);
     assertThat(AstraMetadataTestUtils.listSyncUncached(recoveryTaskStore)).isEmpty();
     assertThat(AstraMetadataTestUtils.listSyncUncached(snapshotMetadataStore))
-        .containsExactlyInAnyOrder(partition1, partition11, livePartition2);
-    assertThat(getCount(STALE_SNAPSHOT_DELETE_SUCCESS, meterRegistry)).isEqualTo(5);
+        .containsExactlyInAnyOrder(
+            partition1, partition11, livePartition1, livePartition11, livePartition2);
+    assertThat(getCount(STALE_SNAPSHOT_DELETE_SUCCESS, meterRegistry)).isEqualTo(0);
     assertThat(getCount(RECOVERY_TASKS_CREATED, meterRegistry)).isEqualTo(0);
 
-    // Live and non-live partitions for different partitions exist.
-    snapshotMetadataStore.createSync(livePartition1);
-    snapshotMetadataStore.createSync(livePartition11);
+    // Live and non-live partitions for different partitions remain in metadata.
     SnapshotMetadata partition2 =
         new SnapshotMetadata(name + "3", startTime, endTime, maxOffset * 3, "2", 0);
     snapshotMetadataStore.createSync(partition2);
@@ -1120,8 +1227,9 @@ public class RecoveryTaskCreatorTest {
     assertThat(recoveryTaskCreator.determineStartingOffset(250, 0, indexerConfig)).isEqualTo(201);
     assertThat(AstraMetadataTestUtils.listSyncUncached(recoveryTaskStore)).isEmpty();
     assertThat(AstraMetadataTestUtils.listSyncUncached(snapshotMetadataStore))
-        .containsExactlyInAnyOrder(partition1, partition11, livePartition2, partition2);
-    assertThat(getCount(STALE_SNAPSHOT_DELETE_SUCCESS, meterRegistry)).isEqualTo(7);
+        .containsExactlyInAnyOrder(
+            partition1, partition11, livePartition1, livePartition11, livePartition2, partition2);
+    assertThat(getCount(STALE_SNAPSHOT_DELETE_SUCCESS, meterRegistry)).isEqualTo(0);
     assertThat(getCount(RECOVERY_TASKS_CREATED, meterRegistry)).isEqualTo(0);
   }
 
@@ -1200,7 +1308,7 @@ public class RecoveryTaskCreatorTest {
     assertThat(getCount(STALE_SNAPSHOT_DELETE_SUCCESS, meterRegistry)).isEqualTo(0);
     assertThat(getCount(RECOVERY_TASKS_CREATED, meterRegistry)).isEqualTo(2);
 
-    // Live partition is cleaned up, new recovery task is created.
+    // Live partition remains in metadata, new recovery task is created.
     SnapshotMetadata livePartition1 =
         new SnapshotMetadata(
             name + "live1", startTime, ChunkInfo.MAX_FUTURE_TIME, maxOffset, partitionId, 0);
@@ -1219,7 +1327,7 @@ public class RecoveryTaskCreatorTest {
         .isThrownBy(() -> recoveryTaskCreator.determineStartingOffset(250, 0, indexerConfig));
     assertThat(recoveryTaskCreator.determineStartingOffset(1450, 0, indexerConfig)).isEqualTo(1450);
     assertThat(AstraMetadataTestUtils.listSyncUncached(snapshotMetadataStore))
-        .containsExactlyInAnyOrder(partition1, partition11);
+        .containsExactlyInAnyOrder(partition1, partition11, livePartition1);
     List<RecoveryTaskMetadata> recoveryTasks2 =
         AstraMetadataTestUtils.listSyncUncached(recoveryTaskStore);
     assertThat(recoveryTasks2.size()).isEqualTo(2);
@@ -1230,11 +1338,10 @@ public class RecoveryTaskCreatorTest {
     assertThat(recoveryTask2.partitionId).isEqualTo(partitionId);
     assertThat(AstraMetadataTestUtils.listSyncUncached(recoveryTaskStore))
         .containsExactlyInAnyOrder(recoveryTask1, recoveryTask2);
-    assertThat(getCount(STALE_SNAPSHOT_DELETE_SUCCESS, meterRegistry)).isEqualTo(1);
+    assertThat(getCount(STALE_SNAPSHOT_DELETE_SUCCESS, meterRegistry)).isEqualTo(0);
     assertThat(getCount(RECOVERY_TASKS_CREATED, meterRegistry)).isEqualTo(3);
 
-    // Multiple live partitions for the same partition are cleaned up.
-    snapshotMetadataStore.createSync(livePartition1);
+    // Multiple live partitions for the same partition remain in metadata.
     SnapshotMetadata livePartition11 =
         new SnapshotMetadata(
             name + "live11", startTime, ChunkInfo.MAX_FUTURE_TIME, maxOffset, partitionId, 0);
@@ -1249,12 +1356,12 @@ public class RecoveryTaskCreatorTest {
         .contains(partition1, partition11, livePartition1, livePartition11);
     assertThat(recoveryTaskCreator.determineStartingOffset(1500, 0, indexerConfig)).isEqualTo(1450);
     assertThat(AstraMetadataTestUtils.listSyncUncached(snapshotMetadataStore))
-        .containsExactlyInAnyOrder(partition1, partition11);
+        .containsExactlyInAnyOrder(partition1, partition11, livePartition1, livePartition11);
     assertThat(AstraMetadataTestUtils.listSyncUncached(recoveryTaskStore))
         .contains(recoveryTask1, recoveryTask2);
     assertThat(recoveryTaskCreator.determineStartingOffset(1650, 0, indexerConfig)).isEqualTo(1650);
     assertThat(AstraMetadataTestUtils.listSyncUncached(snapshotMetadataStore))
-        .containsExactlyInAnyOrder(partition1, partition11);
+        .containsExactlyInAnyOrder(partition1, partition11, livePartition1, livePartition11);
     List<RecoveryTaskMetadata> recoveryTasks3 =
         AstraMetadataTestUtils.listSyncUncached(recoveryTaskStore);
     assertThat(recoveryTasks3.size()).isEqualTo(3);
@@ -1268,12 +1375,10 @@ public class RecoveryTaskCreatorTest {
     assertThat(recoveryTask3.endOffset).isEqualTo(1649);
     assertThat(AstraMetadataTestUtils.listSyncUncached(recoveryTaskStore))
         .containsExactlyInAnyOrder(recoveryTask1, recoveryTask2, recoveryTask3);
-    assertThat(getCount(STALE_SNAPSHOT_DELETE_SUCCESS, meterRegistry)).isEqualTo(3);
+    assertThat(getCount(STALE_SNAPSHOT_DELETE_SUCCESS, meterRegistry)).isEqualTo(0);
     assertThat(getCount(RECOVERY_TASKS_CREATED, meterRegistry)).isEqualTo(4);
 
-    // Live partitions from multiple partitions exist.
-    snapshotMetadataStore.createSync(livePartition1);
-    snapshotMetadataStore.createSync(livePartition11);
+    // Live partitions from multiple partitions remain in metadata.
     SnapshotMetadata livePartition2 =
         new SnapshotMetadata(
             name + "2", startTime, ChunkInfo.MAX_FUTURE_TIME, maxOffset * 5, "2", 0);
@@ -1290,7 +1395,8 @@ public class RecoveryTaskCreatorTest {
     assertThat(AstraMetadataTestUtils.listSyncUncached(recoveryTaskStore))
         .containsExactlyInAnyOrder(recoveryTask1, recoveryTask2, recoveryTask3);
     assertThat(AstraMetadataTestUtils.listSyncUncached(snapshotMetadataStore))
-        .containsExactlyInAnyOrder(partition1, partition11, livePartition2);
+        .containsExactlyInAnyOrder(
+            partition1, partition11, livePartition1, livePartition11, livePartition2);
     assertThat(recoveryTaskCreator.determineStartingOffset(1850, 0, indexerConfig)).isEqualTo(1850);
     List<RecoveryTaskMetadata> recoveryTasks4 =
         AstraMetadataTestUtils.listSyncUncached(recoveryTaskStore);
@@ -1304,15 +1410,14 @@ public class RecoveryTaskCreatorTest {
     assertThat(recoveryTask4.startOffset).isEqualTo(1650);
     assertThat(recoveryTask4.endOffset).isEqualTo(1849);
     assertThat(AstraMetadataTestUtils.listSyncUncached(snapshotMetadataStore))
-        .containsExactlyInAnyOrder(partition1, partition11, livePartition2);
+        .containsExactlyInAnyOrder(
+            partition1, partition11, livePartition1, livePartition11, livePartition2);
     assertThat(AstraMetadataTestUtils.listSyncUncached(recoveryTaskStore))
         .containsExactlyInAnyOrder(recoveryTask1, recoveryTask2, recoveryTask3, recoveryTask4);
-    assertThat(getCount(STALE_SNAPSHOT_DELETE_SUCCESS, meterRegistry)).isEqualTo(5);
+    assertThat(getCount(STALE_SNAPSHOT_DELETE_SUCCESS, meterRegistry)).isEqualTo(0);
     assertThat(getCount(RECOVERY_TASKS_CREATED, meterRegistry)).isEqualTo(5);
 
-    // Live and non-live partitions for different partitions exist.
-    snapshotMetadataStore.createSync(livePartition1);
-    snapshotMetadataStore.createSync(livePartition11);
+    // Live and non-live partitions for different partitions remain in metadata.
     SnapshotMetadata partition2 =
         new SnapshotMetadata(name + "3", startTime, endTime, maxOffset * 3, "2", 100);
     snapshotMetadataStore.createSync(partition2);
@@ -1323,7 +1428,8 @@ public class RecoveryTaskCreatorTest {
                     .listSync()
                     .containsAll(List.of(livePartition1, livePartition11, livePartition2)));
     assertThat(AstraMetadataTestUtils.listSyncUncached(snapshotMetadataStore))
-        .contains(partition1, partition11, livePartition1, livePartition2, partition2);
+        .contains(
+            partition1, partition11, livePartition1, livePartition11, livePartition2, partition2);
     final RecoveryTaskMetadata recoveryTaskPartition2 =
         new RecoveryTaskMetadata("basicRecovery" + "2", "2", 10000, 20000, 1000);
     recoveryTaskStore.createSync(recoveryTaskPartition2);
@@ -1344,7 +1450,8 @@ public class RecoveryTaskCreatorTest {
     assertThat(recoveryTask5.startOffset).isEqualTo(1850);
     assertThat(recoveryTask5.endOffset).isEqualTo(2049);
     assertThat(AstraMetadataTestUtils.listSyncUncached(snapshotMetadataStore))
-        .containsExactlyInAnyOrder(partition1, partition11, livePartition2, partition2);
+        .containsExactlyInAnyOrder(
+            partition1, partition11, livePartition1, livePartition11, livePartition2, partition2);
     assertThat(AstraMetadataTestUtils.listSyncUncached(recoveryTaskStore))
         .containsExactlyInAnyOrder(
             recoveryTask1,
@@ -1353,7 +1460,7 @@ public class RecoveryTaskCreatorTest {
             recoveryTask4,
             recoveryTask5,
             recoveryTaskPartition2);
-    assertThat(getCount(STALE_SNAPSHOT_DELETE_SUCCESS, meterRegistry)).isEqualTo(7);
+    assertThat(getCount(STALE_SNAPSHOT_DELETE_SUCCESS, meterRegistry)).isEqualTo(0);
     assertThat(getCount(RECOVERY_TASKS_CREATED, meterRegistry)).isEqualTo(6);
   }
 
@@ -1568,16 +1675,10 @@ public class RecoveryTaskCreatorTest {
     await().until(() -> snapshotMetadataStore.listSync().contains(livePartition1));
     assertThat(AstraMetadataTestUtils.listSyncUncached(snapshotMetadataStore))
         .containsExactlyInAnyOrder(partition1, livePartition1);
-    // Fail deletion on snapshot metadata store.
-    doThrow(new IllegalStateException())
-        .when(snapshotMetadataStore)
-        .deleteAsync(any(SnapshotMetadata.class));
-    doThrow(new IllegalStateException()).when(snapshotMetadataStore).deleteAsync(any());
-
-    assertThatIllegalStateException()
-        .isThrownBy(() -> recoveryTaskCreator.determineStartingOffset(1350, 0, indexerConfig));
+    assertThat(recoveryTaskCreator.determineStartingOffset(1350, 0, indexerConfig)).isEqualTo(1350);
     assertThat(AstraMetadataTestUtils.listSyncUncached(recoveryTaskStore))
-        .containsExactly(recoveryTasks1.get(0));
+        .contains(recoveryTasks1.get(0));
+    assertThat(AstraMetadataTestUtils.listSyncUncached(recoveryTaskStore).size()).isEqualTo(2);
     assertThat(AstraMetadataTestUtils.listSyncUncached(snapshotMetadataStore))
         .containsExactlyInAnyOrder(partition1, livePartition1);
   }
@@ -1722,5 +1823,39 @@ public class RecoveryTaskCreatorTest {
         .containsExactly(48, 499, 499);
     assertThat(recoveryTasks1.stream().filter(r -> r.partitionId.equals(partitionId)).count())
         .isEqualTo(3);
+  }
+
+  private static String manifestJson(SnapshotMetadata snapshotMetadata) throws Exception {
+    return manifestJson(
+        snapshotMetadata,
+        snapshotMetadata.snapshotId,
+        snapshotMetadata.partitionId,
+        snapshotMetadata.snapshotGeneration,
+        snapshotMetadata.maxOffset);
+  }
+
+  private static String manifestJson(
+      SnapshotMetadata snapshotMetadata,
+      String snapshotId,
+      String partitionId,
+      long manifestGeneration,
+      long maxIndexedOffsetInclusive)
+      throws Exception {
+    NrtBlobStore.NrtManifest manifest =
+        new NrtBlobStore.NrtManifest(
+            1,
+            snapshotId,
+            partitionId,
+            "writer-1",
+            manifestGeneration,
+            Instant.now().toEpochMilli(),
+            1,
+            0,
+            maxIndexedOffsetInclusive,
+            snapshotMetadata.startTimeEpochMs,
+            snapshotMetadata.endTimeEpochMs,
+            new NrtBlobStore.FileEntry("schema.json", "files/schema.json", 1, "a"),
+            List.of(new NrtBlobStore.FileEntry("segments_1", "files/segments_1", 1, "b")));
+    return new ObjectMapper().writeValueAsString(manifest);
   }
 }
