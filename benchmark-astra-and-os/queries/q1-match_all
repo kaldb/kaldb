@@ -1,0 +1,2 @@
+{"index": "test"}
+{ "query": {"match_all": {}}, "size": 50}

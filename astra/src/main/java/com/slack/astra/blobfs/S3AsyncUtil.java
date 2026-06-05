@@ -77,7 +77,10 @@ public class S3AsyncUtil {
       if (notNullOrEmpty(config.getS3EndPoint())) {
         String endpoint = config.getS3EndPoint();
         try {
-          s3AsyncClient.endpointOverride(new URI(endpoint));
+          s3AsyncClient
+              .forcePathStyle(true)
+              .checksumValidationEnabled(false)
+              .endpointOverride(new URI(endpoint));
         } catch (URISyntaxException e) {
           throw new RuntimeException(e);
         }

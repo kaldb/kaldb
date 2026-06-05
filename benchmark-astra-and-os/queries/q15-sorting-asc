@@ -1,0 +1,2 @@
+{"index": "test"}
+ {"query": {"match_all": {}},"sort" : [{"tip_amount" : "asc"}], "size": 7500}

@@ -1,0 +1,2 @@
+{ "index": "test"}
+{ "query": {"range": {"total_amount": {"gte": 5,"lt": 15}}}, "size": 50}

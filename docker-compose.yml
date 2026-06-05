@@ -56,7 +56,7 @@ services:
       - cluster.name=opensearch-local
       - node.name=opensearch-node1
       - discovery.type=single-node
-      - OPENSEARCH_JAVA_OPTS=-Xms256m -Xmx256m
+      - OPENSEARCH_JAVA_OPTS=${OPENSEARCH_JAVA_OPTS:--Xms4g -Xmx4g}
       - DISABLE_INSTALL_DEMO_CONFIG=true
       - DISABLE_SECURITY_PLUGIN=true
     volumes:
@@ -102,12 +102,15 @@ services:
       - opensearch
 
   s3:
-    image: 'adobe/s3mock:2.1.29'
+    image: 'quay.io/minio/minio:latest'
     container_name: dep_s3
     ports:
       - 9090:9090
+      - 9091:9091
     environment:
-      - initialBuckets=test-s3-bucket
+      - MINIO_ROOT_USER=access
+      - MINIO_ROOT_PASSWORD=keykeykey
+    command: server /data --address ":9090" --console-address ":9091"
 
   openzipkin:
     image: 'openzipkin/zipkin-slim'
@@ -115,22 +118,88 @@ services:
     ports:
       - 9411:9411
 
+  astra_single:
+    profiles:
+      - single-node
+    image: 'slackhq/astra'
+    container_name: astra_single
+    ports:
+      - 8080:8080
+      - 8081:8081
+      - 8082:8082
+      - 8083:8083
+      - 8085:8085
+      - 8086:8086
+    volumes:
+      - ./benchmark-astra-and-os/schema:/config/benchmark-schema:ro
+    environment:
+      - JAVA_TOOL_OPTIONS=${ASTRA_JAVA_TOOL_OPTIONS:-}
+      - NODE_ROLES=PREPROCESSOR,INDEX,MANAGER,QUERY,CACHE,RECOVERY
+      - ASTRA_PREPROCESSOR_USE_BULK_API=true
+      - ASTRA_PREPROCESSOR_SERVER_ADDRESS=astra_single
+      - ASTRA_PREPROCESSOR_REQUEST_TIMEOUT_MS=${ASTRA_PREPROCESSOR_REQUEST_TIMEOUT_MS:-120000}
+      - PREPROCESSOR_SCHEMA_FILE=${PREPROCESSOR_SCHEMA_FILE:-/config/benchmark-schema/clickbench_hits_schema.yaml}
+      - ASTRA_INDEX_SERVER_ADDRESS=astra_single
+      - INDEXER_MAX_MESSAGES_PER_CHUNK=1000000
+      - INDEXER_MAX_BYTES_PER_CHUNK=1000000000
+      - INDEXER_MAX_CHUNKS_ON_DISK=${INDEXER_MAX_CHUNKS_ON_DISK:-5}
+      - ASTRA_INDEX_DEFAULT_QUERY_TIMEOUT_MS=${ASTRA_INDEX_DEFAULT_QUERY_TIMEOUT_MS:-300000}
+      - ASTRA_INDEX_REQUEST_TIMEOUT_MS=${ASTRA_INDEX_REQUEST_TIMEOUT_MS:-360000}
+      - ASTRA_MANAGER_SERVER_ADDRESS=astra_single
+      - ASTRA_MANAGER_API_MIN_NUMBER_OF_PARTITIONS=1
+      - ASTRA_QUERY_SERVER_ADDRESS=astra_single
+      - ASTRA_MANAGER_CONNECTION_STRING=astra_single:8083
+      - ASTRA_QUERY_DEFAULT_QUERY_TIMEOUT_MS=${ASTRA_QUERY_DEFAULT_QUERY_TIMEOUT_MS:-300000}
+      - ASTRA_QUERY_REQUEST_TIMEOUT_MS=${ASTRA_QUERY_REQUEST_TIMEOUT_MS:-360000}
+      - ASTRA_CACHE_SERVER_ADDRESS=astra_single
+      - ASTRA_CACHE_DEFAULT_QUERY_TIMEOUT_MS=${ASTRA_CACHE_DEFAULT_QUERY_TIMEOUT_MS:-300000}
+      - ASTRA_CACHE_REQUEST_TIMEOUT_MS=${ASTRA_CACHE_REQUEST_TIMEOUT_MS:-360000}
+      - ASTRA_RECOVERY_SERVER_ADDRESS=astra_single
+      - ASTRA_ZK_CONNECTION_STRING=zookeeper:2181
+      - ASTRA_ZK_SESSION_TIMEOUT_MS=${ASTRA_ZK_SESSION_TIMEOUT_MS:-60000}
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - ZIPKIN_TRACING_ENDPOINT=http://openzipkin:9411/api/v2/spans
+      - S3_ACCESS_KEY=access
+      - S3_SECRET_KEY=keykeykey
+      - S3_ENDPOINT=http://s3:9090
+      - S3_TARGET_THROUGHPUT_GBPS=${S3_TARGET_THROUGHPUT_GBPS:-1}
+      - S3_PATH_PREFIX=${S3_PATH_PREFIX:-}
+    depends_on:
+      - zookeeper
+      - kafka
+      - s3
+      - openzipkin
+    networks:
+      default:
+        aliases:
+          - astra-query
+          - astra-index
+
   #to build this image run 'docker build -t slackhq/astra .'
   astra_preprocessor:
     image: 'slackhq/astra'
     container_name: astra_preprocessor
     ports:
       - 8086:8086
+    volumes:
+      - ./benchmark-astra-and-os/schema:/config/benchmark-schema:ro
     environment:
       # Node specific settings
+      - JAVA_TOOL_OPTIONS=${ASTRA_JAVA_TOOL_OPTIONS:-}
       - NODE_ROLES=PREPROCESSOR
       - ASTRA_PREPROCESSOR_USE_BULK_API=true
       - ASTRA_PREPROCESSOR_SERVER_ADDRESS=astra_preprocessor
+      - ASTRA_PREPROCESSOR_REQUEST_TIMEOUT_MS=${ASTRA_PREPROCESSOR_REQUEST_TIMEOUT_MS:-120000}
+      - PREPROCESSOR_SCHEMA_FILE=${PREPROCESSOR_SCHEMA_FILE:-/config/benchmark-schema/clickbench_hits_schema.yaml}
       # Shared settings
       - ASTRA_ZK_CONNECTION_STRING=zookeeper:2181
+      - ASTRA_ZK_SESSION_TIMEOUT_MS=${ASTRA_ZK_SESSION_TIMEOUT_MS:-60000}
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
       - ZIPKIN_TRACING_ENDPOINT=http://openzipkin:9411/api/v2/spans
-      - S3_ENDPOINT=http://dep_s3:9090
+      - S3_ACCESS_KEY=access
+      - S3_SECRET_KEY=keykeykey
+      - S3_ENDPOINT=http://s3:9090
+      - S3_TARGET_THROUGHPUT_GBPS=${S3_TARGET_THROUGHPUT_GBPS:-1}
       - S3_PATH_PREFIX=${S3_PATH_PREFIX:-}
     depends_on:
       - zookeeper
@@ -145,13 +214,23 @@ services:
       - 8080:8080
     environment:
       # Node specific settings
+      - JAVA_TOOL_OPTIONS=${ASTRA_JAVA_TOOL_OPTIONS:-}
       - NODE_ROLES=INDEX
       - ASTRA_INDEX_SERVER_ADDRESS=astra_index
+      - INDEXER_MAX_MESSAGES_PER_CHUNK=1000000
+      - INDEXER_MAX_BYTES_PER_CHUNK=1000000000
+      - INDEXER_MAX_CHUNKS_ON_DISK=${INDEXER_MAX_CHUNKS_ON_DISK:-5}
+      - ASTRA_INDEX_DEFAULT_QUERY_TIMEOUT_MS=${ASTRA_INDEX_DEFAULT_QUERY_TIMEOUT_MS:-300000}
+      - ASTRA_INDEX_REQUEST_TIMEOUT_MS=${ASTRA_INDEX_REQUEST_TIMEOUT_MS:-360000}
       # Shared settings
       - ASTRA_ZK_CONNECTION_STRING=zookeeper:2181
+      - ASTRA_ZK_SESSION_TIMEOUT_MS=${ASTRA_ZK_SESSION_TIMEOUT_MS:-60000}
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
       - ZIPKIN_TRACING_ENDPOINT=http://openzipkin:9411/api/v2/spans
-      - S3_ENDPOINT=http://dep_s3:9090
+      - S3_ACCESS_KEY=access
+      - S3_SECRET_KEY=keykeykey
+      - S3_ENDPOINT=http://s3:9090
+      - S3_TARGET_THROUGHPUT_GBPS=${S3_TARGET_THROUGHPUT_GBPS:-1}
       - S3_PATH_PREFIX=${S3_PATH_PREFIX:-}
     depends_on:
       - astra_preprocessor
@@ -167,13 +246,19 @@ services:
       - 8083:8083
     environment:
       # Node specific settings
+      - JAVA_TOOL_OPTIONS=${ASTRA_JAVA_TOOL_OPTIONS:-}
       - NODE_ROLES=MANAGER
       - ASTRA_MANAGER_SERVER_ADDRESS=astra_manager
+      - ASTRA_MANAGER_API_MIN_NUMBER_OF_PARTITIONS=1
       # Shared settings
       - ASTRA_ZK_CONNECTION_STRING=zookeeper:2181
+      - ASTRA_ZK_SESSION_TIMEOUT_MS=${ASTRA_ZK_SESSION_TIMEOUT_MS:-60000}
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
       - ZIPKIN_TRACING_ENDPOINT=http://openzipkin:9411/api/v2/spans
-      - S3_ENDPOINT=http://dep_s3:9090
+      - S3_ACCESS_KEY=access
+      - S3_SECRET_KEY=keykeykey
+      - S3_ENDPOINT=http://s3:9090
+      - S3_TARGET_THROUGHPUT_GBPS=${S3_TARGET_THROUGHPUT_GBPS:-1}
       - S3_PATH_PREFIX=${S3_PATH_PREFIX:-}
     depends_on:
       - astra_preprocessor
@@ -185,14 +270,21 @@ services:
       - 8081:8081
     environment:
       # Node specific settings
+      - JAVA_TOOL_OPTIONS=${ASTRA_JAVA_TOOL_OPTIONS:-}
       - NODE_ROLES=QUERY
       - ASTRA_QUERY_SERVER_ADDRESS=astra_query
       - ASTRA_MANAGER_CONNECTION_STRING=astra_manager:8083
+      - ASTRA_QUERY_DEFAULT_QUERY_TIMEOUT_MS=${ASTRA_QUERY_DEFAULT_QUERY_TIMEOUT_MS:-300000}
+      - ASTRA_QUERY_REQUEST_TIMEOUT_MS=${ASTRA_QUERY_REQUEST_TIMEOUT_MS:-360000}
       # Shared settings
       - ASTRA_ZK_CONNECTION_STRING=zookeeper:2181
+      - ASTRA_ZK_SESSION_TIMEOUT_MS=${ASTRA_ZK_SESSION_TIMEOUT_MS:-60000}
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
       - ZIPKIN_TRACING_ENDPOINT=http://openzipkin:9411/api/v2/spans
-      - S3_ENDPOINT=http://dep_s3:9090
+      - S3_ACCESS_KEY=access
+      - S3_SECRET_KEY=keykeykey
+      - S3_ENDPOINT=http://s3:9090
+      - S3_TARGET_THROUGHPUT_GBPS=${S3_TARGET_THROUGHPUT_GBPS:-1}
       - S3_PATH_PREFIX=${S3_PATH_PREFIX:-}
     depends_on:
       - astra_preprocessor
@@ -208,13 +300,20 @@ services:
       - 8082:8082
     environment:
       # Node specific settings
+      - JAVA_TOOL_OPTIONS=${ASTRA_JAVA_TOOL_OPTIONS:-}
       - NODE_ROLES=CACHE
       - ASTRA_CACHE_SERVER_ADDRESS=astra_cache
+      - ASTRA_CACHE_DEFAULT_QUERY_TIMEOUT_MS=${ASTRA_CACHE_DEFAULT_QUERY_TIMEOUT_MS:-300000}
+      - ASTRA_CACHE_REQUEST_TIMEOUT_MS=${ASTRA_CACHE_REQUEST_TIMEOUT_MS:-360000}
       # Shared settings
       - ASTRA_ZK_CONNECTION_STRING=zookeeper:2181
+      - ASTRA_ZK_SESSION_TIMEOUT_MS=${ASTRA_ZK_SESSION_TIMEOUT_MS:-60000}
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
       - ZIPKIN_TRACING_ENDPOINT=http://openzipkin:9411/api/v2/spans
-      - S3_ENDPOINT=http://dep_s3:9090
+      - S3_ACCESS_KEY=access
+      - S3_SECRET_KEY=keykeykey
+      - S3_ENDPOINT=http://s3:9090
+      - S3_TARGET_THROUGHPUT_GBPS=${S3_TARGET_THROUGHPUT_GBPS:-1}
       - S3_PATH_PREFIX=${S3_PATH_PREFIX:-}
     depends_on:
       - astra_preprocessor
@@ -226,13 +325,17 @@ services:
       - 8085:8085
     environment:
       # Node specific settings
+      - JAVA_TOOL_OPTIONS=${ASTRA_JAVA_TOOL_OPTIONS:-}
       - NODE_ROLES=RECOVERY
       - ASTRA_RECOVERY_SERVER_ADDRESS=astra_recovery
       # Shared settings
       - ASTRA_ZK_CONNECTION_STRING=zookeeper:2181
+      - ASTRA_ZK_SESSION_TIMEOUT_MS=${ASTRA_ZK_SESSION_TIMEOUT_MS:-60000}
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
       - ZIPKIN_TRACING_ENDPOINT=http://openzipkin:9411/api/v2/spans
-      - S3_ENDPOINT=http://dep_s3:9090
+      - S3_ACCESS_KEY=access
+      - S3_SECRET_KEY=keykeykey
+      - S3_ENDPOINT=http://s3:9090
       - S3_PATH_PREFIX=${S3_PATH_PREFIX:-}
     depends_on:
       - astra_preprocessor

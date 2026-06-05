@@ -1,0 +1,33 @@
+fields:
+  dropoff_datetime:
+    type: DATE
+  pickup_datetime:
+    type: DATE
+  total_amount:
+    type: DOUBLE
+  improvement_surcharge:
+    type: DOUBLE
+  tolls_amount:
+    type: DOUBLE
+  fare_amount:
+    type: DOUBLE
+  extra:
+    type: DOUBLE
+  trip_distance:
+    type: DOUBLE
+  tip_amount:
+    type: DOUBLE
+  mta_tax:
+    type: DOUBLE
+  passenger_count:
+    type: INTEGER
+  trip_type:
+    type: KEYWORD
+  rate_code_id:
+    type: KEYWORD
+  store_and_fwd_flag:
+    type: KEYWORD
+  payment_type:
+    type: KEYWORD
+  vendor_id:
+    type: KEYWORD

@@ -1,0 +1,2 @@
+{"index": "test"}
+{"query": {"range": {"dropoff_datetime": {"gte": "01/01/2015","lte": "21/01/2015", "format": "dd/MM/yyyy"}}},"aggs": {"dropoffs_over_time": {"auto_date_histogram": {"field": "dropoff_datetime", "buckets": 20}}}, "size": 50}
