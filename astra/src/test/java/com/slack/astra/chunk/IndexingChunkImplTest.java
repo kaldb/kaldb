@@ -2,7 +2,6 @@ package com.slack.astra.chunk;
 
 import static com.slack.astra.chunk.ReadWriteChunk.INDEX_FILES_UPLOAD;
 import static com.slack.astra.chunk.ReadWriteChunk.INDEX_FILES_UPLOAD_FAILED;
-import static com.slack.astra.chunk.ReadWriteChunk.LIVE_SNAPSHOT_PREFIX;
 import static com.slack.astra.chunk.ReadWriteChunk.SCHEMA_FILE_NAME;
 import static com.slack.astra.chunk.ReadWriteChunk.SNAPSHOT_TIMER;
 import static com.slack.astra.logstore.LuceneIndexStoreImpl.COMMITS_TIMER;
@@ -32,6 +31,7 @@ import com.slack.astra.metadata.core.CuratorBuilder;
 import com.slack.astra.metadata.search.SearchMetadata;
 import com.slack.astra.metadata.search.SearchMetadataStore;
 import com.slack.astra.metadata.snapshot.SnapshotMetadata;
+import com.slack.astra.metadata.snapshot.SnapshotMetadata.SnapshotType;
 import com.slack.astra.metadata.snapshot.SnapshotMetadataStore;
 import com.slack.astra.proto.config.AstraConfigs;
 import com.slack.astra.testlib.MessageUtil;
@@ -82,7 +82,7 @@ public class IndexingChunkImplTest {
       SearchMetadataStore searchMetadataStore,
       ReadWriteChunk<LogMessage> chunk) {
     assertThat(AstraMetadataTestUtils.listSyncUncached(snapshotMetadataStore))
-        .containsOnly(ChunkInfo.toSnapshotMetadata(chunk.info(), LIVE_SNAPSHOT_PREFIX));
+        .containsOnly(ChunkInfo.toSnapshotMetadata(chunk.info(), "", SnapshotType.LIVE));
     final List<SearchMetadata> beforeSearchNodes =
         AstraMetadataTestUtils.listSyncUncached(searchMetadataStore);
     assertThat(beforeSearchNodes.size()).isEqualTo(1);
@@ -97,6 +97,8 @@ public class IndexingChunkImplTest {
     private boolean closeChunk = true;
     private MeterRegistry registry;
     private ReadWriteChunk<LogMessage> chunk;
+    private SnapshotMetadataStore snapshotMetadataStore;
+    private SearchMetadataStore searchMetadataStore;
     private TestingServer testingServer;
     private AsyncCuratorFramework curatorFramework;
 
@@ -123,9 +125,9 @@ public class IndexingChunkImplTest {
 
       curatorFramework = CuratorBuilder.build(registry, metadataStoreConfig.getZookeeperConfig());
 
-      SnapshotMetadataStore snapshotMetadataStore =
+      snapshotMetadataStore =
           new SnapshotMetadataStore(curatorFramework, metadataStoreConfig, registry);
-      SearchMetadataStore searchMetadataStore =
+      searchMetadataStore =
           new SearchMetadataStore(curatorFramework, metadataStoreConfig, registry, true);
 
       final LuceneIndexStoreImpl logStore =
@@ -156,6 +158,8 @@ public class IndexingChunkImplTest {
     public void tearDown() throws IOException, TimeoutException {
       if (closeChunk) chunk.close();
 
+      searchMetadataStore.close();
+      snapshotMetadataStore.close();
       curatorFramework.unwrap().close();
       testingServer.close();
       registry.close();

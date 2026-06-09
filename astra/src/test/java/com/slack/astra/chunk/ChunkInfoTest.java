@@ -8,6 +8,8 @@ import static com.slack.astra.chunk.ChunkInfo.toSnapshotMetadata;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
 
+import com.slack.astra.metadata.snapshot.SnapshotMetadata;
+import com.slack.astra.metadata.snapshot.SnapshotMetadata.SnapshotType;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import org.junit.jupiter.api.Test;
@@ -333,5 +335,26 @@ public class ChunkInfoTest {
             TEST_KAFKA_PARTITION_ID,
             0);
     assertThat(fromSnapshotMetadata(toSnapshotMetadata(chunkInfo, ""))).isEqualTo(chunkInfo);
+  }
+
+  @Test
+  public void snapshotMetadataLiveConversion() {
+    long dataStart = 101;
+    long dataEnd = 102;
+    ChunkInfo chunkInfo =
+        new ChunkInfo(
+            TEST_CHUNK_NAME,
+            dataStart,
+            dataEnd,
+            dataStart,
+            dataEnd,
+            dataEnd,
+            1000,
+            TEST_KAFKA_PARTITION_ID,
+            0);
+    SnapshotMetadata snapshotMetadata = toSnapshotMetadata(chunkInfo, "", SnapshotType.LIVE);
+
+    assertThat(snapshotMetadata.isLive()).isTrue();
+    assertThat(snapshotMetadata.name).startsWith(ReadWriteChunk.LIVE_SNAPSHOT_PREFIX);
   }
 }

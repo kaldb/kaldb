@@ -33,6 +33,7 @@ import com.slack.astra.metadata.dataset.DatasetPartitionMetadata;
 import com.slack.astra.metadata.search.SearchMetadata;
 import com.slack.astra.metadata.search.SearchMetadataStore;
 import com.slack.astra.metadata.snapshot.SnapshotMetadata;
+import com.slack.astra.metadata.snapshot.SnapshotMetadata.SnapshotType;
 import com.slack.astra.metadata.snapshot.SnapshotMetadataStore;
 import com.slack.astra.proto.config.AstraConfigs;
 import com.slack.astra.proto.schema.Schema;
@@ -229,6 +230,67 @@ public class AstraDistributedQueryServiceTest {
     } finally {
       System.clearProperty(AstraDistributedQueryService.ASTRA_ENABLE_QUERY_GATING_FLAG);
     }
+  }
+
+  @Test
+  public void testGetSearchNodesToQueryPrefersLiveIndexerAndFallsBackToNrtCache() {
+    String indexName = "testIndex";
+    Instant chunkCreationTime = Instant.ofEpochMilli(100);
+    Instant chunkEndTime = Instant.ofEpochMilli(200);
+    String rawSnapshotName =
+        createIndexerZKMetadata(chunkCreationTime, chunkEndTime, "1", indexer1SearchContext);
+
+    DatasetPartitionMetadata partition = new DatasetPartitionMetadata(1, 500, List.of("1"));
+    DatasetMetadata datasetMetadata =
+        new DatasetMetadata(indexName, "testOwner", 1, List.of(partition), indexName);
+    datasetMetadataStore.createSync(datasetMetadata);
+    await().until(() -> AstraMetadataTestUtils.listSyncUncached(datasetMetadataStore).size() == 1);
+
+    SearchMetadata cacheLiveSearchMetadata =
+        new SearchMetadata(
+            SearchMetadata.generateSearchContextSnapshotId(
+                LIVE_SNAPSHOT_PREFIX + rawSnapshotName, cache1SearchContext.hostname),
+            LIVE_SNAPSHOT_PREFIX + rawSnapshotName,
+            cache1SearchContext.toUrl(),
+            false);
+    searchMetadataStore.createSync(cacheLiveSearchMetadata);
+    await().until(() -> AstraMetadataTestUtils.listSyncUncached(searchMetadataStore).size() == 2);
+
+    Map<String, List<String>> searchNodes =
+        getSearchNodesToQuery(
+            snapshotMetadataStore,
+            searchMetadataStore,
+            datasetMetadataStore,
+            chunkCreationTime.toEpochMilli(),
+            chunkEndTime.toEpochMilli(),
+            indexName);
+
+    assertThat(searchNodes).hasSize(1);
+    assertThat(searchNodes).containsKey(indexer1SearchContext.toString());
+    assertThat(searchNodes.get(indexer1SearchContext.toString())).containsExactly(rawSnapshotName);
+
+    SearchMetadata liveIndexerSearchMetadata =
+        new SearchMetadata(
+            SearchMetadata.generateSearchContextSnapshotId(
+                LIVE_SNAPSHOT_PREFIX + rawSnapshotName, indexer1SearchContext.hostname),
+            LIVE_SNAPSHOT_PREFIX + rawSnapshotName,
+            indexer1SearchContext.toUrl(),
+            true);
+    searchMetadataStore.updateSearchability(cacheLiveSearchMetadata, true);
+    searchMetadataStore.updateSearchability(liveIndexerSearchMetadata, false);
+
+    searchNodes =
+        getSearchNodesToQuery(
+            snapshotMetadataStore,
+            searchMetadataStore,
+            datasetMetadataStore,
+            chunkCreationTime.toEpochMilli(),
+            chunkEndTime.toEpochMilli(),
+            indexName);
+
+    assertThat(searchNodes).hasSize(1);
+    assertThat(searchNodes).containsKey(cache1SearchContext.toString());
+    assertThat(searchNodes.get(cache1SearchContext.toString())).containsExactly(rawSnapshotName);
   }
 
   @Test
@@ -1442,7 +1504,7 @@ public class AstraDistributedQueryServiceTest {
             partition,
             0);
     SnapshotMetadata snapshotMetadata =
-        toSnapshotMetadata(chunkInfo, isLive ? LIVE_SNAPSHOT_PREFIX : "");
+        toSnapshotMetadata(chunkInfo, "", isLive ? SnapshotType.LIVE : SnapshotType.SEALED);
 
     snapshotMetadataStore.createSync(snapshotMetadata);
 

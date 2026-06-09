@@ -117,7 +117,7 @@ public abstract class ReadWriteChunk<T> implements Chunk<T> {
     readOnly = false;
     this.meterRegistry = meterRegistry;
     fileUploadAttempts = meterRegistry.counter(INDEX_FILES_UPLOAD);
-    liveSnapshotMetadata = toSnapshotMetadata(chunkInfo, LIVE_SNAPSHOT_PREFIX);
+    liveSnapshotMetadata = toSnapshotMetadata(chunkInfo, "", SnapshotMetadata.SnapshotType.LIVE);
     liveSearchMetadata = toSearchMetadata(liveSnapshotMetadata.snapshotId, searchContext);
     this.searchMetadataStore = searchMetadataStore;
     this.snapshotMetadataStore = snapshotMetadataStore;
