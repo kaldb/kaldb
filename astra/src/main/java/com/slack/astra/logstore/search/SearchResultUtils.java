@@ -3,7 +3,6 @@ package com.slack.astra.logstore.search;
 import brave.ScopedSpan;
 import brave.Tracing;
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.protobuf.ByteString;
 import com.slack.astra.logstore.LogMessage;
 import com.slack.astra.logstore.LogWireMessage;
@@ -18,7 +17,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 import org.opensearch.common.settings.Settings;
-import org.opensearch.common.xcontent.json.JsonXContentParser;
+import org.opensearch.common.xcontent.json.JsonXContent;
 import org.opensearch.core.xcontent.DeprecationHandler;
 import org.opensearch.core.xcontent.NamedXContentRegistry;
 import org.opensearch.index.query.AbstractQueryBuilder;
@@ -27,7 +26,6 @@ import org.opensearch.search.SearchModule;
 import org.opensearch.search.aggregations.AggregatorFactories;
 
 public class SearchResultUtils {
-  private static final ObjectMapper objectMapper = new ObjectMapper();
   private static final SearchModule searchModule = new SearchModule(Settings.EMPTY, List.of());
   private static final NamedXContentRegistry namedXContentRegistry =
       new NamedXContentRegistry(searchModule.getNamedXContents());
@@ -104,11 +102,11 @@ public class SearchResultUtils {
 
     if (!searchRequest.getQuery().isEmpty()) {
       try {
-        JsonXContentParser jsonXContentParser =
-            new JsonXContentParser(
+        var jsonXContentParser =
+            JsonXContent.jsonXContent.createParser(
                 namedXContentRegistry,
                 DeprecationHandler.IGNORE_DEPRECATIONS,
-                objectMapper.createParser(searchRequest.getQuery()));
+                searchRequest.getQuery());
         queryBuilder = AbstractQueryBuilder.parseInnerQueryBuilder(jsonXContentParser);
       } catch (Exception e) {
         throw new IllegalArgumentException(e);
@@ -118,11 +116,11 @@ public class SearchResultUtils {
     AggregatorFactories.Builder aggregatorFactoriesBuilder = null;
     if (!searchRequest.getAggregationJson().isEmpty()) {
       try {
-        JsonXContentParser jsonXContentParser =
-            new JsonXContentParser(
+        var jsonXContentParser =
+            JsonXContent.jsonXContent.createParser(
                 namedXContentRegistry,
                 DeprecationHandler.IGNORE_DEPRECATIONS,
-                objectMapper.createParser(searchRequest.getAggregationJson()));
+                searchRequest.getAggregationJson());
 
         jsonXContentParser.nextToken();
         aggregatorFactoriesBuilder = AggregatorFactories.parseAggregators(jsonXContentParser);

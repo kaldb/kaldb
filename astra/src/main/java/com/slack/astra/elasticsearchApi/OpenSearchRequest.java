@@ -29,7 +29,7 @@ import org.apache.lucene.search.BooleanClause;
 import org.opensearch.OpenSearchParseException;
 import org.opensearch.common.settings.Settings;
 import org.opensearch.common.time.DateFormatter;
-import org.opensearch.common.xcontent.json.JsonXContentParser;
+import org.opensearch.common.xcontent.json.JsonXContent;
 import org.opensearch.core.xcontent.DeprecationHandler;
 import org.opensearch.core.xcontent.NamedXContentRegistry;
 import org.opensearch.index.query.AbstractQueryBuilder;
@@ -230,12 +230,12 @@ public class OpenSearchRequest {
   private static DateRangeQueryBuilderVistor getDateRange(String queryBody) {
     try {
       openSearchAdapter.reloadSchema();
-      JsonXContentParser jsonXContentParser =
-          new JsonXContentParser(
+      var jsonXContentParser =
+          JsonXContent.jsonXContent.createParser(
               new NamedXContentRegistry(
                   new SearchModule(Settings.EMPTY, List.of()).getNamedXContents()),
               DeprecationHandler.IGNORE_DEPRECATIONS,
-              OM.createParser(queryBody));
+              queryBody);
 
       QueryBuilder queryBuilder = AbstractQueryBuilder.parseInnerQueryBuilder(jsonXContentParser);
       DateRangeQueryBuilderVistor dateRangeQueryBuilderVistor = new DateRangeQueryBuilderVistor();

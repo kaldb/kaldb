@@ -31,6 +31,7 @@ import org.apache.lucene.search.Sort;
 import org.apache.lucene.search.SortField;
 import org.apache.lucene.search.SortField.Type;
 import org.apache.lucene.search.TopFieldCollector;
+import org.apache.lucene.search.TopFieldCollectorManager;
 import org.opensearch.index.query.QueryBuilder;
 import org.opensearch.search.aggregations.AggregatorFactories;
 import org.opensearch.search.aggregations.InternalAggregations;
@@ -159,7 +160,7 @@ public class LogIndexSearcherImpl implements LogIndexSearcher<LogMessage> {
       IndexSearcher searcher, ScoreDoc hit, SourceFieldFilter sourceFieldFilter) {
     String s = "";
     try {
-      s = searcher.doc(hit.doc).get(SystemField.SOURCE.fieldName);
+      s = searcher.storedFields().document(hit.doc).get(SystemField.SOURCE.fieldName);
       LogWireMessage wireMessage = JsonUtil.read(s, LogWireMessage.class);
       Map<String, Object> source = wireMessage.getSource();
 
@@ -198,7 +199,8 @@ public class LogIndexSearcherImpl implements LogIndexSearcher<LogMessage> {
   private TopFieldCollector buildTopFieldCollector(int howMany, int totalHitsThreshold)
       throws IOException {
     SortField sortField = new SortField(SystemField.TIME_SINCE_EPOCH.fieldName, Type.LONG, true);
-    return TopFieldCollector.create(new Sort(sortField), howMany, null, totalHitsThreshold);
+    return new TopFieldCollectorManager(new Sort(sortField), howMany, null, totalHitsThreshold)
+        .newCollector();
   }
 
   @Override

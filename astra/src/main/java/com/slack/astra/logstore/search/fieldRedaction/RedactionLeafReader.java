@@ -29,15 +29,19 @@ class RedactionLeafReader extends SequentialStoredFieldsLeafReader {
 
   @Override
   public StoredFields storedFields() throws IOException {
-    return in.storedFields();
-  }
+    StoredFields storedFields = in.storedFields();
+    return new StoredFields() {
+      @Override
+      public void prefetch(int docID) throws IOException {
+        storedFields.prefetch(docID);
+      }
 
-  // RedactionStoredFieldVisitor can be called here or in the RedactedFieldReader
-  @Override
-  public void document(int docID, StoredFieldVisitor visitor) throws IOException {
-    HashMap<String, FieldRedactionMetadata> fieldRedactionsMap = getFieldRedactionsMap();
-    visitor = new RedactionStoredFieldVisitor(visitor, fieldRedactionsMap);
-    in.document(docID, visitor);
+      @Override
+      public void document(int docID, StoredFieldVisitor visitor) throws IOException {
+        HashMap<String, FieldRedactionMetadata> fieldRedactionsMap = getFieldRedactionsMap();
+        storedFields.document(docID, new RedactionStoredFieldVisitor(visitor, fieldRedactionsMap));
+      }
+    };
   }
 
   @Override

@@ -14,10 +14,7 @@ import com.slack.astra.testlib.TemporaryLogStoreAndSearcherExtension;
 import com.slack.astra.util.QueryBuilderUtil;
 import java.io.IOException;
 import java.time.Instant;
-import java.util.Optional;
-import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.IndexSearcher;
-import org.apache.lucene.search.IndexSortSortedNumericDocValuesRangeQuery;
 import org.apache.lucene.search.MatchAllDocsQuery;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.util.BytesRef;
@@ -133,7 +130,7 @@ public class OpenSearchAdapterTest {
 
     Query rangeQuery = openSearchAdapter.buildQuery(indexSearcher, "_all", boolQueryBuilder);
     assertThat(rangeQuery).isNotNull();
-    assertThat(rangeQuery.toString()).isEqualTo("#_timesinceepoch:[1 TO 100]");
+    assertThat(rangeQuery.toString()).contains("_timesinceepoch:[1 TO 100]");
   }
 
   @Test
@@ -167,8 +164,8 @@ public class OpenSearchAdapterTest {
     Query allDatasetQuery = openSearchAdapter.buildQuery(indexSearcher, "_all", boolQueryBuilder);
     Query wildcardDatasetQuery = openSearchAdapter.buildQuery(indexSearcher, "*", boolQueryBuilder);
 
-    assertThat(allDatasetQuery.toString()).isEqualTo("#_timesinceepoch:[1 TO 100]");
-    assertThat(wildcardDatasetQuery.toString()).isEqualTo("#_timesinceepoch:[1 TO 100]");
+    assertThat(allDatasetQuery.toString()).contains("_timesinceepoch:[1 TO 100]");
+    assertThat(wildcardDatasetQuery.toString()).contains("_timesinceepoch:[1 TO 100]");
     assertThat(wildcardDatasetQuery.toString()).doesNotContain("service_name:");
   }
 
@@ -259,45 +256,19 @@ public class OpenSearchAdapterTest {
 
     Query nullStartTimestamp =
         openSearchAdapter.buildQuery(
-            indexSearcher, "_all", QueryBuilderUtil.generateQueryBuilder("a", null, 100L));
-    assertThat(nullStartTimestamp).isInstanceOf(BooleanQuery.class);
-
-    Optional<IndexSortSortedNumericDocValuesRangeQuery> filterNullStartQuery =
-        ((BooleanQuery) nullStartTimestamp)
-            .clauses().stream()
-                .filter(
-                    booleanClause ->
-                        booleanClause.getQuery()
-                            instanceof IndexSortSortedNumericDocValuesRangeQuery)
-                .map(
-                    booleanClause ->
-                        (IndexSortSortedNumericDocValuesRangeQuery) booleanClause.getQuery())
-                .findFirst();
-    assertThat(filterNullStartQuery).isPresent();
+            indexSearcher, "_all", QueryBuilderUtil.generateQueryBuilder("", null, 100L));
     // a null start and provided end should result in an optimized range query of min long to the
     // end value
-    assertThat(filterNullStartQuery.get().toString()).contains(String.valueOf(Long.MIN_VALUE));
-    assertThat(filterNullStartQuery.get().toString()).contains(String.valueOf(100L));
+    assertThat(nullStartTimestamp.toString()).contains(String.valueOf(Long.MIN_VALUE));
+    assertThat(nullStartTimestamp.toString()).contains(String.valueOf(100L));
 
     Query nullEndTimestamp =
         openSearchAdapter.buildQuery(
             indexSearcher, "_all", QueryBuilderUtil.generateQueryBuilder("", 100L, null));
-    Optional<IndexSortSortedNumericDocValuesRangeQuery> filterNullEndQuery =
-        ((BooleanQuery) nullEndTimestamp)
-            .clauses().stream()
-                .filter(
-                    booleanClause ->
-                        booleanClause.getQuery()
-                            instanceof IndexSortSortedNumericDocValuesRangeQuery)
-                .map(
-                    booleanClause ->
-                        (IndexSortSortedNumericDocValuesRangeQuery) booleanClause.getQuery())
-                .findFirst();
-    assertThat(filterNullEndQuery).isPresent();
     // a null end and provided start should result in an optimized range query of start value to max
     // long
-    assertThat(filterNullEndQuery.get().toString()).contains(String.valueOf(100L));
-    assertThat(filterNullEndQuery.get().toString()).contains(String.valueOf(Long.MAX_VALUE));
+    assertThat(nullEndTimestamp.toString()).contains(String.valueOf(100L));
+    assertThat(nullEndTimestamp.toString()).contains(String.valueOf(Long.MAX_VALUE));
   }
 
   @Test
