@@ -17,6 +17,7 @@ import org.apache.lucene.search.Query;
 import org.opensearch.cluster.ClusterModule;
 import org.opensearch.common.CheckedConsumer;
 import org.opensearch.common.compress.CompressedXContent;
+import org.opensearch.common.settings.Settings;
 import org.opensearch.common.util.BigArrays;
 import org.opensearch.common.xcontent.XContentFactory;
 import org.opensearch.core.common.bytes.BytesReference;
@@ -56,6 +57,7 @@ import org.opensearch.search.aggregations.metrics.SumAggregationBuilder;
 import org.opensearch.search.aggregations.metrics.ValueCountAggregationBuilder;
 import org.opensearch.search.aggregations.support.ValuesSourceRegistry;
 import org.opensearch.search.internal.SearchContext;
+import org.opensearch.threadpool.ThreadPool;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -69,6 +71,12 @@ public class OpenSearchAdapter {
 
   private static final IndexSettings indexSettings = AstraIndexSettings.getInstance();
   private static final SimilarityService similarityService = AstraSimilarityService.getInstance();
+  private static final ThreadPool FIELD_DATA_THREAD_POOL =
+      new ThreadPool(Settings.builder().put("node.name", "astra-opensearch-adapter").build());
+
+  static {
+    Runtime.getRuntime().addShutdownHook(new Thread(FIELD_DATA_THREAD_POOL::shutdown));
+  }
 
   private final MapperService mapperService;
 
@@ -310,9 +318,12 @@ public class OpenSearchAdapter {
                 OpenSearchAdapter.indexSettings,
                 new IndicesFieldDataCache(
                     OpenSearchAdapter.indexSettings.getSettings(),
-                    new IndexFieldDataCache.Listener() {}),
+                    new IndexFieldDataCache.Listener() {},
+                    null,
+                    FIELD_DATA_THREAD_POOL),
                 new NoneCircuitBreakerService(),
-                mapperService)
+                mapperService,
+                FIELD_DATA_THREAD_POOL)
             ::getForField,
         mapperService,
         OpenSearchAdapter.similarityService,

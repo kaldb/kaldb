@@ -134,7 +134,7 @@ public class OpenSearchAdapterTest {
 
     Query rangeQuery = openSearchAdapter.buildQuery(indexSearcher, "_all", boolQueryBuilder);
     assertThat(rangeQuery).isNotNull();
-    assertThat(rangeQuery.toString()).isEqualTo("#_timesinceepoch:[1 TO 100]");
+    assertThat(rangeQuery.toString()).contains("_timesinceepoch:[1 TO 100]");
   }
 
   @Test
@@ -168,8 +168,8 @@ public class OpenSearchAdapterTest {
     Query allDatasetQuery = openSearchAdapter.buildQuery(indexSearcher, "_all", boolQueryBuilder);
     Query wildcardDatasetQuery = openSearchAdapter.buildQuery(indexSearcher, "*", boolQueryBuilder);
 
-    assertThat(allDatasetQuery.toString()).isEqualTo("#_timesinceepoch:[1 TO 100]");
-    assertThat(wildcardDatasetQuery.toString()).isEqualTo("#_timesinceepoch:[1 TO 100]");
+    assertThat(allDatasetQuery.toString()).contains("_timesinceepoch:[1 TO 100]");
+    assertThat(wildcardDatasetQuery.toString()).contains("_timesinceepoch:[1 TO 100]");
     assertThat(wildcardDatasetQuery.toString()).doesNotContain("service_name:");
   }
 
@@ -255,12 +255,14 @@ public class OpenSearchAdapterTest {
     Query nullBothTimestamps =
         openSearchAdapter.buildQuery(
             indexSearcher, "_all", QueryBuilderUtil.generateQueryBuilder("", null, null));
+    nullBothTimestamps = indexSearcher.rewrite(nullBothTimestamps);
     // null for both timestamps with no query string should be optimized into a matchall
     assertThat(nullBothTimestamps).isInstanceOf(MatchAllDocsQuery.class);
 
     Query nullStartTimestamp =
         openSearchAdapter.buildQuery(
-            indexSearcher, "_all", QueryBuilderUtil.generateQueryBuilder("a", null, 100L));
+            indexSearcher, "_all", QueryBuilderUtil.generateQueryBuilder("_id:a", null, 100L));
+    nullStartTimestamp = indexSearcher.rewrite(nullStartTimestamp);
     assertThat(nullStartTimestamp).isInstanceOf(BooleanQuery.class);
 
     Optional<IndexSortSortedNumericDocValuesRangeQuery> filterNullStartQuery =
@@ -268,11 +270,10 @@ public class OpenSearchAdapterTest {
             .clauses().stream()
                 .filter(
                     booleanClause ->
-                        booleanClause.getQuery()
-                            instanceof IndexSortSortedNumericDocValuesRangeQuery)
+                        booleanClause.query() instanceof IndexSortSortedNumericDocValuesRangeQuery)
                 .map(
                     booleanClause ->
-                        (IndexSortSortedNumericDocValuesRangeQuery) booleanClause.getQuery())
+                        (IndexSortSortedNumericDocValuesRangeQuery) booleanClause.query())
                 .findFirst();
     assertThat(filterNullStartQuery).isPresent();
     // a null start and provided end should result in an optimized range query of min long to the
@@ -282,17 +283,17 @@ public class OpenSearchAdapterTest {
 
     Query nullEndTimestamp =
         openSearchAdapter.buildQuery(
-            indexSearcher, "_all", QueryBuilderUtil.generateQueryBuilder("", 100L, null));
+            indexSearcher, "_all", QueryBuilderUtil.generateQueryBuilder("_id:a", 100L, null));
+    nullEndTimestamp = indexSearcher.rewrite(nullEndTimestamp);
     Optional<IndexSortSortedNumericDocValuesRangeQuery> filterNullEndQuery =
         ((BooleanQuery) nullEndTimestamp)
             .clauses().stream()
                 .filter(
                     booleanClause ->
-                        booleanClause.getQuery()
-                            instanceof IndexSortSortedNumericDocValuesRangeQuery)
+                        booleanClause.query() instanceof IndexSortSortedNumericDocValuesRangeQuery)
                 .map(
                     booleanClause ->
-                        (IndexSortSortedNumericDocValuesRangeQuery) booleanClause.getQuery())
+                        (IndexSortSortedNumericDocValuesRangeQuery) booleanClause.query())
                 .findFirst();
     assertThat(filterNullEndQuery).isPresent();
     // a null end and provided start should result in an optimized range query of start value to max

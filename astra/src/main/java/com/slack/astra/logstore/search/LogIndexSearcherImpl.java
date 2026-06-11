@@ -34,6 +34,7 @@ import org.apache.lucene.search.Sort;
 import org.apache.lucene.search.SortField;
 import org.apache.lucene.search.SortField.Type;
 import org.apache.lucene.search.TopFieldCollector;
+import org.apache.lucene.search.TopFieldCollectorManager;
 import org.apache.lucene.search.TopFieldDocs;
 import org.apache.lucene.util.BytesRef;
 import org.opensearch.search.aggregations.InternalAggregations;
@@ -234,8 +235,9 @@ public class LogIndexSearcherImpl implements LogIndexSearcher<LogMessage> {
    */
   private TopFieldCollector buildTopFieldCollector(
       int howMany, int totalHitsThreshold, SearchQuery.HitSortPlan hitSortPlan) {
-    return TopFieldCollector.create(
-        new Sort(buildSortFields(hitSortPlan)), howMany, null, totalHitsThreshold);
+    return new TopFieldCollectorManager(
+            new Sort(buildSortFields(hitSortPlan)), howMany, null, totalHitsThreshold)
+        .newCollector();
   }
 
   private SortField[] buildSortFields(SearchQuery.HitSortPlan hitSortPlan) {

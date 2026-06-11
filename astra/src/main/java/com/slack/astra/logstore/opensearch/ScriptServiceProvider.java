@@ -1,9 +1,8 @@
 package com.slack.astra.logstore.opensearch;
 
-import java.nio.file.Path;
 import java.util.List;
 import org.opensearch.index.IndexSettings;
-import org.opensearch.painless.PainlessPlugin;
+import org.opensearch.painless.PainlessModulePlugin;
 import org.opensearch.plugins.PluginsService;
 import org.opensearch.plugins.ScriptPlugin;
 import org.opensearch.script.ScriptModule;
@@ -30,7 +29,7 @@ public class ScriptServiceProvider {
     IndexSettings indexSettings = AstraIndexSettings.getInstance();
     PluginsService pluginsService =
         new PluginsService(
-            indexSettings.getSettings(), Path.of(""), null, null, List.of(PainlessPlugin.class));
+            indexSettings.getSettings(), null, null, List.of(PainlessModulePlugin.class));
     ScriptModule scriptModule =
         new ScriptModule(
             pluginsService.updatedSettings(), pluginsService.filterPlugins(ScriptPlugin.class));

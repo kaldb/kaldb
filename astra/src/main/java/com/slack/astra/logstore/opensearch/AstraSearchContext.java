@@ -81,7 +81,7 @@ public class AstraSearchContext extends SearchContext {
             IndexSearcher.getDefaultQueryCache(),
             IndexSearcher.getDefaultQueryCachingPolicy(),
             false,
-            indexSearcher.getExecutor(),
+            null,
             this);
   }
 
@@ -97,7 +97,7 @@ public class AstraSearchContext extends SearchContext {
 
   @Override
   public boolean isCancelled() {
-    throw new NotImplementedException();
+    return false;
   }
 
   @Override
@@ -583,6 +583,11 @@ public class AstraSearchContext extends SearchContext {
   @Override
   public BucketCollectorProcessor bucketCollectorProcessor() {
     return bucketCollectorProcessor;
+  }
+
+  @Override
+  public int getTargetMaxSliceCount() {
+    return 1;
   }
 
   @Override
