@@ -1,0 +1,26 @@
+{
+  "size": 0,
+  "aggs": {
+    "sum_width_plus_0": {
+      "sum": {
+        "script": {
+          "source": "doc['ResolutionWidth'].value"
+        }
+      }
+    },
+    "sum_width_plus_1": {
+      "sum": {
+        "script": {
+          "source": "doc['ResolutionWidth'].value + 1"
+        }
+      }
+    },
+    "sum_width_plus_2": {
+      "sum": {
+        "script": {
+          "source": "doc['ResolutionWidth'].value + 2"
+        }
+      }
+    }
+  }
+}

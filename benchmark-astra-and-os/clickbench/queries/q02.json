@@ -1,0 +1,20 @@
+{
+  "size": 0,
+  "aggs": {
+    "adv_engine_sum": {
+      "sum": {
+        "field": "AdvEngineID"
+      }
+    },
+    "row_count": {
+      "value_count": {
+        "field": "@timestamp"
+      }
+    },
+    "avg_resolution_width": {
+      "avg": {
+        "field": "ResolutionWidth"
+      }
+    }
+  }
+}

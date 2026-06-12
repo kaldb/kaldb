@@ -1,0 +1,50 @@
+{
+  "size": 0,
+  "query": {
+    "bool": {
+      "filter": [
+        {
+          "term": {
+            "CounterID": 62
+          }
+        },
+        {
+          "range": {
+            "EventDate": {
+              "gte": "2013-07-01T00:00:00Z",
+              "lte": "2013-07-31T23:59:59Z"
+            }
+          }
+        }
+      ],
+      "must_not": [
+        {
+          "term": {
+            "DontCountHits": true
+          }
+        },
+        {
+          "term": {
+            "IsRefresh": true
+          }
+        },
+        {
+          "term": {
+            "URL": ""
+          }
+        }
+      ]
+    }
+  },
+  "aggs": {
+    "urls": {
+      "terms": {
+        "field": "URL",
+        "size": 10,
+        "order": {
+          "_count": "desc"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "size": 0,
+  "aggs": {
+    "min_event_date": {
+      "min": {
+        "field": "EventDate"
+      }
+    },
+    "max_event_date": {
+      "max": {
+        "field": "EventDate"
+      }
+    }
+  }
+}

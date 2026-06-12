@@ -1,0 +1,17 @@
+{
+  "size": 0,
+  "query": {
+    "wildcard": {
+      "URL": {
+        "value": "*google*"
+      }
+    }
+  },
+  "aggs": {
+    "row_count": {
+      "value_count": {
+        "field": "@timestamp"
+      }
+    }
+  }
+}

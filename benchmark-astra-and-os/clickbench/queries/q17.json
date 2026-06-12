@@ -1,0 +1,18 @@
+{
+  "size": 0,
+  "aggs": {
+    "user_phrases": {
+      "multi_terms": {
+        "terms": [
+          {
+            "field": "UserID"
+          },
+          {
+            "field": "SearchPhrase"
+          }
+        ],
+        "size": 10
+      }
+    }
+  }
+}

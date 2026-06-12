@@ -1,0 +1,6 @@
+benchmark-astra-and-os/data/
+benchmark-astra-and-os/history/
+benchmark-astra-and-os/logs/
+benchmark-astra-and-os/output/
+benchmark-astra-and-os/results/
+.git/

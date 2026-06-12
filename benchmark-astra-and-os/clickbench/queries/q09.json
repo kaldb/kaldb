@@ -1,0 +1,31 @@
+{
+  "size": 0,
+  "aggs": {
+    "regions": {
+      "terms": {
+        "field": "RegionID",
+        "size": 10,
+        "order": {
+          "_count": "desc"
+        }
+      },
+      "aggs": {
+        "adv_engine_sum": {
+          "sum": {
+            "field": "AdvEngineID"
+          }
+        },
+        "avg_resolution_width": {
+          "avg": {
+            "field": "ResolutionWidth"
+          }
+        },
+        "users": {
+          "cardinality": {
+            "field": "UserID"
+          }
+        }
+      }
+    }
+  }
+}

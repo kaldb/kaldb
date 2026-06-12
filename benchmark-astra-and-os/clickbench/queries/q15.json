@@ -1,0 +1,14 @@
+{
+  "size": 0,
+  "aggs": {
+    "users": {
+      "terms": {
+        "field": "UserID",
+        "size": 1,
+        "order": {
+          "_count": "desc"
+        }
+      }
+    }
+  }
+}

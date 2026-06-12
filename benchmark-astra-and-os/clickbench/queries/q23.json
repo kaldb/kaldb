@@ -1,0 +1,17 @@
+{
+  "size": 10,
+  "query": {
+    "wildcard": {
+      "URL": {
+        "value": "*google*"
+      }
+    }
+  },
+  "sort": [
+    {
+      "@timestamp": {
+        "order": "asc"
+      }
+    }
+  ]
+}

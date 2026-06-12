@@ -1,0 +1,32 @@
+{
+  "size": 0,
+  "query": {
+    "bool": {
+      "must_not": [
+        {
+          "term": {
+            "SearchPhrase": ""
+          }
+        }
+      ]
+    }
+  },
+  "aggs": {
+    "phrases": {
+      "terms": {
+        "field": "SearchPhrase",
+        "size": 10,
+        "order": {
+          "users": "desc"
+        }
+      },
+      "aggs": {
+        "users": {
+          "cardinality": {
+            "field": "UserID"
+          }
+        }
+      }
+    }
+  }
+}

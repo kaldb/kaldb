@@ -1,0 +1,73 @@
+{
+  "size": 0,
+  "query": {
+    "bool": {
+      "filter": [
+        {
+          "term": {
+            "CounterID": 62
+          }
+        },
+        {
+          "range": {
+            "EventDate": {
+              "gte": "2013-07-01T00:00:00Z",
+              "lte": "2013-07-31T23:59:59Z"
+            }
+          }
+        }
+      ],
+      "must_not": [
+        {
+          "term": {
+            "IsRefresh": true
+          }
+        }
+      ]
+    }
+  },
+  "aggs": {
+    "source_destinations": {
+      "multi_terms": {
+        "terms": [
+          {
+            "field": "TraficSourceID"
+          },
+          {
+            "field": "SearchEngineID"
+          },
+          {
+            "field": "AdvEngineID"
+          },
+          {
+            "script": {
+              "source": "doc['SearchEngineID'].value == 0 && doc['AdvEngineID'].value == 0 ? doc['Referer'].value : ''"
+            }
+          },
+          {
+            "field": "URL"
+          }
+        ],
+        "size": 1010,
+        "order": {
+          "_count": "desc"
+        }
+      },
+      "aggs": {
+        "page": {
+          "bucket_sort": {
+            "sort": [
+              {
+                "_count": {
+                  "order": "desc"
+                }
+              }
+            ],
+            "from": 1000,
+            "size": 10
+          }
+        }
+      }
+    }
+  }
+}

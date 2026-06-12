@@ -1,0 +1,39 @@
+{
+  "size": 0,
+  "query": {
+    "bool": {
+      "must_not": [
+        {
+          "term": {
+            "MobilePhoneModel": ""
+          }
+        }
+      ]
+    }
+  },
+  "aggs": {
+    "phones": {
+      "multi_terms": {
+        "terms": [
+          {
+            "field": "MobilePhone"
+          },
+          {
+            "field": "MobilePhoneModel"
+          }
+        ],
+        "size": 10,
+        "order": {
+          "users": "desc"
+        }
+      },
+      "aggs": {
+        "users": {
+          "cardinality": {
+            "field": "UserID"
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "size": 0,
+  "query": {
+    "bool": {
+      "must_not": [
+        {
+          "term": {
+            "Referer": ""
+          }
+        }
+      ]
+    }
+  },
+  "aggs": {
+    "referer_domains": {
+      "terms": {
+        "script": {
+          "source": "String referer = doc['Referer'].value; int start = referer.indexOf('://'); start = start >= 0 ? start + 3 : 0; if (referer.startsWith('www.', start)) { start += 4; } int end = referer.indexOf('/', start); return referer.substring(start, end >= 0 ? end : referer.length());"
+        },
+        "size": 25,
+        "min_doc_count": 100001,
+        "order": {
+          "avg_referer_length": "desc"
+        }
+      },
+      "aggs": {
+        "avg_referer_length": {
+          "avg": {
+            "script": {
+              "source": "doc['Referer'].value.length()"
+            }
+          }
+        }
+      }
+    }
+  }
+}

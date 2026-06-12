@@ -1,0 +1,25 @@
+{
+  "size": 0,
+  "query": {
+    "bool": {
+      "must_not": [
+        {
+          "term": {
+            "SearchPhrase": ""
+          }
+        }
+      ]
+    }
+  },
+  "aggs": {
+    "phrases": {
+      "terms": {
+        "field": "SearchPhrase",
+        "size": 10,
+        "order": {
+          "_count": "desc"
+        }
+      }
+    }
+  }
+}

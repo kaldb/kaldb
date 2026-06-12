@@ -1,0 +1,25 @@
+{
+  "size": 0,
+  "query": {
+    "bool": {
+      "must_not": [
+        {
+          "term": {
+            "AdvEngineID": 0
+          }
+        }
+      ]
+    }
+  },
+  "aggs": {
+    "adv_engines": {
+      "terms": {
+        "field": "AdvEngineID",
+        "size": 10,
+        "order": {
+          "_count": "desc"
+        }
+      }
+    }
+  }
+}

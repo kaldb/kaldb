@@ -1,0 +1,46 @@
+{
+  "size": 0,
+  "query": {
+    "bool": {
+      "must_not": [
+        {
+          "term": {
+            "SearchPhrase": ""
+          }
+        }
+      ]
+    }
+  },
+  "aggs": {
+    "watch_clients": {
+      "multi_terms": {
+        "terms": [
+          {
+            "field": "WatchID"
+          },
+          {
+            "field": "ClientIP"
+          }
+        ],
+        "size": 10,
+        "order": {
+          "_count": "desc"
+        }
+      },
+      "aggs": {
+        "refreshes": {
+          "sum": {
+            "script": {
+              "source": "doc['IsRefresh'].value ? 1 : 0"
+            }
+          }
+        },
+        "avg_resolution_width": {
+          "avg": {
+            "field": "ResolutionWidth"
+          }
+        }
+      }
+    }
+  }
+}
