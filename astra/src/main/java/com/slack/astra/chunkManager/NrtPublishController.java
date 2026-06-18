@@ -2,6 +2,7 @@ package com.slack.astra.chunkManager;
 
 import com.slack.astra.blobfs.nrt.NrtSnapshotPublisher;
 import com.slack.astra.chunk.ReadWriteChunk;
+import com.slack.astra.metadata.snapshot.SnapshotMetadata;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.OptionalLong;
@@ -66,10 +67,27 @@ final class NrtPublishController<T> {
     }
 
     try {
-      currentChunk.publishNrtSnapshot(
-          nrtSnapshotPublisher, activeNrtStartOffsetInclusive.getAsLong());
+      SnapshotMetadata liveSnapshotMetadata = currentChunk.getLiveSnapshotMetadata();
+      SnapshotMetadata currentLiveSnapshotMetadata =
+          new SnapshotMetadata(
+              liveSnapshotMetadata.snapshotId,
+              currentChunk.info().getDataStartTimeEpochMs(),
+              currentChunk.info().getDataEndTimeEpochMs(),
+              currentChunk.info().getMaxOffset(),
+              currentChunk.info().getKafkaPartitionId(),
+              liveSnapshotMetadata.sizeInBytesOnDisk,
+              liveSnapshotMetadata.snapshotType,
+              liveSnapshotMetadata.indexType,
+              liveSnapshotMetadata.snapshotPath,
+              liveSnapshotMetadata.snapshotGeneration,
+              liveSnapshotMetadata.version);
+      currentChunk.setLiveSnapshotMetadata(
+          nrtSnapshotPublisher.publish(
+              currentChunk.getLogStore(),
+              currentLiveSnapshotMetadata,
+              activeNrtStartOffsetInclusive.getAsLong()));
       lastNrtPublishEpochMs = nowEpochMs;
-      lastNrtPublishedOffset = currentMaxOffset;
+      lastNrtPublishedOffset = currentChunk.info().getMaxOffset();
     } catch (RuntimeException e) {
       LOG.warn("Failed to publish NRT snapshot for chunk={}", currentChunk.info(), e);
     }

@@ -5,7 +5,6 @@ import static com.slack.astra.writer.SpanFormatter.isValidTimestamp;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.slack.astra.blobfs.BlobStore;
-import com.slack.astra.blobfs.nrt.NrtSnapshotPublisher;
 import com.slack.astra.logstore.LogStore;
 import com.slack.astra.logstore.LuceneIndexStoreImpl;
 import com.slack.astra.logstore.search.LogIndexSearcher;
@@ -197,25 +196,16 @@ public abstract class ReadWriteChunk<T> implements Chunk<T> {
     this.readOnly = readOnly;
   }
 
-  /** Publishes the current live snapshot point for cache-side NRT refresh. */
-  public SnapshotMetadata publishNrtSnapshot(
-      NrtSnapshotPublisher publisher, long startOffsetInclusive) {
-    SnapshotMetadata currentLiveSnapshotMetadata =
-        new SnapshotMetadata(
-            liveSnapshotMetadata.snapshotId,
-            chunkInfo.getDataStartTimeEpochMs(),
-            chunkInfo.getDataEndTimeEpochMs(),
-            chunkInfo.getMaxOffset(),
-            chunkInfo.getKafkaPartitionId(),
-            liveSnapshotMetadata.sizeInBytesOnDisk,
-            liveSnapshotMetadata.snapshotType,
-            liveSnapshotMetadata.indexType,
-            liveSnapshotMetadata.snapshotPath,
-            liveSnapshotMetadata.snapshotGeneration,
-            liveSnapshotMetadata.version);
-    liveSnapshotMetadata =
-        publisher.publish(logStore, currentLiveSnapshotMetadata, startOffsetInclusive);
+  public LogStore getLogStore() {
+    return logStore;
+  }
+
+  public SnapshotMetadata getLiveSnapshotMetadata() {
     return liveSnapshotMetadata;
+  }
+
+  public void setLiveSnapshotMetadata(SnapshotMetadata liveSnapshotMetadata) {
+    this.liveSnapshotMetadata = liveSnapshotMetadata;
   }
 
   @VisibleForTesting
