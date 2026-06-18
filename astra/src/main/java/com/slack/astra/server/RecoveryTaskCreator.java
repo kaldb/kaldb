@@ -9,8 +9,6 @@ import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.JdkFutureAdapters;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
-import com.slack.astra.blobfs.BlobStore;
-import com.slack.astra.blobfs.nrt.NrtBlobStore;
 import com.slack.astra.metadata.recovery.RecoveryTaskMetadata;
 import com.slack.astra.metadata.recovery.RecoveryTaskMetadataStore;
 import com.slack.astra.metadata.snapshot.SnapshotMetadata;
@@ -21,8 +19,6 @@ import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Objects;
-import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -47,7 +43,6 @@ public class RecoveryTaskCreator {
   private final String partitionId;
   private final long maxOffsetDelay;
   private final long maxMessagesPerRecoveryTask;
-  private final NrtBlobStore nrtBlobStore;
 
   private final Counter snapshotDeleteSuccess;
   private final Counter snapshotDeleteFailed;
@@ -60,24 +55,6 @@ public class RecoveryTaskCreator {
       long maxOffsetDelay,
       long maxMessagesPerRecoveryTask,
       MeterRegistry meterRegistry) {
-    this(
-        snapshotMetadataStore,
-        recoveryTaskMetadataStore,
-        partitionId,
-        maxOffsetDelay,
-        maxMessagesPerRecoveryTask,
-        meterRegistry,
-        null);
-  }
-
-  public RecoveryTaskCreator(
-      SnapshotMetadataStore snapshotMetadataStore,
-      RecoveryTaskMetadataStore recoveryTaskMetadataStore,
-      String partitionId,
-      long maxOffsetDelay,
-      long maxMessagesPerRecoveryTask,
-      MeterRegistry meterRegistry,
-      BlobStore blobStore) {
     checkArgument(
         partitionId != null && !partitionId.isEmpty(), "partitionId shouldn't be null or empty");
     checkArgument(maxOffsetDelay > 0, "maxOffsetDelay should be a positive number");
@@ -88,7 +65,6 @@ public class RecoveryTaskCreator {
     this.partitionId = partitionId;
     this.maxOffsetDelay = maxOffsetDelay;
     this.maxMessagesPerRecoveryTask = maxMessagesPerRecoveryTask;
-    this.nrtBlobStore = blobStore == null ? null : new NrtBlobStore(blobStore);
 
     snapshotDeleteSuccess = meterRegistry.counter(STALE_SNAPSHOT_DELETE_SUCCESS);
     snapshotDeleteFailed = meterRegistry.counter(STALE_SNAPSHOT_DELETE_FAILED);
@@ -213,16 +189,16 @@ public class RecoveryTaskCreator {
         getHighestDurableOffsetForPartition(
             nonLiveSnapshotsForPartition, recoveryTasks, partitionId);
 
-    Optional<SnapshotMetadata> latestValidLiveSnapshot =
-        getLatestValidLiveSnapshot(snapshotsForPartition);
-    if (latestValidLiveSnapshot.isPresent()
-        && latestValidLiveSnapshot.get().maxOffset > highestDurableOffsetForPartition) {
-      highestDurableOffsetForPartition = latestValidLiveSnapshot.get().maxOffset;
+    SnapshotMetadata latestPublishedLiveSnapshot =
+        getLatestPublishedLiveSnapshot(snapshotsForPartition);
+    if (latestPublishedLiveSnapshot != null
+        && latestPublishedLiveSnapshot.maxOffset > highestDurableOffsetForPartition) {
+      highestDurableOffsetForPartition = latestPublishedLiveSnapshot.maxOffset;
       LOG.info(
           "Using NRT live snapshot {} generation {} offset {} as durable seed for partition {}",
-          latestValidLiveSnapshot.get().snapshotId,
-          latestValidLiveSnapshot.get().snapshotGeneration,
-          latestValidLiveSnapshot.get().maxOffset,
+          latestPublishedLiveSnapshot.snapshotId,
+          latestPublishedLiveSnapshot.snapshotGeneration,
+          latestPublishedLiveSnapshot.maxOffset,
           partitionId);
     }
 
@@ -318,11 +294,7 @@ public class RecoveryTaskCreator {
   }
 
   @VisibleForTesting
-  Optional<SnapshotMetadata> getLatestValidLiveSnapshot(List<SnapshotMetadata> snapshots) {
-    if (nrtBlobStore == null) {
-      return Optional.empty();
-    }
-
+  SnapshotMetadata getLatestPublishedLiveSnapshot(List<SnapshotMetadata> snapshots) {
     return snapshots.stream()
         .filter(SnapshotMetadata::isLive)
         .filter(snapshotMetadata -> snapshotMetadata.snapshotPath != null)
@@ -332,24 +304,8 @@ public class RecoveryTaskCreator {
                     (SnapshotMetadata snapshotMetadata) -> snapshotMetadata.snapshotGeneration)
                 .thenComparingLong(snapshotMetadata -> snapshotMetadata.maxOffset)
                 .reversed())
-        .filter(this::isValidNrtSnapshot)
-        .findFirst();
-  }
-
-  private boolean isValidNrtSnapshot(SnapshotMetadata snapshotMetadata) {
-    try {
-      NrtBlobStore.NrtManifest manifest = nrtBlobStore.readManifest(snapshotMetadata.snapshotPath);
-      if (manifest == null) {
-        return false;
-      }
-      return Objects.equals(manifest.snapshotId(), snapshotMetadata.snapshotId)
-          && Objects.equals(manifest.partitionId(), snapshotMetadata.partitionId)
-          && manifest.manifestGeneration() == snapshotMetadata.snapshotGeneration
-          && manifest.maxIndexedOffsetInclusive() == snapshotMetadata.maxOffset;
-    } catch (RuntimeException e) {
-      LOG.warn("Unable to validate NRT snapshot {}", snapshotMetadata, e);
-      return false;
-    }
+        .findFirst()
+        .orElse(null);
   }
 
   /**

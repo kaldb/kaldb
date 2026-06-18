@@ -19,9 +19,6 @@ import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.when;
 
 import brave.Tracing;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.slack.astra.blobfs.BlobStore;
-import com.slack.astra.blobfs.nrt.NrtBlobStore;
 import com.slack.astra.chunk.ChunkInfo;
 import com.slack.astra.metadata.core.AstraMetadataTestUtils;
 import com.slack.astra.metadata.core.CuratorBuilder;
@@ -873,9 +870,7 @@ public class RecoveryTaskCreatorTest {
   }
 
   @Test
-  public void testDetermineStartingOffsetUsesValidNrtSeedWhenNewerThanSealedSnapshot()
-      throws Exception {
-    BlobStore blobStore = mock(BlobStore.class);
+  public void testDetermineStartingOffsetUsesPublishedLiveSeedWhenNewerThanSealedSnapshot() {
     RecoveryTaskCreator recoveryTaskCreator =
         new RecoveryTaskCreator(
             snapshotMetadataStore,
@@ -883,8 +878,7 @@ public class RecoveryTaskCreatorTest {
             partitionId,
             100,
             TEST_MAX_MESSAGES_PER_RECOVERY_TASK,
-            meterRegistry,
-            blobStore);
+            meterRegistry);
 
     long startTime = Instant.now().toEpochMilli();
     SnapshotMetadata sealedSnapshot =
@@ -905,16 +899,11 @@ public class RecoveryTaskCreatorTest {
     snapshotMetadataStore.createSync(sealedSnapshot);
     snapshotMetadataStore.createSync(liveSnapshot);
 
-    when(blobStore.readFileData(liveSnapshot.snapshotPath, false))
-        .thenReturn(manifestJson(liveSnapshot));
-
     assertThat(recoveryTaskCreator.determineStartingOffset(160, 0, indexerConfig)).isEqualTo(151);
   }
 
   @Test
-  public void testDetermineStartingOffsetFallsBackWhenNrtManifestMissingStaleOrInvalid()
-      throws Exception {
-    BlobStore blobStore = mock(BlobStore.class);
+  public void testDetermineStartingOffsetUsesLatestPublishedLiveSeed() {
     RecoveryTaskCreator recoveryTaskCreator =
         new RecoveryTaskCreator(
             snapshotMetadataStore,
@@ -922,62 +911,56 @@ public class RecoveryTaskCreatorTest {
             partitionId,
             100,
             TEST_MAX_MESSAGES_PER_RECOVERY_TASK,
-            meterRegistry,
-            blobStore);
+            meterRegistry);
 
     long startTime = Instant.now().toEpochMilli();
     SnapshotMetadata sealedSnapshot =
         new SnapshotMetadata("sealed", startTime, startTime + 10, 100, partitionId, 100);
-    SnapshotMetadata missingManifestSnapshot =
+    SnapshotMetadata olderPublishedLiveSnapshot =
         new SnapshotMetadata(
-            "live-missing",
+            "live-published-old",
             startTime,
             startTime + 10,
             140,
+            partitionId,
+            0,
+            SnapshotMetadata.SnapshotType.LIVE,
+            SnapshotMetadata.IndexType.LUCENE,
+            "nrt/live-published-old",
+            2,
+            SnapshotMetadata.DEFAULT_VERSION);
+    SnapshotMetadata latestPublishedLiveSnapshot =
+        new SnapshotMetadata(
+            "live-published-new",
+            startTime,
+            startTime + 10,
+            145,
+            partitionId,
+            0,
+            SnapshotMetadata.SnapshotType.LIVE,
+            SnapshotMetadata.IndexType.LUCENE,
+            "nrt/live-published-new",
+            3,
+            SnapshotMetadata.DEFAULT_VERSION);
+    SnapshotMetadata unpublishedLiveSnapshot =
+        new SnapshotMetadata(
+            "live-unpublished",
+            startTime,
+            startTime + 10,
+            160,
             partitionId,
             0,
             SnapshotMetadata.SnapshotType.LIVE,
             SnapshotMetadata.IndexType.LUCENE,
             "",
-            2,
-            SnapshotMetadata.DEFAULT_VERSION);
-    SnapshotMetadata staleManifestSnapshot =
-        new SnapshotMetadata(
-            "live-stale",
-            startTime,
-            startTime + 10,
-            140,
-            partitionId,
             0,
-            SnapshotMetadata.SnapshotType.LIVE,
-            SnapshotMetadata.IndexType.LUCENE,
-            "nrt/live-stale",
-            2,
-            SnapshotMetadata.DEFAULT_VERSION);
-    SnapshotMetadata invalidManifestSnapshot =
-        new SnapshotMetadata(
-            "live-invalid",
-            startTime,
-            startTime + 10,
-            140,
-            partitionId,
-            0,
-            SnapshotMetadata.SnapshotType.LIVE,
-            SnapshotMetadata.IndexType.LUCENE,
-            "nrt/live-invalid",
-            3,
             SnapshotMetadata.DEFAULT_VERSION);
     snapshotMetadataStore.createSync(sealedSnapshot);
-    snapshotMetadataStore.createSync(missingManifestSnapshot);
-    snapshotMetadataStore.createSync(staleManifestSnapshot);
-    snapshotMetadataStore.createSync(invalidManifestSnapshot);
+    snapshotMetadataStore.createSync(olderPublishedLiveSnapshot);
+    snapshotMetadataStore.createSync(latestPublishedLiveSnapshot);
+    snapshotMetadataStore.createSync(unpublishedLiveSnapshot);
 
-    when(blobStore.readFileData(staleManifestSnapshot.snapshotPath, false))
-        .thenReturn(manifestJson(staleManifestSnapshot, "live-stale", partitionId, 2, 90));
-    when(blobStore.readFileData(invalidManifestSnapshot.snapshotPath, false))
-        .thenReturn(manifestJson(invalidManifestSnapshot, "different-id", partitionId, 3, 140));
-
-    assertThat(recoveryTaskCreator.determineStartingOffset(160, 0, indexerConfig)).isEqualTo(101);
+    assertThat(recoveryTaskCreator.determineStartingOffset(160, 0, indexerConfig)).isEqualTo(146);
   }
 
   @Test
@@ -1823,40 +1806,5 @@ public class RecoveryTaskCreatorTest {
         .containsExactly(48, 499, 499);
     assertThat(recoveryTasks1.stream().filter(r -> r.partitionId.equals(partitionId)).count())
         .isEqualTo(3);
-  }
-
-  private static String manifestJson(SnapshotMetadata snapshotMetadata) throws Exception {
-    return manifestJson(
-        snapshotMetadata,
-        snapshotMetadata.snapshotId,
-        snapshotMetadata.partitionId,
-        snapshotMetadata.snapshotGeneration,
-        snapshotMetadata.maxOffset);
-  }
-
-  private static String manifestJson(
-      SnapshotMetadata snapshotMetadata,
-      String snapshotId,
-      String partitionId,
-      long manifestGeneration,
-      long maxIndexedOffsetInclusive)
-      throws Exception {
-    NrtBlobStore.NrtManifest manifest =
-        new NrtBlobStore.NrtManifest(
-            1,
-            snapshotId,
-            partitionId,
-            "writer-1",
-            manifestGeneration,
-            Instant.now().toEpochMilli(),
-            1,
-            0,
-            maxIndexedOffsetInclusive,
-            2,
-            snapshotMetadata.startTimeEpochMs,
-            snapshotMetadata.endTimeEpochMs,
-            new NrtBlobStore.FileEntry("schema.json", "files/schema.json", 1, "a"),
-            List.of(new NrtBlobStore.FileEntry("segments_1", "files/segments_1", 1, "b")));
-    return new ObjectMapper().writeValueAsString(manifest);
   }
 }

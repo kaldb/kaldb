@@ -360,7 +360,6 @@ public class ReadOnlyChunkImpl<T> implements Chunk<T> {
                 + snapshotMetadata.snapshotId);
       }
 
-      validateLiveManifest(manifest);
       blobStore.download(
           NrtBlobStore.filesPath(snapshotMetadata.partitionId, snapshotMetadata.snapshotId),
           stagingDirectory);
@@ -431,25 +430,6 @@ public class ReadOnlyChunkImpl<T> implements Chunk<T> {
     assertFileEntryMatches(schemaPath, manifest.schemaFile());
     for (NrtBlobStore.FileEntry fileEntry : manifest.files()) {
       assertFileEntryMatches(stagingDirectory.resolve(fileEntry.name()), fileEntry);
-    }
-  }
-
-  private void validateLiveManifest(NrtBlobStore.NrtManifest manifest) {
-    if (!Objects.equals(manifest.snapshotId(), snapshotMetadata.snapshotId)) {
-      throw new IllegalArgumentException(
-          "NRT manifest snapshotId does not match live snapshot metadata");
-    }
-    if (!Objects.equals(manifest.partitionId(), snapshotMetadata.partitionId)) {
-      throw new IllegalArgumentException(
-          "NRT manifest partitionId does not match live snapshot metadata");
-    }
-    if (manifest.manifestGeneration() != snapshotMetadata.snapshotGeneration) {
-      throw new IllegalArgumentException(
-          "NRT manifest generation does not match live snapshot metadata");
-    }
-    if (manifest.maxIndexedOffsetInclusive() != snapshotMetadata.maxOffset) {
-      throw new IllegalArgumentException(
-          "NRT manifest offset does not match live snapshot metadata");
     }
   }
 

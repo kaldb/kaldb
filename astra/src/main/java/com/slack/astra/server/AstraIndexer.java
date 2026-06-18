@@ -123,22 +123,13 @@ public class AstraIndexer extends AbstractExecutionThreadService {
     // TODO: Move this to it's own config var.
     final long maxMessagesPerRecoveryTask = indexerConfig.getMaxMessagesPerChunk();
     RecoveryTaskCreator recoveryTaskCreator =
-        blobStore == null
-            ? new RecoveryTaskCreator(
-                snapshotMetadataStore,
-                recoveryTaskMetadataStore,
-                partitionId,
-                maxOffsetDelay,
-                maxMessagesPerRecoveryTask,
-                meterRegistry)
-            : new RecoveryTaskCreator(
-                snapshotMetadataStore,
-                recoveryTaskMetadataStore,
-                partitionId,
-                maxOffsetDelay,
-                maxMessagesPerRecoveryTask,
-                meterRegistry,
-                blobStore);
+        new RecoveryTaskCreator(
+            snapshotMetadataStore,
+            recoveryTaskMetadataStore,
+            partitionId,
+            maxOffsetDelay,
+            maxMessagesPerRecoveryTask,
+            meterRegistry);
 
     long currentEndOffsetForPartition = kafkaConsumer.getEndOffSetForPartition();
     long currentBeginningOffsetForPartition = kafkaConsumer.getBeginningOffsetForPartition();
