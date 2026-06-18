@@ -74,12 +74,6 @@ public class RecoveryTaskCreator {
   @VisibleForTesting
   public static List<SnapshotMetadata> getStaleLiveSnapshots(
       List<SnapshotMetadata> snapshots, String partitionId) {
-    // Filter stale snapshots for partition.
-    if (partitionId == null) {
-      LOG.warn("PartitionId can't be null.");
-      return List.of();
-    }
-
     return snapshots.stream()
         .filter(snapshotMetadata -> snapshotMetadata.partitionId.equals(partitionId))
         .filter(SnapshotMetadata::isLive)
@@ -168,6 +162,11 @@ public class RecoveryTaskCreator {
       long currentEndOffsetForPartition,
       long currentBeginningOffsetForPartition,
       AstraConfigs.IndexerConfig indexerConfig) {
+    // Filter stale snapshots for partition.
+    if (partitionId == null) {
+      LOG.warn("PartitionId can't be null.");
+    }
+
     List<SnapshotMetadata> snapshots = snapshotMetadataStore.listSync();
     List<SnapshotMetadata> snapshotsForPartition =
         snapshots.stream()
