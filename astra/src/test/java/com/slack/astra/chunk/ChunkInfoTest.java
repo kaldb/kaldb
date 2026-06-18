@@ -9,7 +9,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
 
 import com.slack.astra.metadata.snapshot.SnapshotMetadata;
-import com.slack.astra.metadata.snapshot.SnapshotMetadata.SnapshotType;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import org.junit.jupiter.api.Test;
@@ -352,7 +351,8 @@ public class ChunkInfoTest {
             1000,
             TEST_KAFKA_PARTITION_ID,
             0);
-    SnapshotMetadata snapshotMetadata = toSnapshotMetadata(chunkInfo, "", SnapshotType.LIVE);
+    SnapshotMetadata snapshotMetadata =
+        toSnapshotMetadata(chunkInfo, ReadWriteChunk.LIVE_SNAPSHOT_PREFIX);
 
     assertThat(snapshotMetadata.isLive()).isTrue();
     assertThat(snapshotMetadata.name).startsWith(ReadWriteChunk.LIVE_SNAPSHOT_PREFIX);

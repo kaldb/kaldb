@@ -33,7 +33,6 @@ import com.slack.astra.metadata.dataset.DatasetPartitionMetadata;
 import com.slack.astra.metadata.search.SearchMetadata;
 import com.slack.astra.metadata.search.SearchMetadataStore;
 import com.slack.astra.metadata.snapshot.SnapshotMetadata;
-import com.slack.astra.metadata.snapshot.SnapshotMetadata.SnapshotType;
 import com.slack.astra.metadata.snapshot.SnapshotMetadataStore;
 import com.slack.astra.proto.config.AstraConfigs;
 import com.slack.astra.proto.schema.Schema;
@@ -1504,7 +1503,9 @@ public class AstraDistributedQueryServiceTest {
             partition,
             0);
     SnapshotMetadata snapshotMetadata =
-        toSnapshotMetadata(chunkInfo, "", isLive ? SnapshotType.LIVE : SnapshotType.SEALED);
+        isLive
+            ? toSnapshotMetadata(chunkInfo, LIVE_SNAPSHOT_PREFIX)
+            : toSnapshotMetadata(chunkInfo, "");
 
     snapshotMetadataStore.createSync(snapshotMetadata);
 

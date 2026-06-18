@@ -3,8 +3,6 @@ package com.slack.astra.chunk;
 import static com.slack.astra.util.ArgValidationUtils.ensureTrue;
 
 import com.slack.astra.metadata.snapshot.SnapshotMetadata;
-import com.slack.astra.metadata.snapshot.SnapshotMetadata.IndexType;
-import com.slack.astra.metadata.snapshot.SnapshotMetadata.SnapshotType;
 import java.util.Objects;
 
 /**
@@ -21,7 +19,6 @@ import java.util.Objects;
 public class ChunkInfo {
   public static final long MAX_FUTURE_TIME = Long.MAX_VALUE;
   public static final int DEFAULT_MAX_OFFSET = 0;
-  private static final String LIVE_SNAPSHOT_PREFIX = "LIVE_";
 
   public static ChunkInfo fromSnapshotMetadata(SnapshotMetadata snapshotMetadata) {
     return new ChunkInfo(
@@ -37,24 +34,13 @@ public class ChunkInfo {
   }
 
   public static SnapshotMetadata toSnapshotMetadata(ChunkInfo chunkInfo, String chunkPrefix) {
-    return toSnapshotMetadata(chunkInfo, chunkPrefix, SnapshotType.SEALED);
-  }
-
-  public static SnapshotMetadata toSnapshotMetadata(
-      ChunkInfo chunkInfo, String chunkPrefix, SnapshotType snapshotType) {
-    String snapshotPrefix = snapshotType == SnapshotType.LIVE ? LIVE_SNAPSHOT_PREFIX : "";
     return new SnapshotMetadata(
-        chunkPrefix + snapshotPrefix + chunkInfo.chunkId,
+        chunkPrefix + chunkInfo.chunkId,
         chunkInfo.getDataStartTimeEpochMs(),
         chunkInfo.getDataEndTimeEpochMs(),
         chunkInfo.maxOffset,
         chunkInfo.kafkaPartitionId,
-        chunkInfo.sizeInBytesOnDisk,
-        snapshotType,
-        IndexType.LUCENE,
-        "",
-        0,
-        SnapshotMetadata.DEFAULT_VERSION);
+        chunkInfo.sizeInBytesOnDisk);
   }
 
   /* A unique identifier for a the chunk. */
