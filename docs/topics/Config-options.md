@@ -111,8 +111,9 @@ indexerConfig:
   nrtEnabled: false
 ```
 
-Enables near-real-time live snapshot manifest publishing from the indexer. This should remain
-disabled until the corresponding cache live replica loading path is enabled.
+Enables near-real-time live snapshot manifest publishing from the indexer. When enabled, the
+active indexer chunk publishes manifest-backed live snapshots that cache and recovery flows can
+consume.
 
 ### dataDirectory {id=indexer-data-directory}
 

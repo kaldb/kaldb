@@ -74,6 +74,10 @@ public class RecoveryTaskCreator {
   @VisibleForTesting
   public static List<SnapshotMetadata> getStaleLiveSnapshots(
       List<SnapshotMetadata> snapshots, String partitionId) {
+    if (partitionId == null) {
+      return List.of();
+    }
+
     return snapshots.stream()
         .filter(snapshotMetadata -> snapshotMetadata.partitionId.equals(partitionId))
         .filter(SnapshotMetadata::isLive)
@@ -168,8 +172,10 @@ public class RecoveryTaskCreator {
     }
 
     List<SnapshotMetadata> snapshots = snapshotMetadataStore.listSync();
+    List<SnapshotMetadata> staleSnapshots = deleteStaleLiveSnapshots(snapshots);
     List<SnapshotMetadata> snapshotsForPartition =
         snapshots.stream()
+            .filter(snapshotMetadata -> !staleSnapshots.contains(snapshotMetadata))
             .filter(
                 snapshotMetadata -> {
                   if (snapshotMetadata == null || snapshotMetadata.partitionId == null) {

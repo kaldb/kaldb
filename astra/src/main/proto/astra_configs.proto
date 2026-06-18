@@ -161,7 +161,8 @@ message IndexerConfig {
   int32 max_chunks_on_disk = 13;
 
   // Enables near-real-time publishing of live snapshot manifests from the indexer.
-  // Keep this disabled until cache-side live replica loading is implemented.
+  // When enabled, the active indexer chunk publishes manifest-backed live snapshots that cache
+  // and recovery flows can consume.
   bool nrt_enabled = 15;
 }
 
