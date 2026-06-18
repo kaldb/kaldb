@@ -130,6 +130,19 @@ public class RecoveryTaskCreatorTest {
     SnapshotMetadata livePartition11 =
         new SnapshotMetadata(
             name + "11", startTime, ChunkInfo.MAX_FUTURE_TIME, maxOffset, partitionId, 0);
+    SnapshotMetadata publishedLivePartition1 =
+        new SnapshotMetadata(
+            name + "published1",
+            startTime,
+            ChunkInfo.MAX_FUTURE_TIME,
+            maxOffset,
+            partitionId,
+            10,
+            SnapshotMetadata.SnapshotType.LIVE,
+            SnapshotMetadata.IndexType.LUCENE,
+            "nrt/live-published-1",
+            1,
+            SnapshotMetadata.DEFAULT_VERSION);
     SnapshotMetadata livePartition2 =
         new SnapshotMetadata(name + "2", startTime, ChunkInfo.MAX_FUTURE_TIME, maxOffset, "2", 0);
     SnapshotMetadata partition2 =
@@ -142,8 +155,11 @@ public class RecoveryTaskCreatorTest {
         .containsExactly(livePartition1);
     assertThat(getStaleLiveSnapshots(List.of(livePartition1, livePartition11), partitionId))
         .containsExactly(livePartition1, livePartition11);
+    assertThat(getStaleLiveSnapshots(List.of(publishedLivePartition1), partitionId)).isEmpty();
     assertThat(getStaleLiveSnapshots(List.of(partition1, livePartition1), partitionId))
         .containsExactly(livePartition1);
+    assertThat(getStaleLiveSnapshots(List.of(partition1, publishedLivePartition1), partitionId))
+        .isEmpty();
     assertThat(getStaleLiveSnapshots(List.of(partition2, livePartition1), partitionId))
         .containsExactly(livePartition1);
     assertThat(getStaleLiveSnapshots(List.of(livePartition2, livePartition1), partitionId))
@@ -157,7 +173,19 @@ public class RecoveryTaskCreatorTest {
                 List.of(livePartition2, livePartition1, livePartition11, partition1, partition2),
                 partitionId))
         .containsExactly(livePartition1, livePartition11);
+    assertThat(
+            getStaleLiveSnapshots(
+                List.of(
+                    livePartition2,
+                    livePartition1,
+                    publishedLivePartition1,
+                    livePartition11,
+                    partition1,
+                    partition2),
+                partitionId))
+        .containsExactly(livePartition1, livePartition11);
     assertThat(getStaleLiveSnapshots(List.of(partition1, partition2), partitionId)).isEmpty();
+    assertThat(getStaleLiveSnapshots(List.of(partition1, partition2), null)).isEmpty();
   }
 
   @Test
@@ -175,6 +203,19 @@ public class RecoveryTaskCreatorTest {
     SnapshotMetadata livePartition11 =
         new SnapshotMetadata(
             name + "11", startTime, ChunkInfo.MAX_FUTURE_TIME, maxOffset, partitionId, 0);
+    SnapshotMetadata publishedLivePartition1 =
+        new SnapshotMetadata(
+            name + "published1",
+            startTime,
+            ChunkInfo.MAX_FUTURE_TIME,
+            maxOffset,
+            partitionId,
+            10,
+            SnapshotMetadata.SnapshotType.LIVE,
+            SnapshotMetadata.IndexType.LUCENE,
+            "nrt/live-published-1",
+            1,
+            SnapshotMetadata.DEFAULT_VERSION);
     SnapshotMetadata livePartition2 =
         new SnapshotMetadata(name + "2", startTime, ChunkInfo.MAX_FUTURE_TIME, maxOffset, "2", 0);
     SnapshotMetadata partition2 =
@@ -185,9 +226,14 @@ public class RecoveryTaskCreatorTest {
     testDeleteSnapshots(List.of(livePartition2), 0, List.of(livePartition2));
     testDeleteSnapshots(List.of(livePartition1), 1, Collections.emptyList());
     testDeleteSnapshots(List.of(livePartition1, livePartition11), 2, Collections.emptyList());
+    testDeleteSnapshots(List.of(publishedLivePartition1), 0, List.of(publishedLivePartition1));
     testDeleteSnapshots(List.of(partition1, livePartition1), 1, List.of(partition1));
     testDeleteSnapshots(
         List.of(partition1, livePartition1, livePartition11), 2, List.of(partition1));
+    testDeleteSnapshots(
+        List.of(partition1, livePartition1, publishedLivePartition1),
+        1,
+        List.of(partition1, publishedLivePartition1));
     testDeleteSnapshots(
         List.of(partition2, livePartition2), 0, List.of(partition2, livePartition2));
     testDeleteSnapshots(List.of(partition2, partition1), 0, List.of(partition2, partition1));

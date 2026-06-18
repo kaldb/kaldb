@@ -17,7 +17,6 @@ import com.slack.astra.proto.config.AstraConfigs;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Instant;
-import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -75,9 +74,16 @@ public class RecoveryTaskCreator {
   @VisibleForTesting
   public static List<SnapshotMetadata> getStaleLiveSnapshots(
       List<SnapshotMetadata> snapshots, String partitionId) {
+    // Filter stale snapshots for partition.
+    if (partitionId == null) {
+      LOG.warn("PartitionId can't be null.");
+      return List.of();
+    }
+
     return snapshots.stream()
         .filter(snapshotMetadata -> snapshotMetadata.partitionId.equals(partitionId))
         .filter(SnapshotMetadata::isLive)
+        .filter(snapshotMetadata -> snapshotMetadata.snapshotPath.isBlank())
         .collect(Collectors.toUnmodifiableList());
   }
 
@@ -178,29 +184,18 @@ public class RecoveryTaskCreator {
                 })
             .collect(Collectors.toUnmodifiableList());
 
-    List<SnapshotMetadata> nonLiveSnapshotsForPartition =
+    List<SnapshotMetadata> durableSnapshotsForPartition =
         snapshotsForPartition.stream()
-            .filter(s -> !s.isLive())
+            .filter(
+                snapshotMetadata ->
+                    !snapshotMetadata.isLive() || !snapshotMetadata.snapshotPath.isBlank())
             .collect(Collectors.toUnmodifiableList());
 
     // Get the highest offset that is indexed in durable store.
     List<RecoveryTaskMetadata> recoveryTasks = recoveryTaskMetadataStore.listSync();
     long highestDurableOffsetForPartition =
         getHighestDurableOffsetForPartition(
-            nonLiveSnapshotsForPartition, recoveryTasks, partitionId);
-
-    SnapshotMetadata latestPublishedLiveSnapshot =
-        getLatestPublishedLiveSnapshot(snapshotsForPartition);
-    if (latestPublishedLiveSnapshot != null
-        && latestPublishedLiveSnapshot.maxOffset > highestDurableOffsetForPartition) {
-      highestDurableOffsetForPartition = latestPublishedLiveSnapshot.maxOffset;
-      LOG.info(
-          "Using NRT live snapshot {} generation {} offset {} as durable seed for partition {}",
-          latestPublishedLiveSnapshot.snapshotId,
-          latestPublishedLiveSnapshot.snapshotGeneration,
-          latestPublishedLiveSnapshot.maxOffset,
-          partitionId);
-    }
+            durableSnapshotsForPartition, recoveryTasks, partitionId);
 
     LOG.debug(
         "The highest durable offset for partition {} is {}",
@@ -291,21 +286,6 @@ public class RecoveryTaskCreator {
           nextOffsetForPartition);
       return nextOffsetForPartition;
     }
-  }
-
-  @VisibleForTesting
-  SnapshotMetadata getLatestPublishedLiveSnapshot(List<SnapshotMetadata> snapshots) {
-    return snapshots.stream()
-        .filter(SnapshotMetadata::isLive)
-        .filter(snapshotMetadata -> snapshotMetadata.snapshotPath != null)
-        .filter(snapshotMetadata -> !snapshotMetadata.snapshotPath.isBlank())
-        .sorted(
-            Comparator.comparingLong(
-                    (SnapshotMetadata snapshotMetadata) -> snapshotMetadata.snapshotGeneration)
-                .thenComparingLong(snapshotMetadata -> snapshotMetadata.maxOffset)
-                .reversed())
-        .findFirst()
-        .orElse(null);
   }
 
   /**
