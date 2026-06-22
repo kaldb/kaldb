@@ -57,6 +57,7 @@ public class SearchResultUtilsTest {
         .withMessage("hits requested should not be negative.");
   }
 
+  /** Verifies negative from offsets are rejected before search planning. */
   @Test
   void shouldRejectNegativeFrom() {
     AstraSearch.SearchRequest searchRequest =
@@ -73,6 +74,7 @@ public class SearchResultUtilsTest {
         .withMessage("from should not be negative.");
   }
 
+  /** Verifies overflowing from plus size windows are rejected. */
   @Test
   void shouldRejectFromPlusSizeOverflow() {
     AstraSearch.SearchRequest searchRequest =
@@ -89,6 +91,24 @@ public class SearchResultUtilsTest {
         .withMessage("from plus size is too large.");
   }
 
+  /** Verifies large but non-overflowing result windows are rejected. */
+  @Test
+  void shouldRejectResultWindowAboveLimit() {
+    AstraSearch.SearchRequest searchRequest =
+        AstraSearch.SearchRequest.newBuilder()
+            .setDataset("test-data")
+            .setStartTimeEpochMs(0)
+            .setEndTimeEpochMs(1)
+            .setHowMany(1)
+            .setStartFrom(10_000)
+            .build();
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> SearchResultUtils.fromSearchRequest(searchRequest))
+        .withMessage("from plus size must be less than or equal to 10000.");
+  }
+
+  /** Verifies object, scalar, and _doc sort clauses are parsed into hit sort specs. */
   @Test
   void shouldParseHitSortSpecs() {
     List<SearchQuery.SortFieldSpec> sortFieldSpecs =
@@ -122,6 +142,7 @@ public class SearchResultUtilsTest {
             new SearchQuery.SortFieldSpec("WindowClientWidth", SearchQuery.SortDirection.DESC));
   }
 
+  /** Verifies blank or omitted sort JSON produces no requested sort fields. */
   @Test
   void shouldReturnEmptyHitSortSpecsForMissingSortJson() {
     assertThat(SearchResultUtils.parseSortFieldSpecs(null)).isEmpty();
@@ -130,6 +151,7 @@ public class SearchResultUtilsTest {
     assertThat(SearchResultUtils.parseSortFieldSpecs("[]")).isEmpty();
   }
 
+  /** Verifies omitted user sort still builds the internal stable sort fields. */
   @Test
   void shouldUseStableInternalSortFieldsWhenRequestOmitsSort() {
     SearchQuery.HitSortPlan hitSortPlan = SearchQuery.HitSortPlan.fromRequested(List.of());
@@ -143,6 +165,7 @@ public class SearchResultUtilsTest {
                 LogMessage.SystemField.ID.fieldName, SearchQuery.SortDirection.ASC));
   }
 
+  /** Verifies requested stable fields are not duplicated in the effective sort plan. */
   @Test
   void shouldNotDuplicateStableInternalSortFieldsAlreadyRequested() {
     SearchQuery.SortFieldSpec requestedTimestampSort =
@@ -160,6 +183,7 @@ public class SearchResultUtilsTest {
                 LogMessage.SystemField.ID.fieldName, SearchQuery.SortDirection.ASC));
   }
 
+  /** Verifies scalar and object single-sort forms parse to equivalent sort specs. */
   @Test
   void shouldParseSingleHitSortSpecForms() {
     assertThat(SearchResultUtils.parseSortFieldSpecs("\"SearchPhrase\""))
@@ -178,6 +202,7 @@ public class SearchResultUtilsTest {
             new SearchQuery.SortFieldSpec("SearchPhrase", SearchQuery.SortDirection.ASC));
   }
 
+  /** Verifies arrays can mix scalar, object, and textual sort direction clauses. */
   @Test
   void shouldParseMixedHitSortSpecForms() {
     assertThat(
@@ -201,6 +226,7 @@ public class SearchResultUtilsTest {
             new SearchQuery.SortFieldSpec("CounterID", SearchQuery.SortDirection.DESC));
   }
 
+  /** Verifies _doc-only sorting is treated as a no-op. */
   @Test
   void shouldIgnoreDocOnlyHitSortSpec() {
     assertThat(
@@ -217,6 +243,7 @@ public class SearchResultUtilsTest {
         .isEmpty();
   }
 
+  /** Verifies user-requested _id sorting is rejected. */
   @Test
   void shouldRejectUserRequestedIdHitSortSpec() {
     assertThatIllegalArgumentException()
@@ -224,12 +251,14 @@ public class SearchResultUtilsTest {
         .withMessage("Sorting by _id is not supported.");
   }
 
+  /** Verifies invalid sort JSON fails parsing. */
   @Test
   void shouldRejectInvalidHitSortJson() {
     assertThatIllegalArgumentException()
         .isThrownBy(() -> SearchResultUtils.parseSortFieldSpecs("{invalid-json"));
   }
 
+  /** Verifies unsupported sort clause shapes are rejected. */
   @Test
   void shouldRejectUnsupportedHitSortClauseShape() {
     assertThatIllegalArgumentException()
@@ -237,6 +266,7 @@ public class SearchResultUtilsTest {
         .withMessage("Unsupported sort clause: 123");
   }
 
+  /** Verifies unsupported sort directions are rejected instead of defaulting to ascending. */
   @Test
   void shouldRejectInvalidHitSortDirections() {
     assertThatIllegalArgumentException()
@@ -251,6 +281,30 @@ public class SearchResultUtilsTest {
                 SearchResultUtils.parseSortFieldSpecs(
                     "[{\"SearchPhrase\":{\"order\":\"descending\"}}]"))
         .withMessage("Unsupported sort direction for field SearchPhrase: descending");
+  }
+
+  /** Verifies unsupported sort options and _score sorting are rejected. */
+  @Test
+  void shouldRejectUnsupportedHitSortOptionsAndScoreSort() {
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                SearchResultUtils.parseSortFieldSpecs(
+                    "[{\"SearchPhrase\":{\"order\":\"asc\",\"missing\":\"_last\"}}]"))
+        .withMessage("Unsupported sort option for field SearchPhrase: missing");
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> SearchResultUtils.parseSortFieldSpecs("[\"_score\"]"))
+        .withMessage("Sorting by _score is not supported.");
+  }
+
+  /** Verifies an unset wire sort value is rejected instead of coerced to null. */
+  @Test
+  void shouldRejectUnsetHitSortValueProto() {
+    AstraSearch.HitSortValue unsetSortValue = AstraSearch.HitSortValue.newBuilder().build();
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> SearchResultUtils.fromHitSortValueProto(unsetSortValue))
+        .withMessageContaining("HitSortValue proto has no supported value set");
   }
 
   @Test
