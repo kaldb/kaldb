@@ -185,6 +185,7 @@ public class SearchResultTest {
     assertThat(bar.getName()).isEqualTo("bar");
   }
 
+  /** Verifies sort values, including byte-backed values, survive proto round-tripping. */
   @Test
   void testSearchResultProtoRoundTripPreservesHitSortValues() throws Exception {
     Tracing.newBuilder().build();
