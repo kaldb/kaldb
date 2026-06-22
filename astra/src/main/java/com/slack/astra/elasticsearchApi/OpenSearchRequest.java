@@ -359,7 +359,18 @@ public class OpenSearchRequest {
   }
 
   private static int getStartFrom(JsonNode body) {
-    return body.path("from").asInt(0);
+    JsonNode fromNode = body.get("from");
+    if (fromNode == null || fromNode.isNull()) {
+      return 0;
+    }
+    if (!fromNode.isIntegralNumber() || !fromNode.canConvertToInt()) {
+      throw new IllegalArgumentException("'from' must be a non-negative integer");
+    }
+    int startFrom = fromNode.intValue();
+    if (startFrom < 0) {
+      throw new IllegalArgumentException("'from' must be a non-negative integer");
+    }
+    return startFrom;
   }
 
   private static String getAggregationJson(JsonNode body) {
