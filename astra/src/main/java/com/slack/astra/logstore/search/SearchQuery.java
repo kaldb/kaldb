@@ -24,6 +24,7 @@ public class SearchQuery {
       Objects.requireNonNull(direction, "direction");
     }
 
+    /** Returns true when this field should be sorted in descending order. */
     boolean descending() {
       return direction == SortDirection.DESC;
     }
@@ -33,6 +34,7 @@ public class SearchQuery {
       List.of(
           new SortFieldSpec(LogMessage.SystemField.TIME_SINCE_EPOCH.fieldName, SortDirection.DESC),
           new SortFieldSpec(LogMessage.SystemField.ID.fieldName, SortDirection.ASC));
+  static final int MAX_RESULT_WINDOW = 10_000;
 
   /**
    * Separates the requested hit sort fields from the effective sort fields used internally for hit
@@ -42,8 +44,8 @@ public class SearchQuery {
   record HitSortPlan(
       List<SortFieldSpec> requestedSortFields, List<SortFieldSpec> effectiveSortFields) {
     HitSortPlan {
-      requestedSortFields = List.copyOf(Objects.requireNonNull(requestedSortFields));
-      effectiveSortFields = List.copyOf(Objects.requireNonNull(effectiveSortFields));
+      Objects.requireNonNull(requestedSortFields, "requestedSortFields");
+      Objects.requireNonNull(effectiveSortFields, "effectiveSortFields");
     }
 
     /** Builds the internal hit sort plan from request sort fields. Empty means omitted sort. */
@@ -131,6 +133,9 @@ public class SearchQuery {
     ensureTrue(howMany >= 0, "hits requested should not be negative.");
     ensureTrue(startFrom >= 0, "from should not be negative.");
     ensureTrue(startFrom <= Integer.MAX_VALUE - howMany, "from plus size is too large.");
+    ensureTrue(
+        startFrom + howMany <= MAX_RESULT_WINDOW,
+        "from plus size must be less than or equal to " + MAX_RESULT_WINDOW + ".");
     // Reject unsupported no-op requests before they fan out to every chunk.
     ensureTrue(
         howMany > 0 || aggregatorFactoriesBuilder != null,
