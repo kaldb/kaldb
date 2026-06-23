@@ -193,6 +193,7 @@ public class OpenSearchRequestTest {
     assertThat(request.getAggregationJson()).isEqualTo(parsedRequest.get("aggs").toString());
   }
 
+  /** Verifies array-form sort JSON is preserved and from maps to start_from. */
   @Test
   public void testGetSortJson() throws Exception {
     String searchBody =
@@ -224,6 +225,7 @@ public class OpenSearchRequestTest {
     assertThat(request.getStartFrom()).isEqualTo(2);
   }
 
+  /** Verifies scalar-form sort clauses are preserved verbatim in sort JSON. */
   @Test
   public void testGetSortJsonPreservesScalarSortClause() throws Exception {
     String searchBody =
@@ -242,6 +244,7 @@ public class OpenSearchRequestTest {
     assertThat(request.getSortJson()).isEqualTo(parsedRequest.get("sort").toString());
   }
 
+  /** Verifies search_after pagination is explicitly rejected. */
   @Test
   public void shouldRejectSearchAfterPagination() {
     String searchBody =
@@ -264,6 +267,24 @@ public class OpenSearchRequestTest {
     assertThatIllegalArgumentException()
         .isThrownBy(() -> openSearchRequest.parseSingleSearchRequest("test", searchBody))
         .withMessage("search_after is not supported");
+  }
+
+  /** Verifies malformed from pagination values fail instead of being coerced. */
+  @Test
+  public void shouldRejectInvalidFromPaginationValues() {
+    OpenSearchRequest openSearchRequest = new OpenSearchRequest();
+    List<String> invalidBodies =
+        List.of(
+            "{\"from\":-1,\"size\":1}",
+            "{\"from\":\"10\",\"size\":1}",
+            "{\"from\":1.5,\"size\":1}",
+            "{\"from\":{},\"size\":1}");
+
+    for (String searchBody : invalidBodies) {
+      assertThatIllegalArgumentException()
+          .isThrownBy(() -> openSearchRequest.parseSingleSearchRequest("test", searchBody))
+          .withMessage("'from' must be a non-negative integer");
+    }
   }
 
   @Test
