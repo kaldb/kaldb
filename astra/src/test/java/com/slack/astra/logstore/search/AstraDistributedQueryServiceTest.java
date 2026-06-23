@@ -1421,41 +1421,44 @@ public class AstraDistributedQueryServiceTest {
             makeWindowSpan(6, node2Start.plusMillis(3), 62, 35, 768, false, false));
 
     AstraDistributedQueryService distributedQueryService = createDistributedQueryService();
-    distributedQueryService.stubs.put(
-        indexer1SearchContext.toString(), mockSearchFutureStub(node1Spans));
-    distributedQueryService.stubs.put(
-        indexer2SearchContext.toString(), mockSearchFutureStub(node2Spans));
+    try {
+      distributedQueryService.stubs.put(
+          indexer1SearchContext.toString(), mockSearchFutureStub(node1Spans));
+      distributedQueryService.stubs.put(
+          indexer2SearchContext.toString(), mockSearchFutureStub(node2Spans));
 
-    AstraSearch.SearchRequest request =
-        new OpenSearchRequest()
-            .parseSingleSearchRequest(
-                MessageUtil.TEST_DATASET_NAME,
-                """
-                {
-                  "from": 2,
-                  "size": 2,
-                  "query": {
-                    "match_all": {}
-                  },
-                  "sort": [
-                    {
-                      "WindowClientWidth": {
-                        "order": "asc"
+      AstraSearch.SearchRequest request =
+          new OpenSearchRequest()
+              .parseSingleSearchRequest(
+                  MessageUtil.TEST_DATASET_NAME,
+                  """
+                  {
+                    "from": 2,
+                    "size": 2,
+                    "query": {
+                      "match_all": {}
+                    },
+                    "sort": [
+                      {
+                        "WindowClientWidth": {
+                          "order": "asc"
+                        }
                       }
-                    }
-                  ]
-                }
-                """);
+                    ]
+                  }
+                  """);
 
-    SearchResult<LogMessage> result =
-        SearchResultUtils.fromSearchResultProto(distributedQueryService.doSearch(request));
+      SearchResult<LogMessage> result =
+          SearchResultUtils.fromSearchResultProto(distributedQueryService.doSearch(request));
 
-    assertThat(
-            result.hits.stream()
-                .map(hit -> hit.message().getSource().get("WindowClientWidth"))
-                .toList())
-        .containsExactly(20, 25);
-    distributedQueryService.close();
+      assertThat(
+              result.hits.stream()
+                  .map(hit -> hit.message().getSource().get("WindowClientWidth"))
+                  .toList())
+          .containsExactly(20, 25);
+    } finally {
+      distributedQueryService.close();
+    }
   }
 
   private String createIndexerZKMetadata(
