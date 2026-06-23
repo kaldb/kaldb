@@ -669,6 +669,9 @@ public class AstraDistributedQueryService extends AstraQueryServiceBase implemen
     ensureTrue(howMany >= 0, "hits requested should not be negative.");
     ensureTrue(startFrom >= 0, "from should not be negative.");
     ensureTrue(startFrom <= Integer.MAX_VALUE - howMany, "from plus size is too large.");
+    ensureTrue(
+        startFrom + howMany <= SearchQuery.MAX_RESULT_WINDOW,
+        "from plus size must be less than or equal to " + SearchQuery.MAX_RESULT_WINDOW + ".");
   }
 
   @Override
