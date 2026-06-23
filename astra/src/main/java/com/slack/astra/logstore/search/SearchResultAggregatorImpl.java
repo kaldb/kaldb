@@ -20,6 +20,14 @@ import org.opensearch.search.aggregations.pipeline.PipelineAggregator;
  */
 public class SearchResultAggregatorImpl<T extends LogMessage> implements SearchResultAggregator<T> {
 
+  private static HitSortValue sortValueAt(List<HitSortValue> sortValues, int index) {
+    if (index >= sortValues.size()) {
+      return HitSortValue.nullValue();
+    }
+    HitSortValue sortValue = sortValues.get(index);
+    return sortValue == null ? HitSortValue.nullValue() : sortValue;
+  }
+
   private final SearchQuery searchQuery;
 
   public SearchResultAggregatorImpl(SearchQuery searchQuery) {
@@ -78,6 +86,8 @@ public class SearchResultAggregatorImpl<T extends LogMessage> implements SearchR
 
     List<List<SearchResultHit<T>>> sortedHitLists =
         searchResults.stream().map(searchResult -> searchResult.hits).toList();
+    // TODO: Consider replacing this with an explicit bounded priority queue or Lucene TopDocs
+    // merge-style helper if coordinator hit merging shows up in profiles.
     List<SearchResultHit<T>> resultHits =
         Streams.stream(Iterables.mergeSorted(sortedHitLists, this::compareHits))
             .skip(searchQuery.startFrom)
@@ -103,7 +113,9 @@ public class SearchResultAggregatorImpl<T extends LogMessage> implements SearchR
     for (int i = 0; i < sortFieldSpecs.size(); i++) {
       int comparison =
           compareSortValues(
-              left.sortValues().get(i), right.sortValues().get(i), sortFieldSpecs.get(i));
+              sortValueAt(left.sortValues(), i),
+              sortValueAt(right.sortValues(), i),
+              sortFieldSpecs.get(i));
       if (comparison != 0) {
         return comparison;
       }
