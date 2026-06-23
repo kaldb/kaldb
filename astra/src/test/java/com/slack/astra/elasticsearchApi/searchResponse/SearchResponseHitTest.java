@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 
 public class SearchResponseHitTest {
 
+  /** Verifies provided sort values are used without reconstructing them from _source. */
   @Test
   void fromJsonStringUsesProvidedSortValuesWithoutReconstructingFromSource() throws Exception {
     SearchResponseHit hit =
@@ -18,6 +19,7 @@ public class SearchResponseHitTest {
     assertThat(hit.getSort()).isEmpty();
   }
 
+  /** Verifies the sort field is omitted when no sort values are provided. */
   @Test
   void fromJsonStringOmitsSortWhenNoSortValuesAreProvided() throws Exception {
     SearchResponseHit hit =
