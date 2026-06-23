@@ -1271,6 +1271,7 @@ public class ElasticsearchApiServiceTest {
         .isEqualTo(100);
   }
 
+  /** Verifies single-search returns hits sorted by requested numeric and string fields. */
   @Test
   void testSingleSearchReturnsHitsSortedByRequestedField() throws Exception {
     Instant start = Instant.now().minus(1, ChronoUnit.HOURS);
@@ -1416,6 +1417,7 @@ public class ElasticsearchApiServiceTest {
         .isEqualTo("bravo");
   }
 
+  /** Verifies IP sort values are rendered as response strings in sorted order. */
   @Test
   void testSingleSearchReturnsIpSortValuesAsStrings() throws Exception {
     Instant start = Instant.now().minus(1, ChronoUnit.HOURS);
@@ -1453,6 +1455,7 @@ public class ElasticsearchApiServiceTest {
     assertThat(hits.get(2).get("sort").get(0).asText()).isEqualTo("192.168.0.1");
   }
 
+  /** Verifies omitted user sort does not expose internal tie-breaker sort values. */
   @Test
   void testSingleSearchOmitsSortValuesWhenRequestDoesNotSpecifySort() throws Exception {
     Instant start = Instant.now().minus(1, ChronoUnit.HOURS);
@@ -1480,6 +1483,7 @@ public class ElasticsearchApiServiceTest {
     assertThat(hits.get(1).has("sort")).isFalse();
   }
 
+  /** Verifies sort values are returned even when _source excludes the sorted field. */
   @Test
   void testSingleSearchReturnsSortValuesWhenSourceFilteringOmitsSortField() throws Exception {
     Instant start = Instant.now().minus(1, ChronoUnit.HOURS);
@@ -1503,7 +1507,8 @@ public class ElasticsearchApiServiceTest {
               "sort": [
                 {
                   "WindowClientWidth": {
-                    "order": "asc"
+                    "order": "asc",
+                    "unmapped_type": "integer"
                   }
                 }
               ]
@@ -1518,6 +1523,7 @@ public class ElasticsearchApiServiceTest {
     assertThat(hits.get(2).get("sort").get(0).asInt()).isEqualTo(1440);
   }
 
+  /** Verifies leaf hit sorting uses stable tie-breakers for equal requested sort values. */
   @Test
   void testSingleSearchUsesMergeTieBreakersAtLeaf() throws Exception {
     Instant start = Instant.now().minus(1, ChronoUnit.HOURS);
@@ -1550,6 +1556,7 @@ public class ElasticsearchApiServiceTest {
     assertThat(sourceValues(jsonNode, "SearchPhrase")).containsExactly("id-1", "id-2");
   }
 
+  /** Verifies missing sort values are returned and ordered consistently. */
   @Test
   void testSingleSearchSortsMissingValuesConsistently() throws Exception {
     Instant start = Instant.now().minus(1, ChronoUnit.HOURS);
@@ -1586,6 +1593,7 @@ public class ElasticsearchApiServiceTest {
     assertThat(hits.get(2).get("sort").get(0).asInt()).isEqualTo(Integer.MAX_VALUE);
   }
 
+  /** Verifies unmapped sort fields are treated as missing values. */
   @Test
   void testSingleSearchTreatsUnmappedSortFieldAsMissing() throws Exception {
     Instant start = Instant.now().minus(1, ChronoUnit.HOURS);
@@ -1607,8 +1615,7 @@ public class ElasticsearchApiServiceTest {
               "sort": [
                 {
                   "WindowClientWidth": {
-                    "order": "asc",
-                    "unmapped_type": "integer"
+                    "order": "asc"
                   }
                 }
               ]
@@ -1621,6 +1628,7 @@ public class ElasticsearchApiServiceTest {
     assertThat(hits.get(1).get("sort").get(0).isNull()).isTrue();
   }
 
+  /** Verifies sort works with wildcard and boolean query filters. */
   @Test
   void testSingleSearchSupportsCustomHitSortQueries() throws Exception {
     Instant start = Instant.now().minus(1, ChronoUnit.HOURS);
@@ -2118,6 +2126,7 @@ public class ElasticsearchApiServiceTest {
     assertThat(responseNode.get("_shards").get("total").asInt()).isEqualTo(7);
   }
 
+  /** Verifies invalid sort requests fail before backend search executes. */
   @Test
   void testInvalidSortIsRejectedBeforeBackendSearch() {
     AstraQueryServiceBase searcher = mock(AstraQueryServiceBase.class);
