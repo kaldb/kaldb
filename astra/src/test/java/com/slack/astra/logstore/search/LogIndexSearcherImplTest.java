@@ -1432,6 +1432,7 @@ public class LogIndexSearcherImplTest {
     assertThat(doublequery.hits.size()).isEqualTo(1);
   }
 
+  /** Verifies descending numeric sort places missing numeric values after present values. */
   @Test
   void testDescendingSortPlacesMissingNumericValuesLast() throws IOException {
     Instant time = Instant.ofEpochSecond(1593365471);
@@ -1474,6 +1475,41 @@ public class LogIndexSearcherImplTest {
             HitSortValue.intValue(Integer.MIN_VALUE));
   }
 
+  /** Verifies worker string sort values represent missing keyword fields as null values. */
+  @Test
+  void testStringSortCarriesMissingKeywordValuesAsNullSortValues() throws IOException {
+    Instant time = Instant.ofEpochSecond(1593365471);
+    Trace.KeyValue serviceZeta =
+        Trace.KeyValue.newBuilder()
+            .setVStr("zeta")
+            .setKey("service")
+            .setFieldType(Schema.SchemaFieldType.KEYWORD)
+            .build();
+
+    strictLogStore.logStore.addMessage(
+        SpanUtil.makeSpan(1, "service-zeta", time, List.of(serviceZeta)));
+    strictLogStore.logStore.addMessage(
+        SpanUtil.makeSpan(2, "service-missing", time.plusSeconds(1)));
+    strictLogStore.logStore.commit();
+    strictLogStore.logStore.refresh();
+
+    SearchResult<LogMessage> results =
+        search(
+            strictLogStore.logSearcher,
+            TEST_DATASET_NAME,
+            2,
+            List.of(new SearchQuery.SortFieldSpec("service", SearchQuery.SortDirection.DESC)),
+            QueryBuilderUtil.generateQueryBuilder("", 0L, MAX_TIME),
+            null,
+            null);
+
+    assertThat(results.hits.stream().map(SearchResultHit::message).map(LogMessage::getId))
+        .containsExactly("Message1", "Message2");
+    assertThat(results.hits.stream().map(hit -> hit.sortValues().get(0)).toList())
+        .containsExactly(HitSortValue.stringValue("zeta"), HitSortValue.nullValue());
+  }
+
+  /** Verifies IP field sorting carries encoded IP sort values from the worker. */
   @Test
   void testSortingByIpFieldUsesEncodedIpSortValues() throws IOException {
     Instant time = Instant.ofEpochSecond(1593365471);
@@ -1523,6 +1559,7 @@ public class LogIndexSearcherImplTest {
             HitSortValue.ipAddress(encodedIpSortValue("192.168.0.1")));
   }
 
+  /** Verifies worker and coordinator tie-breakers produce the same order for equal sort values. */
   @Test
   void testWorkerAndCoordinatorUseSameTieBreakerOrderForEqualSortValues() throws IOException {
     Instant time = Instant.now();
@@ -1577,6 +1614,7 @@ public class LogIndexSearcherImplTest {
         .containsExactly("Message3", "Message1", "Message2");
   }
 
+  /** Verifies worker sort values survive proto round trips with requested sort fields. */
   @Test
   void testWorkerSortValuesRoundTripWithRequestedSortFields() throws IOException {
     Instant time = Instant.ofEpochSecond(1593365471);
@@ -1647,6 +1685,72 @@ public class LogIndexSearcherImplTest {
     assertThat(roundTrippedResult.hits.stream().map(SearchResultHit::sortValues).toList())
         .containsExactlyElementsOf(
             workerResult.hits.stream().map(SearchResultHit::sortValues).toList());
+  }
+
+  /** Verifies requested sort is applied after a query filter chooses matching hits. */
+  @Test
+  void testSortWithBooleanQueryFiltersMatchingHits() throws IOException {
+    Instant time = Instant.ofEpochSecond(1593365471);
+    Trace.KeyValue rankThree =
+        Trace.KeyValue.newBuilder()
+            .setVInt32(3)
+            .setKey("rank")
+            .setFieldType(Schema.SchemaFieldType.INTEGER)
+            .build();
+    Trace.KeyValue rankOne =
+        Trace.KeyValue.newBuilder()
+            .setVInt32(1)
+            .setKey("rank")
+            .setFieldType(Schema.SchemaFieldType.INTEGER)
+            .build();
+    Trace.KeyValue rankTwo =
+        Trace.KeyValue.newBuilder()
+            .setVInt32(2)
+            .setKey("rank")
+            .setFieldType(Schema.SchemaFieldType.INTEGER)
+            .build();
+    Trace.KeyValue includeGroup =
+        Trace.KeyValue.newBuilder()
+            .setVStr("include")
+            .setKey("group")
+            .setFieldType(Schema.SchemaFieldType.KEYWORD)
+            .build();
+    Trace.KeyValue excludeGroup =
+        Trace.KeyValue.newBuilder()
+            .setVStr("exclude")
+            .setKey("group")
+            .setFieldType(Schema.SchemaFieldType.KEYWORD)
+            .build();
+
+    strictLogStore.logStore.addMessage(
+        SpanUtil.makeSpan(1, "include-rank-3", time, List.of(rankThree, includeGroup)));
+    strictLogStore.logStore.addMessage(
+        SpanUtil.makeSpan(
+            2, "exclude-rank-1", time.plusSeconds(1), List.of(rankOne, excludeGroup)));
+    strictLogStore.logStore.addMessage(
+        SpanUtil.makeSpan(
+            3, "include-rank-1", time.plusSeconds(2), List.of(rankOne, includeGroup)));
+    strictLogStore.logStore.addMessage(
+        SpanUtil.makeSpan(
+            4, "include-rank-2", time.plusSeconds(3), List.of(rankTwo, includeGroup)));
+    strictLogStore.logStore.commit();
+    strictLogStore.logStore.refresh();
+
+    SearchResult<LogMessage> results =
+        search(
+            strictLogStore.logSearcher,
+            TEST_DATASET_NAME,
+            10,
+            List.of(new SearchQuery.SortFieldSpec("rank", SearchQuery.SortDirection.ASC)),
+            new TermQueryBuilder("group", "include"),
+            null,
+            null);
+
+    assertThat(results.hits.stream().map(SearchResultHit::message).map(LogMessage::getId))
+        .containsExactly("Message3", "Message4", "Message1");
+    assertThat(results.hits.stream().map(hit -> hit.sortValues().get(0)).toList())
+        .containsExactly(
+            HitSortValue.intValue(1), HitSortValue.intValue(2), HitSortValue.intValue(3));
   }
 
   @Test
@@ -2378,7 +2482,7 @@ public class LogIndexSearcherImplTest {
     // empty string
     assertThat(
             search(
-                    strictLogStore.logSearcher,
+                    strictLogStoreWithoutFts.logSearcher,
                     TEST_DATASET_NAME,
                     1000,
                     QueryBuilderUtil.generateQueryBuilder("", 0L, MAX_TIME),
@@ -2386,11 +2490,11 @@ public class LogIndexSearcherImplTest {
                     createGenericDateHistogramAggregatorFactoriesBuilder())
                 .hits
                 .size())
-        .isZero();
+        .isEqualTo(3);
 
     assertThat(
             search(
-                    strictLogStore.logSearcher,
+                    strictLogStoreWithoutFts.logSearcher,
                     TEST_DATASET_NAME,
                     1000,
                     QueryBuilderUtil.generateQueryBuilder("app*", 0L, MAX_TIME),
@@ -2403,7 +2507,7 @@ public class LogIndexSearcherImplTest {
     // Returns baby or car, 2 messages.
     assertThat(
             search(
-                    strictLogStore.logSearcher,
+                    strictLogStoreWithoutFts.logSearcher,
                     TEST_DATASET_NAME,
                     1000,
                     QueryBuilderUtil.generateQueryBuilder("baby car", 0L, MAX_TIME),
@@ -2416,7 +2520,7 @@ public class LogIndexSearcherImplTest {
     // Test numbers
     assertThat(
             search(
-                    strictLogStore.logSearcher,
+                    strictLogStoreWithoutFts.logSearcher,
                     TEST_DATASET_NAME,
                     1000,
                     QueryBuilderUtil.generateQueryBuilder("apple 1234", 0L, MAX_TIME),
@@ -2428,7 +2532,7 @@ public class LogIndexSearcherImplTest {
 
     assertThat(
             search(
-                    strictLogStore.logSearcher,
+                    strictLogStoreWithoutFts.logSearcher,
                     TEST_DATASET_NAME,
                     1000,
                     QueryBuilderUtil.generateQueryBuilder("123", 0L, MAX_TIME),
@@ -2589,6 +2693,7 @@ public class LogIndexSearcherImplTest {
                     null));
   }
 
+  /** Verifies omitted requested sort still returns stable internal sort values. */
   @Test
   void testSearchUsesStableInternalSortFieldsWhenRequestOmitsSort() throws IOException {
     Instant time = Instant.now();

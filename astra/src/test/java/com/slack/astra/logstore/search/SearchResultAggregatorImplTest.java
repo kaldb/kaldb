@@ -51,6 +51,10 @@ public class SearchResultAggregatorImplTest {
     return Arrays.stream(values).map(HitSortValue::of).toList();
   }
 
+  private static List<HitSortValue> missingStringSortValues() {
+    return List.of(HitSortValue.nullValue());
+  }
+
   private static ByteString encodedIdSortValue(String id) {
     BytesRef encodedId = Uid.encodeId(id);
     return ByteString.copyFrom(encodedId.bytes, encodedId.offset, encodedId.length);
@@ -267,6 +271,7 @@ public class SearchResultAggregatorImplTest {
     assertThat(internalDateHistogram.getBuckets().size()).isEqualTo(bucketCount);
   }
 
+  /** Verifies the coordinator merges worker hits using requested sort field values. */
   @Test
   void testSearchResultAggregatorHonorsRequestedHitSort() {
     Instant baseTime = Instant.parse("2026-05-18T05:00:00Z");
@@ -356,6 +361,7 @@ public class SearchResultAggregatorImplTest {
         .containsExactly("message-1");
   }
 
+  /** Verifies numeric sort values compare correctly across Java numeric wrappers. */
   @Test
   void testSearchResultAggregatorComparesNumericSortValuesAcrossJavaTypes() {
     Instant baseTime = Instant.parse("2026-05-18T05:00:00Z");
@@ -446,6 +452,7 @@ public class SearchResultAggregatorImplTest {
         .containsExactly("integer-rank", "float-rank", "long-rank");
   }
 
+  /** Verifies large numeric sort values remain distinct across Java numeric wrappers. */
   @Test
   void testSearchResultAggregatorKeepsLargeNumericSortValuesDistinctAcrossJavaTypes() {
     Instant baseTime = Instant.parse("2026-05-18T05:00:00Z");
@@ -520,6 +527,7 @@ public class SearchResultAggregatorImplTest {
         .containsExactly("smaller-rank", "larger-rank");
   }
 
+  /** Verifies string sort values use Lucene-compatible UTF-8 byte ordering. */
   @Test
   void testSearchResultAggregatorComparesStringSortValuesByUtf8Bytes() {
     Instant baseTime = Instant.parse("2026-05-18T05:00:00Z");
@@ -595,6 +603,7 @@ public class SearchResultAggregatorImplTest {
         .containsExactly("private-use", "supplementary");
   }
 
+  /** Verifies the coordinator honors carried tie-breaker values rather than message fields. */
   @Test
   void testSearchResultAggregatorUsesCarriedTieBreakerSortValues() {
     Instant baseTime = Instant.parse("2026-05-18T05:00:00Z");
@@ -668,6 +677,7 @@ public class SearchResultAggregatorImplTest {
         .containsExactly("carried-sort-winner", "message-timestamp-winner");
   }
 
+  /** Verifies byte-backed _id tie-breaker values are compared unsigned. */
   @Test
   void testSearchResultAggregatorComparesIdTieBreakerBytesUnsigned() {
     Instant baseTime = Instant.parse("2026-05-18T05:00:00Z");
@@ -725,6 +735,7 @@ public class SearchResultAggregatorImplTest {
         .containsExactly("zero-byte-id", "high-byte-id");
   }
 
+  /** Verifies descending string sort keeps missing values after present values. */
   @Test
   void testDescendingSortPlacesMissingStringValuesLast() {
     Instant baseTime = Instant.parse("2026-05-18T05:00:00Z");
@@ -753,7 +764,7 @@ public class SearchResultAggregatorImplTest {
             null);
     SearchResult<LogMessage> missingResult =
         new SearchResult<>(
-            List.of(new SearchResultHit<>(missingMessage, sortValues((Object) null))),
+            List.of(new SearchResultHit<>(missingMessage, missingStringSortValues())),
             11,
             0,
             1,
@@ -785,9 +796,63 @@ public class SearchResultAggregatorImplTest {
                 .toList())
         .containsExactly("message-present", "message-missing");
     assertThat(aggregatedResult.hits.stream().map(SearchResultHit::sortValues).toList())
-        .containsExactly(sortValues("zeta"), sortValues((Object) null));
+        .containsExactly(sortValues("zeta"), missingStringSortValues());
   }
 
+  /** Verifies the coordinator does not fail when a hit has a shorter legacy sort tuple. */
+  @Test
+  void testSearchResultAggregatorHandlesShortSortValueLists() {
+    Instant baseTime = Instant.parse("2026-05-18T05:00:00Z");
+    LogMessage completeMessage =
+        new LogMessage(
+            MessageUtil.TEST_DATASET_NAME,
+            "_doc",
+            "complete-hit",
+            baseTime.plusSeconds(1),
+            Map.of("rank", 1));
+    LogMessage shortMessage =
+        new LogMessage(
+            MessageUtil.TEST_DATASET_NAME, "_doc", "short-hit", baseTime, Map.of("rank", 1));
+    SearchResult<LogMessage> completeResult =
+        new SearchResult<>(
+            List.of(
+                new SearchResultHit<>(
+                    completeMessage,
+                    sortValues(
+                        1,
+                        baseTime.plusSeconds(1).toEpochMilli(),
+                        encodedIdSortValue(completeMessage.getId())))),
+            10,
+            0,
+            1,
+            1,
+            0,
+            null);
+    SearchResult<LogMessage> shortResult =
+        new SearchResult<>(
+            List.of(new SearchResultHit<>(shortMessage, sortValues(1))), 11, 0, 1, 1, 0, null);
+    SearchQuery searchQuery =
+        new SearchQuery(
+            MessageUtil.TEST_DATASET_NAME,
+            baseTime.toEpochMilli(),
+            baseTime.plusSeconds(10).toEpochMilli(),
+            2,
+            0,
+            List.of(new SearchQuery.SortFieldSpec("rank", SearchQuery.SortDirection.ASC)),
+            Collections.emptyList(),
+            null,
+            null,
+            null);
+
+    SearchResult<LogMessage> aggregatedResult =
+        new SearchResultAggregatorImpl<>(searchQuery)
+            .aggregate(List.of(shortResult, completeResult), true);
+
+    assertThat(aggregatedResult.hits.stream().map(SearchResultHit::message).map(LogMessage::getId))
+        .containsExactly("complete-hit", "short-hit");
+  }
+
+  /** Verifies each hit keeps its own sort values during aggregation. */
   @Test
   void testSearchResultHitKeepsSortValuesWithMessageDuringAggregation() {
     Instant baseTime = Instant.parse("2024-01-01T00:00:00Z");
@@ -840,6 +905,7 @@ public class SearchResultAggregatorImplTest {
         .containsExactly(sortValues(10), sortValues(20));
   }
 
+  /** Verifies pagination returns only the requested prefix from sorted worker results. */
   @Test
   void testSearchResultAggregatorDoesNotReadUnneededSortedResultTail() {
     Instant baseTime = Instant.parse("2026-05-18T05:00:00Z");
@@ -857,7 +923,7 @@ public class SearchResultAggregatorImplTest {
             new LogMessage(
                 MessageUtil.TEST_DATASET_NAME, "_doc", "rank-0", baseTime, Map.of("rank", 0)),
             sortValues(0));
-    SearchResult<LogMessage> resultWithUnreadableTail =
+    SearchResult<LogMessage> resultWithTail =
         new SearchResult<>(listThatFailsIfTailIsRead(secondBestHit), 10, 0, 1, 1, 0, null);
     SearchResult<LogMessage> resultWithBestHit =
         new SearchResult<>(List.of(bestHit), 11, 0, 1, 1, 0, null);
@@ -877,7 +943,7 @@ public class SearchResultAggregatorImplTest {
 
     SearchResult<LogMessage> aggregatedResult =
         new SearchResultAggregatorImpl<>(searchQuery)
-            .aggregate(List.of(resultWithUnreadableTail, resultWithBestHit), true);
+            .aggregate(List.of(resultWithTail, resultWithBestHit), true);
 
     assertThat(
             aggregatedResult.hits.stream()
@@ -885,6 +951,24 @@ public class SearchResultAggregatorImplTest {
                 .map(LogMessage::getId)
                 .toList())
         .containsExactly("rank-0");
+  }
+
+  private List<SearchResultHit<LogMessage>> listThatFailsIfTailIsRead(
+      SearchResultHit<LogMessage> firstHit) {
+    return new AbstractList<>() {
+      @Override
+      public SearchResultHit<LogMessage> get(int index) {
+        if (index == 0) {
+          return firstHit;
+        }
+        throw new AssertionError("Reducer read an unneeded tail hit");
+      }
+
+      @Override
+      public int size() {
+        return 2;
+      }
+    };
   }
 
   @Test
@@ -1598,24 +1682,6 @@ public class SearchResultAggregatorImplTest {
         totalSnapshots,
         snapshotsWithReplicas,
         internalAggregations);
-  }
-
-  private List<SearchResultHit<LogMessage>> listThatFailsIfTailIsRead(
-      SearchResultHit<LogMessage> firstHit) {
-    return new AbstractList<>() {
-      @Override
-      public SearchResultHit<LogMessage> get(int index) {
-        if (index == 0) {
-          return firstHit;
-        }
-        throw new AssertionError("Reducer read an unneeded tail hit");
-      }
-
-      @Override
-      public int size() {
-        return 2;
-      }
-    };
   }
 
   /**
