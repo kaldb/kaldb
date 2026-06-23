@@ -207,6 +207,14 @@ public class SearchResultUtils {
       return parseSortOrder(fieldName, value.asText());
     }
     if (value != null && value.isObject()) {
+      Iterator<Map.Entry<String, JsonNode>> options = value.fields();
+      while (options.hasNext()) {
+        Map.Entry<String, JsonNode> option = options.next();
+        if (!"order".equals(option.getKey()) && !"unmapped_type".equals(option.getKey())) {
+          throw new IllegalArgumentException(
+              "Unsupported sort option for field " + fieldName + ": " + option.getKey());
+        }
+      }
       JsonNode order = value.get("order");
       if (order == null) {
         return SearchQuery.SortDirection.ASC;
@@ -239,6 +247,9 @@ public class SearchResultUtils {
     }
     if (LogMessage.SystemField.ID.fieldName.equals(fieldName)) {
       throw new IllegalArgumentException("Sorting by _id is not supported.");
+    }
+    if ("_score".equals(fieldName)) {
+      throw new IllegalArgumentException("Sorting by _score is not supported.");
     }
     sortFieldSpecs.add(new SearchQuery.SortFieldSpec(fieldName, direction));
   }
@@ -298,7 +309,7 @@ public class SearchResultUtils {
     } else if (value.hasIpValue()) {
       return HitSortValue.ipAddress(value.getIpValue());
     } else {
-      return HitSortValue.nullValue();
+      throw new IllegalArgumentException("HitSortValue proto has no supported value set: " + value);
     }
   }
 
