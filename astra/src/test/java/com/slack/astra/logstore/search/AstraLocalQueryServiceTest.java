@@ -473,6 +473,7 @@ public class AstraLocalQueryServiceTest {
                         .build()));
   }
 
+  /** Verifies local soft errors are propagated as shard failures in the search response. */
   @Test
   public void testAstraSearchPropagatesSoftErrorAsShardFailure() {
     @SuppressWarnings("unchecked")
