@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 import com.adobe.testing.s3mock.junit5.S3MockExtension;
+import com.slack.astra.proto.config.AstraConfigs;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
@@ -34,6 +35,35 @@ class BlobStoreTest {
 
   private final S3AsyncClient s3Client =
       S3TestUtils.createS3CrtClient(S3_MOCK_EXTENSION.getServiceEndpoint());
+
+  @Test
+  void testInitS3ClientWithCustomEndpointSupportsBlobStoreOperations() throws IOException {
+    S3AsyncClient customEndpointClient =
+        S3AsyncUtil.initS3Client(
+            AstraConfigs.S3Config.newBuilder()
+                .setS3Region("us-east-1")
+                .setS3Bucket(TEST_BUCKET)
+                .setS3AccessKey("foo")
+                .setS3SecretKey("bar")
+                .setS3EndPoint(S3_MOCK_EXTENSION.getServiceEndpoint())
+                .build());
+    BlobStore blobStore = new BlobStore(customEndpointClient, TEST_BUCKET, "");
+
+    Path directoryUpload = Files.createTempDirectory("");
+    Path foo = Files.createTempFile(directoryUpload, "", "");
+    try (FileWriter fileWriter = new FileWriter(foo.toFile())) {
+      fileWriter.write("Example test");
+    }
+    String chunkId = UUID.randomUUID().toString();
+    blobStore.upload(chunkId, directoryUpload);
+
+    Path directoryDownloaded = Files.createTempDirectory("");
+    blobStore.download(chunkId, directoryDownloaded);
+
+    File[] filesDownloaded = directoryDownloaded.toFile().listFiles();
+    assertThat(Objects.requireNonNull(filesDownloaded).length).isEqualTo(1);
+    assertThat(Files.readAllBytes(filesDownloaded[0].toPath())).isEqualTo(Files.readAllBytes(foo));
+  }
 
   @Test
   void testUploadDownload() throws IOException {

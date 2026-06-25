@@ -146,7 +146,7 @@ public class ReadOnlyChunkImplTest {
 
     // setup Zk, BlobFs so data can be loaded
     initializeZkReplica(curatorFramework, metadataStoreConfig, replicaId, snapshotId);
-    initializeZkSnapshot(curatorFramework, metadataStoreConfig, snapshotId, 0);
+    initializeZkSnapshot(curatorFramework, metadataStoreConfig, snapshotId, 1);
     initializeBlobStorageWithIndex(snapshotId, false);
     initializeCacheNodeAssignment(
         cacheNodeAssignmentStore, assignmentId, snapshotId, cacheNodeId, replicaSet, replicaId);
@@ -303,7 +303,7 @@ public class ReadOnlyChunkImplTest {
     String snapshotId = "legacy-slot-snapshot";
 
     initializeZkReplica(curatorFramework, metadataStoreConfig, replicaId, snapshotId);
-    initializeZkSnapshot(curatorFramework, metadataStoreConfig, snapshotId, 0);
+    initializeZkSnapshot(curatorFramework, metadataStoreConfig, snapshotId, 1);
     initializeBlobStorageWithIndex(snapshotId, false);
 
     SearchContext searchContext =
@@ -435,7 +435,7 @@ public class ReadOnlyChunkImplTest {
 
     // setup Zk, BlobFs so data can be loaded
     initializeZkReplica(curatorFramework, metadataStoreConfig, replicaId, snapshotId);
-    initializeZkSnapshot(curatorFramework, metadataStoreConfig, snapshotId, 0);
+    initializeZkSnapshot(curatorFramework, metadataStoreConfig, snapshotId, 1);
     initializeCacheNode(cacheNodeMetadataStore, cacheNodeId, "some-host.name", 1, "rep1", true);
 
     ReadOnlyChunkImpl<LogMessage> readOnlyChunk =
@@ -601,7 +601,7 @@ public class ReadOnlyChunkImplTest {
 
     // setup Zk, BlobFs so data can be loaded
     initializeZkReplica(curatorFramework, metadataStoreConfig, replicaId, snapshotId);
-    initializeZkSnapshot(curatorFramework, metadataStoreConfig, snapshotId, 0);
+    initializeZkSnapshot(curatorFramework, metadataStoreConfig, snapshotId, 1);
     initializeBlobStorageWithIndex(snapshotId, false);
     initializeCacheNodeAssignment(
         cacheNodeAssignmentStore, assignmentId, snapshotId, cacheNodeId, replicaSet, replicaId);
@@ -997,6 +997,145 @@ public class ReadOnlyChunkImplTest {
   }
 
   @Test
+  public void shouldLoadLiveChunkThroughLegacyCacheSlotAssignment() throws Exception {
+    AstraConfigs.AstraConfig AstraConfig = makeCacheConfig();
+    AstraConfigs.MetadataStoreConfig metadataStoreConfig =
+        AstraConfigs.MetadataStoreConfig.newBuilder()
+            .setMode(AstraConfigs.MetadataStoreMode.ZOOKEEPER_EXCLUSIVE)
+            .setZookeeperConfig(
+                AstraConfigs.ZookeeperConfig.newBuilder()
+                    .setZkConnectString(testingServer.getConnectString())
+                    .setZkPathPrefix("shouldLoadLiveChunkThroughLegacyCacheSlotAssignment")
+                    .setZkSessionTimeoutMs(1000)
+                    .setZkConnectionTimeoutMs(1000)
+                    .setSleepBetweenRetriesMs(1000)
+                    .setZkCacheInitTimeoutMs(1000)
+                    .build())
+            .build();
+
+    AsyncCuratorFramework curatorFramework =
+        CuratorBuilder.build(meterRegistry, metadataStoreConfig.getZookeeperConfig());
+    ReplicaMetadataStore replicaMetadataStore =
+        new ReplicaMetadataStore(curatorFramework, metadataStoreConfig, meterRegistry);
+    SnapshotMetadataStore snapshotMetadataStore =
+        new SnapshotMetadataStore(curatorFramework, metadataStoreConfig, meterRegistry);
+    SearchMetadataStore searchMetadataStore =
+        new SearchMetadataStore(curatorFramework, metadataStoreConfig, meterRegistry, true);
+    CacheSlotMetadataStore cacheSlotMetadataStore =
+        new CacheSlotMetadataStore(curatorFramework, metadataStoreConfig, meterRegistry);
+    CacheNodeMetadataStore cacheNodeMetadataStore =
+        new CacheNodeMetadataStore(curatorFramework, metadataStoreConfig, meterRegistry);
+
+    String replicaId = "legacy-live-replica";
+    String snapshotId = "LIVE_legacy-slot";
+    String partitionId = "partition-1";
+
+    initializeZkReplica(curatorFramework, metadataStoreConfig, replicaId, snapshotId);
+    snapshotMetadataStore.createSync(
+        new SnapshotMetadata(
+            snapshotId,
+            Instant.now().minus(1, ChronoUnit.MINUTES).toEpochMilli(),
+            Instant.now().toEpochMilli(),
+            0,
+            partitionId,
+            0,
+            SnapshotMetadata.SnapshotType.LIVE,
+            SnapshotMetadata.IndexType.LUCENE,
+            "",
+            0,
+            SnapshotMetadata.DEFAULT_VERSION));
+
+    LuceneIndexStoreImpl logStore =
+        LuceneIndexStoreImpl.makeLogStore(
+            Files.newTemporaryFolder(),
+            Duration.ofSeconds(60),
+            Duration.ofSeconds(60),
+            true,
+            SchemaAwareLogDocumentBuilderImpl.FieldConflictPolicy.CONVERT_VALUE_AND_DUPLICATE_FIELD,
+            meterRegistry);
+    addMessages(logStore, 1, 10, true);
+    NrtSnapshotPublisher publisher =
+        new NrtSnapshotPublisher(
+            blobStore, new NrtBlobStore(blobStore), snapshotMetadataStore, "indexer-1");
+    SnapshotMetadata published =
+        publisher.publish(
+            logStore,
+            new SnapshotMetadata(
+                snapshotId,
+                Instant.now().minus(1, ChronoUnit.MINUTES).toEpochMilli(),
+                Instant.now().toEpochMilli(),
+                10,
+                partitionId,
+                0,
+                SnapshotMetadata.SnapshotType.LIVE,
+                SnapshotMetadata.IndexType.LUCENE,
+                "",
+                0,
+                SnapshotMetadata.DEFAULT_VERSION),
+            1);
+
+    SearchContext searchContext =
+        SearchContext.fromConfig(AstraConfig.getCacheConfig().getServerConfig());
+    ReadOnlyChunkImpl<LogMessage> readOnlyChunk =
+        new ReadOnlyChunkImpl<>(
+            curatorFramework,
+            meterRegistry,
+            blobStore,
+            searchContext,
+            AstraConfig.getS3Config().getS3Bucket(),
+            AstraConfig.getCacheConfig().getDataDirectory(),
+            AstraConfig.getCacheConfig().getReplicaSet(),
+            cacheSlotMetadataStore,
+            replicaMetadataStore,
+            snapshotMetadataStore,
+            searchMetadataStore,
+            cacheNodeMetadataStore);
+
+    await()
+        .until(
+            () ->
+                readOnlyChunk.getChunkMetadataState()
+                    == Metadata.CacheSlotMetadata.CacheSlotState.FREE);
+
+    assignReplicaToChunk(cacheSlotMetadataStore, replicaId, readOnlyChunk);
+
+    await()
+        .until(
+            () ->
+                readOnlyChunk.getChunkMetadataState()
+                    == Metadata.CacheSlotMetadata.CacheSlotState.LIVE);
+    await().until(() -> AstraMetadataTestUtils.listSyncUncached(searchMetadataStore).size() == 1);
+    assertThat(readOnlyChunk.info().chunkId).isEqualTo(snapshotId);
+    assertThat(readOnlyChunk.getDataDirectory()).isNotNull();
+    assertThat(java.nio.file.Files.exists(readOnlyChunk.getDataDirectory())).isTrue();
+    assertThat(published.snapshotPath).isNotBlank();
+
+    SearchResult<LogMessage> logMessageSearchResult =
+        readOnlyChunk.query(
+            new SearchQuery(
+                MessageUtil.TEST_DATASET_NAME,
+                Instant.now().minus(1, ChronoUnit.MINUTES).toEpochMilli(),
+                Instant.now().toEpochMilli(),
+                500,
+                Collections.emptyList(),
+                QueryBuilderUtil.generateQueryBuilder(
+                    "*:*",
+                    Instant.now().minus(1, ChronoUnit.MINUTES).toEpochMilli(),
+                    Instant.now().toEpochMilli()),
+                null,
+                createGenericDateHistogramAggregatorFactoriesBuilder()));
+    assertThat(logMessageSearchResult.hits.size()).isEqualTo(10);
+    assertThat(meterRegistry.get(CHUNK_ASSIGNMENT_TIMER).tag("successful", "true").timer().count())
+        .isEqualTo(1);
+    assertThat(meterRegistry.get(CHUNK_ASSIGNMENT_TIMER).tag("successful", "false").timer().count())
+        .isEqualTo(0);
+
+    readOnlyChunk.close();
+    logStore.close();
+    curatorFramework.unwrap().close();
+  }
+
+  @Test
   public void shouldFailIfDownloadedFilesDoNotMatchS3List() throws Exception {
     AstraConfigs.AstraConfig AstraConfig = makeCacheConfig();
     AstraConfigs.MetadataStoreConfig metadataStoreConfig =
@@ -1036,7 +1175,7 @@ public class ReadOnlyChunkImplTest {
 
     // setup Zk, BlobFs so data can be loaded
     initializeZkReplica(curatorFramework, metadataStoreConfig, replicaId, snapshotId);
-    initializeZkSnapshot(curatorFramework, metadataStoreConfig, snapshotId, 0);
+    initializeZkSnapshot(curatorFramework, metadataStoreConfig, snapshotId, 1);
     initializeBlobStorageWithIndex(snapshotId, false);
     initializeCacheNodeAssignment(
         cacheNodeAssignmentStore, assignmentId, snapshotId, cacheNodeId, replicaSet, replicaId);
@@ -1138,7 +1277,7 @@ public class ReadOnlyChunkImplTest {
 
     // setup Zk, BlobFs so data can be loaded
     initializeZkReplica(curatorFramework, metadataStoreConfig, replicaId, snapshotId);
-    initializeZkSnapshot(curatorFramework, metadataStoreConfig, snapshotId, 0);
+    initializeZkSnapshot(curatorFramework, metadataStoreConfig, snapshotId, 1);
     initializeBlobStorageWithIndex(snapshotId, true);
     initializeCacheNodeAssignment(
         cacheNodeAssignmentStore, assignmentId, snapshotId, cacheNodeId, replicaSet, replicaId);

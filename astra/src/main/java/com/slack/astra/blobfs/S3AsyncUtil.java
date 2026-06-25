@@ -13,6 +13,7 @@ import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
+import software.amazon.awssdk.services.s3.S3Configuration;
 import software.amazon.awssdk.services.s3.S3CrtAsyncClientBuilder;
 import software.amazon.awssdk.services.s3.crt.S3CrtConnectionHealthConfiguration;
 import software.amazon.awssdk.services.s3.crt.S3CrtHttpConfiguration;
@@ -49,8 +50,27 @@ public class S3AsyncUtil {
               System.getProperty(
                   "astra.s3CrtBlobFs.maxNativeMemoryLimitBytes",
                   String.valueOf(defaultCrtMemoryLimit)));
+      if (notNullOrEmpty(config.getS3EndPoint())) {
+        String endpoint = config.getS3EndPoint();
+        try {
+          LOG.info("Using standard S3 async client for custom endpoint {}", endpoint);
+          return S3AsyncClient.builder()
+              .region(Region.of(region))
+              .credentialsProvider(awsCredentialsProvider)
+              .endpointOverride(new URI(endpoint))
+              .serviceConfiguration(
+                  S3Configuration.builder()
+                      .checksumValidationEnabled(false)
+                      .pathStyleAccessEnabled(true)
+                      .build())
+              .build();
+        } catch (URISyntaxException e) {
+          throw new RuntimeException(e);
+        }
+      }
+
       LOG.info(
-          "Using a maxNativeMemoryLimitInBytes for the S3AsyncClient of '{}' bytes",
+          "Using CRT-backed S3 async client with maxNativeMemoryLimitInBytes={}",
           maxNativeMemoryLimitBytes);
       S3CrtAsyncClientBuilder s3AsyncClient =
           S3AsyncClient.crtBuilder()
@@ -73,15 +93,6 @@ public class S3AsyncUtil {
                       .minimumThroughputInBps(32000L)
                       .build());
       s3AsyncClient.httpConfiguration(httpConfigurationBuilder.build());
-
-      if (notNullOrEmpty(config.getS3EndPoint())) {
-        String endpoint = config.getS3EndPoint();
-        try {
-          s3AsyncClient.endpointOverride(new URI(endpoint));
-        } catch (URISyntaxException e) {
-          throw new RuntimeException(e);
-        }
-      }
       return s3AsyncClient.build();
     } catch (S3Exception e) {
       throw new RuntimeException("Could not initialize S3blobFs", e);

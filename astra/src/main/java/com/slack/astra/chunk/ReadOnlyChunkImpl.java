@@ -588,22 +588,10 @@ public class ReadOnlyChunkImpl<T> implements Chunk<T> {
       }
 
       SnapshotMetadata snapshotMetadata = getSnapshotMetadata(cacheSlotMetadata.replicaId);
-      blobStore.download(snapshotMetadata.snapshotId, dataDirectory);
-      try (Stream<Path> fileList = Files.list(dataDirectory)) {
-        long numFilesLocal = fileList.count();
-        if (numFilesLocal == 0) {
-          throw new IOException("No files found on blob storage, released slot for re-assignment");
-        }
-
-        List<String> filesInS3 = blobStore.listFiles(snapshotMetadata.snapshotId);
-        if (numFilesLocal != filesInS3.size()) {
-          String errorString =
-              String.format(
-                  "Mismatch in number of files in S3 (%s) and local directory (%s) for snapshot %s",
-                  filesInS3.size(), numFilesLocal, snapshotMetadata.toString());
-          LOG.error(errorString);
-          throw new IOException(errorString);
-        }
+      if (snapshotMetadata.isLive()) {
+        downloadLiveSnapshotFiles(snapshotMetadata, dataDirectory);
+      } else {
+        downloadSealedSnapshotFiles(snapshotMetadata, dataDirectory);
       }
 
       Path schemaPath = Path.of(dataDirectory.toString(), ReadWriteChunk.SCHEMA_FILE_NAME);
@@ -642,6 +630,49 @@ public class ReadOnlyChunkImpl<T> implements Chunk<T> {
     } finally {
       chunkAssignmentLock.unlock();
     }
+  }
+
+  private void downloadSealedSnapshotFiles(SnapshotMetadata snapshotMetadata, Path targetDirectory)
+      throws Exception {
+    blobStore.download(snapshotMetadata.snapshotId, targetDirectory);
+    try (Stream<Path> fileList = Files.list(targetDirectory)) {
+      long numFilesLocal = fileList.count();
+      if (numFilesLocal == 0) {
+        throw new IOException("No files found on blob storage, released slot for re-assignment");
+      }
+
+      List<String> filesInS3 = blobStore.listFiles(snapshotMetadata.snapshotId);
+      if (numFilesLocal != filesInS3.size()) {
+        String errorString =
+            String.format(
+                "Mismatch in number of files in S3 (%s) and local directory (%s) for snapshot %s",
+                filesInS3.size(), numFilesLocal, snapshotMetadata);
+        LOG.error(errorString);
+        throw new IOException(errorString);
+      }
+    }
+  }
+
+  private void downloadLiveSnapshotFiles(SnapshotMetadata snapshotMetadata, Path targetDirectory)
+      throws Exception {
+    if (snapshotMetadata.snapshotPath.isBlank()) {
+      throw new IOException(
+          "No NRT manifest found for live snapshot " + snapshotMetadata.snapshotId);
+    }
+
+    NrtBlobStore.NrtManifest manifest = nrtBlobStore.readManifest(snapshotMetadata.snapshotPath);
+    if (manifest == null) {
+      throw new IOException(
+          "No NRT manifest found at "
+              + snapshotMetadata.snapshotPath
+              + " for snapshot "
+              + snapshotMetadata.snapshotId);
+    }
+
+    blobStore.download(
+        NrtBlobStore.filesPath(snapshotMetadata.partitionId, snapshotMetadata.snapshotId),
+        targetDirectory);
+    validateLiveSnapshotDownload(targetDirectory, manifest);
   }
 
   private SearchMetadata registerSearchMetadata(
@@ -725,7 +756,7 @@ public class ReadOnlyChunkImpl<T> implements Chunk<T> {
   }
 
   private void cleanDirectory() {
-    if (dataDirectory != null) {
+    if (dataDirectory != null && Files.isDirectory(dataDirectory)) {
       try {
         FileUtils.cleanDirectory(dataDirectory.toFile());
       } catch (Exception e) {
