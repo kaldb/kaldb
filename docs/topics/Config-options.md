@@ -787,3 +787,13 @@ preprocessorConfig:
 Error code to return when the rate limit of the preprocessor is exceeded. If using OpenSearch 
 [Data Prepper](https://opensearch.org/docs/latest/data-prepper/) a return code of `400` or `404` would mark the request 
 as unable to be retried and sent to the dead letter queue.
+
+### otlpTraceDatasetName
+
+```yaml
+preprocessorConfig:
+  otlpTraceDatasetName: otel_traces
+```
+
+Logical dataset name used by the OTLP/HTTP `/v1/traces` endpoint. The dataset must be provisioned
+with `serviceNamePattern: _all`.

@@ -413,6 +413,7 @@ public class BulkIngestApiTest {
 
   public void validateOffset(KafkaConsumer kafkaConsumer, long expectedOffset) {
     await()
+        .pollInSameThread()
         .until(
             () -> {
               @SuppressWarnings("OptionalGetWithoutIsPresent")

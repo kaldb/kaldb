@@ -20,9 +20,19 @@ docker compose up -d
 kafka-topics.sh --create --topic test-topic --if-not-exists --bootstrap-server localhost:9092
 ```
 
-3. Run 2 curl commands to configure 1 partition
+3. Run these curl commands to configure 2 local partitions and a test dataset
 
 ```bash
+curl -XPOST -H 'content-type: application/json; charset=utf-8; protocol=gRPC' http://localhost:8083'/slack.proto.astra.ManagerApiService/CreatePartition' -d '{
+  "partitionId": "0",
+  "maxCapacity": "1000000000"
+}'
+
+curl -XPOST -H 'content-type: application/json; charset=utf-8; protocol=gRPC' http://localhost:8083'/slack.proto.astra.ManagerApiService/CreatePartition' -d '{
+  "partitionId": "1",
+  "maxCapacity": "1000000000"
+}'
+
 curl -XPOST -H 'content-type: application/json; charset=utf-8; protocol=gRPC' http://localhost:8083'/slack.proto.astra.ManagerApiService/CreateDatasetMetadata' -d '{
   "name": "test",
   "owner": "test@email.com",
@@ -32,7 +42,7 @@ curl -XPOST -H 'content-type: application/json; charset=utf-8; protocol=gRPC' ht
 curl -XPOST -H 'content-type: application/json; charset=utf-8; protocol=gRPC' http://localhost:8083'/slack.proto.astra.ManagerApiService/UpdatePartitionAssignment' -d '{
   "name": "test",
   "throughputBytes": "4000000",
-  "partitionIds": ["0"]
+  "partitionIds": ["0", "1"]
 }'
 ```
 This can optionally be achieved in the manager UI at [http://localhost:8083/docs](http://localhost:8083/docs)

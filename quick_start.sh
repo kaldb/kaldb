@@ -10,6 +10,11 @@ set -euo pipefail
 #   --clean     Remove old KalDB containers, volumes, and images, then rebuild fresh
 #   --help      Show this help message
 #
+# Environment:
+#   S3_MOCK_PORT  Host port for S3Mock. Defaults to 19090; container port remains 9090.
+#   ASTRA_QUICK_START_PARTITION_MAX_CAPACITY
+#                 Max capacity for each local partition. Defaults to 1000000000.
+#
 # Examples:
 #   ./quick_start.sh           # Start KalDB using existing containers/images
 #   ./quick_start.sh --clean   # Full rebuild from scratch
@@ -24,6 +29,7 @@ set -euo pipefail
 CLEAN_BUILD=false
 readonly SCRIPT_IMAGE_LABEL_KEY="kaldb.quick_start.managed"
 readonly SCRIPT_IMAGE_LABEL_VALUE="true"
+readonly QUICK_START_PARTITION_MAX_CAPACITY="${ASTRA_QUICK_START_PARTITION_MAX_CAPACITY:-1000000000}"
 
 # ------------------------------------------------------------------------------
 # Helpers
@@ -70,6 +76,11 @@ for arg in "$@"; do
       echo "Options:"
       echo "  --clean     Remove old KalDB containers, volumes, and images, then rebuild fresh"
       echo "  --help      Show this help message"
+      echo ""
+      echo "Environment:"
+      echo "  S3_MOCK_PORT  Host port for S3Mock. Defaults to 19090; container port remains 9090."
+      echo "  ASTRA_QUICK_START_PARTITION_MAX_CAPACITY"
+      echo "                Max capacity for each local partition. Defaults to 1000000000."
       echo ""
       echo "Examples:"
       echo "  ./quick_start.sh           # Start KalDB using existing containers/images"
@@ -153,9 +164,20 @@ docker exec dep_kafka kafka-topics.sh \
   --if-not-exists \
   --bootstrap-server localhost:9092 || true
 
+echo "🧱 Creating local partitions (if not exists)..."
+for partition_id in 0 1; do
+  curl -fsS -XPOST \
+    -H 'content-type: application/json; charset=utf-8; protocol=gRPC' \
+    'http://localhost:8083/slack.proto.astra.ManagerApiService/CreatePartition' \
+    -d "{
+      \"partitionId\": \"$partition_id\",
+      \"maxCapacity\": \"$QUICK_START_PARTITION_MAX_CAPACITY\"
+    }" >/dev/null || echo "Partition $partition_id may already exist."
+done
+
 # CreateDatasetMetadata
 echo "🧩 Creating exact-match dataset metadata via Manager API..."
-curl -sS -XPOST \
+curl -fsS -XPOST \
   -H 'content-type: application/json; charset=utf-8; protocol=gRPC' \
   'http://localhost:8083/slack.proto.astra.ManagerApiService/CreateDatasetMetadata' \
   -d '{
@@ -166,14 +188,14 @@ curl -sS -XPOST \
 
 # UpdatePartitionAssignment
 echo "📦 Applying partition assignment via Manager API..."
-curl -sS -XPOST \
+curl -fsS -XPOST \
   -H 'content-type: application/json; charset=utf-8; protocol=gRPC' \
   'http://localhost:8083/slack.proto.astra.ManagerApiService/UpdatePartitionAssignment' \
   -d '{
     "name": "test",
     "throughputBytes": "4000000",
-    "partitionIds": ["0"]
-  }' || echo "UpdatePartitionAssignment may have already been applied."
+    "partitionIds": ["0", "1"]
+  }'
 
 # ------------------------------------------------------------------------------
 # Step 7. Summary
@@ -186,6 +208,7 @@ echo "   - Query API:    http://localhost:8081"
 echo "   - Grafana:      http://localhost:3000"
 echo "   - Zipkin UI:    http://localhost:9411"
 echo "   - OpenSearch:   http://localhost:9200"
+echo "   - S3Mock:       http://localhost:${S3_MOCK_PORT:-19090}"
 echo "   - Dashboards:   http://localhost:5601"
 echo ""
 echo "For manual API examples, see docs/topics/Getting-started.md."

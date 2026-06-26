@@ -45,6 +45,7 @@ import com.slack.astra.metadata.replica.ReplicaMetadataStore;
 import com.slack.astra.metadata.schema.SchemaUtil;
 import com.slack.astra.metadata.search.SearchMetadataStore;
 import com.slack.astra.metadata.snapshot.SnapshotMetadataStore;
+import com.slack.astra.otlp.OtlpTraceIngestApi;
 import com.slack.astra.proto.config.AstraConfigs;
 import com.slack.astra.proto.metadata.Metadata;
 import com.slack.astra.proto.schema.Schema;
@@ -563,6 +564,15 @@ public class Astra {
               preprocessorConfig.getRateLimitExceededErrorCode(),
               schema);
       armeriaServiceBuilder.withAnnotatedService(openSearchBulkApiService);
+      OtlpTraceIngestApi otlpTraceIngestApi =
+          new OtlpTraceIngestApi(
+              bulkIngestKafkaProducer,
+              datasetRateLimitingService,
+              meterRegistry,
+              preprocessorConfig.getRateLimitExceededErrorCode(),
+              preprocessorConfig.getOtlpTraceDatasetName(),
+              schema);
+      armeriaServiceBuilder.withAnnotatedService(otlpTraceIngestApi);
       services.add(armeriaServiceBuilder.build());
     }
 
