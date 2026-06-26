@@ -2,6 +2,7 @@ package com.slack.astra.logstore.search;
 
 import static com.slack.astra.chunk.ChunkInfo.containsDataInTimeRange;
 import static com.slack.astra.chunk.ReadWriteChunk.LIVE_SNAPSHOT_PREFIX;
+import static com.slack.astra.util.ArgValidationUtils.ensureTrue;
 
 import brave.ScopedSpan;
 import brave.Tracing;
@@ -400,6 +401,19 @@ public class AstraDistributedQueryService extends AstraQueryServiceBase implemen
     }
   }
 
+  private static AstraSearch.SearchRequest toNodeSearchRequest(
+      AstraSearch.SearchRequest request, List<String> chunkIds) {
+    int howMany = request.getHowMany();
+    int startFrom = request.getStartFrom();
+
+    return request.toBuilder()
+        .clearChunkIds()
+        .addAllChunkIds(chunkIds)
+        .setHowMany(howMany == 0 ? 0 : startFrom + howMany)
+        .setStartFrom(0)
+        .build();
+  }
+
   private AstraServiceGrpc.AstraServiceFutureStub getStub(String url) {
     if (stubs.get(url) != null) {
       return stubs.get(url);
@@ -477,7 +491,7 @@ public class AstraDistributedQueryService extends AstraQueryServiceBase implemen
     }
     try {
       AstraSearch.SearchRequest localSearchReq =
-          distribSearchReq.toBuilder().addAllChunkIds(snapshotNames).build();
+          toNodeSearchRequest(distribSearchReq, snapshotNames);
       return SearchResultUtils.fromSearchResultProtoOrEmpty(
           stub.withDeadlineAfter(defaultQueryTimeout.toMillis(), TimeUnit.MILLISECONDS)
               .withInterceptors(
@@ -619,6 +633,7 @@ public class AstraDistributedQueryService extends AstraQueryServiceBase implemen
 
   @Override
   public AstraSearch.SearchResult doSearch(final AstraSearch.SearchRequest request) {
+    validatePagination(request);
     try {
       List<SearchResult<LogMessage>> searchResults = distributedSearch(request);
       SearchResult<LogMessage> aggregatedResult =
@@ -646,6 +661,17 @@ public class AstraDistributedQueryService extends AstraQueryServiceBase implemen
       LOG.error("Distributed search failed", e);
       throw new RuntimeException(e);
     }
+  }
+
+  private static void validatePagination(AstraSearch.SearchRequest request) {
+    int howMany = request.getHowMany();
+    int startFrom = request.getStartFrom();
+    ensureTrue(howMany >= 0, "hits requested should not be negative.");
+    ensureTrue(startFrom >= 0, "from should not be negative.");
+    ensureTrue(startFrom <= Integer.MAX_VALUE - howMany, "from plus size is too large.");
+    ensureTrue(
+        startFrom + howMany <= SearchQuery.MAX_RESULT_WINDOW,
+        "from plus size must be less than or equal to " + SearchQuery.MAX_RESULT_WINDOW + ".");
   }
 
   @Override

@@ -191,6 +191,7 @@ public class ReadOnlyChunkImplTest {
                 Instant.now().minus(1, ChronoUnit.MINUTES).toEpochMilli(),
                 Instant.now().toEpochMilli(),
                 500,
+                0,
                 Collections.emptyList(),
                 QueryBuilderUtil.generateQueryBuilder(
                     "*:*",
@@ -245,6 +246,7 @@ public class ReadOnlyChunkImplTest {
                 Instant.now().minus(1, ChronoUnit.MINUTES).toEpochMilli(),
                 Instant.now().toEpochMilli(),
                 500,
+                0,
                 Collections.emptyList(),
                 QueryBuilderUtil.generateQueryBuilder(
                     "*:*",
@@ -340,6 +342,7 @@ public class ReadOnlyChunkImplTest {
                 Instant.now().minus(1, ChronoUnit.MINUTES).toEpochMilli(),
                 Instant.now().toEpochMilli(),
                 500,
+                0,
                 Collections.emptyList(),
                 QueryBuilderUtil.generateQueryBuilder(
                     "*:*",
@@ -379,6 +382,7 @@ public class ReadOnlyChunkImplTest {
                 Instant.now().minus(1, ChronoUnit.MINUTES).toEpochMilli(),
                 Instant.now().toEpochMilli(),
                 500,
+                0,
                 Collections.emptyList(),
                 QueryBuilderUtil.generateQueryBuilder(
                     "*:*",
@@ -645,6 +649,7 @@ public class ReadOnlyChunkImplTest {
             Instant.now().minus(1, ChronoUnit.MINUTES).toEpochMilli(),
             Instant.now().toEpochMilli(),
             500,
+            0,
             Collections.emptyList(),
             QueryBuilderUtil.generateQueryBuilder(
                 "*:*",
@@ -783,6 +788,7 @@ public class ReadOnlyChunkImplTest {
                 Instant.now().minus(1, ChronoUnit.MINUTES).toEpochMilli(),
                 Instant.now().toEpochMilli(),
                 500,
+                0,
                 Collections.emptyList(),
                 QueryBuilderUtil.generateQueryBuilder(
                     "*:*",

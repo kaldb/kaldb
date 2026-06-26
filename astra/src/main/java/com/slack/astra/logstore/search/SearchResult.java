@@ -21,7 +21,7 @@ public class SearchResult<T> {
 
   // TODO: Make hits an iterator.
   // An iterator helps with the early termination of a search and may be efficient in some cases.
-  public final List<T> hits;
+  public final List<SearchResultHit<T>> hits;
   public final long tookMicros;
 
   public final int failedNodes;
@@ -33,16 +33,16 @@ public class SearchResult<T> {
 
   public final InternalAggregations internalAggregations;
 
-  /** Creates a search result that carries the full top-level OpenSearch aggregation collection. */
+  /** Creates a search result with per-hit sort values attached to each hit. */
   public SearchResult(
-      List<T> hits,
+      List<SearchResultHit<T>> hits,
       long tookMicros,
       int failedNodes,
       int totalNodes,
       int requestedSnapshots,
       int fulfilledSnapshots,
       InternalAggregations internalAggregations) {
-    this.hits = hits;
+    this.hits = Objects.requireNonNull(hits, "hits");
     this.tookMicros = tookMicros;
     this.failedNodes = failedNodes;
     this.totalNodes = totalNodes;
@@ -104,6 +104,11 @@ public class SearchResult<T> {
         requestedSnapshots,
         fulfilledSnapshots,
         aggregationString(internalAggregations));
+  }
+
+  /** Returns the underlying messages for callers that do not need per-hit metadata. */
+  public List<T> messages() {
+    return hits.stream().map(SearchResultHit::message).toList();
   }
 
   public static SearchResult<LogMessage> empty() {

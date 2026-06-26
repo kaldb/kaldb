@@ -136,6 +136,7 @@ public class ObjectMapperTest {
         0,
         MAX_TIME,
         10,
+        0,
         Collections.emptyList(),
         QueryBuilderUtil.generateQueryBuilder("", 0L, MAX_TIME),
         null,

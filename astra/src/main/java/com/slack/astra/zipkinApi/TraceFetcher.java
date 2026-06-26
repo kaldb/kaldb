@@ -10,7 +10,6 @@ import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.google.common.annotations.VisibleForTesting;
-import com.google.protobuf.ByteString;
 import com.slack.astra.blobfs.BlobStore;
 import com.slack.astra.logstore.LogMessage;
 import com.slack.astra.logstore.LogWireMessage;
@@ -383,10 +382,9 @@ public class TraceFetcher {
   // object. To return LogWireMessage we do a JSON parse
   static List<LogWireMessage> searchResultToLogWireMessage(AstraSearch.SearchResult searchResult)
       throws IOException {
-    List<ByteString> hitsByteList = searchResult.getHitsList().asByteStringList();
-    List<LogWireMessage> messages = new ArrayList<>(hitsByteList.size());
-    for (ByteString byteString : hitsByteList) {
-      LogWireMessage hit = JsonUtil.read(byteString.toStringUtf8(), LogWireMessage.class);
+    List<LogWireMessage> messages = new ArrayList<>(searchResult.getHitsCount());
+    for (AstraSearch.SearchResult.Hit searchResultHit : searchResult.getHitsList()) {
+      LogWireMessage hit = JsonUtil.read(searchResultHit.getMessage(), LogWireMessage.class);
       // LogMessage message = LogMessage.fromWireMessage(hit);
       messages.add(hit);
     }
