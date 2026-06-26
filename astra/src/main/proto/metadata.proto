@@ -62,6 +62,26 @@ message ReplicaMetadata {
 }
 
 message SnapshotMetadata {
+  enum SnapshotType {
+    // Snapshot type was not set. Readers should derive old metadata from sizeInBytes.
+    SNAPSHOT_TYPE_UNSPECIFIED = 0;
+    // Snapshot is actively written by an indexer and may point to an NRT manifest.
+    LIVE = 1;
+    // Snapshot is immutable and stored as a finalized blobstore snapshot.
+    SEALED = 2;
+  }
+
+  enum IndexType {
+    // Index type was not set. Readers should default this to Lucene.
+    INDEX_TYPE_UNSPECIFIED = 0;
+    // Lucene index storage.
+    LUCENE = 1;
+    // DuckDB index storage. Reserved for future non-Lucene snapshots.
+    DUCKDB = 2;
+    // RocksDB index storage. Reserved for future non-Lucene snapshots.
+    ROCKSDB = 3;
+  }
+
   // Name of the snapshot
   string name = 1;
   // Permanent id for a blob. This id is used to uniquely identify
@@ -69,7 +89,7 @@ message SnapshotMetadata {
   // If not, should be same as name
   string snapshot_id = 2;
 
-  // Path of the file stored in blobstore.
+  // Path of the snapshot root for sealed snapshots or stable NRT manifest for live snapshots.
   string snapshot_path = 3;
   // earliest timestamp of the event in the snapshot file.
   int64 start_time_epoch_ms = 4;
@@ -86,6 +106,21 @@ message SnapshotMetadata {
 
   // Size of the snapshot in bytes
   int64 sizeInBytes = 9;
+
+  // Whether this metadata describes an active live snapshot or finalized sealed snapshot.
+  SnapshotType snapshot_type = 10;
+
+  // Storage/index format used by this snapshot.
+  IndexType index_type = 11;
+
+  // Monotonically increasing NRT generation for live snapshots.
+  int64 snapshot_generation = 12;
+
+  // Snapshot metadata schema version.
+  string version = 14;
+
+  reserved 13;
+  reserved "snapshot_version_token";
 }
 
 message SearchMetadata {

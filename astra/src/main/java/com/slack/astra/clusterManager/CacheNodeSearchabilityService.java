@@ -1,12 +1,14 @@
 package com.slack.astra.clusterManager;
 
 import com.google.common.util.concurrent.AbstractScheduledService;
+import com.slack.astra.chunk.ReadWriteChunk;
 import com.slack.astra.metadata.cache.CacheNodeAssignment;
 import com.slack.astra.metadata.cache.CacheNodeAssignmentStore;
 import com.slack.astra.metadata.cache.CacheNodeMetadata;
 import com.slack.astra.metadata.cache.CacheNodeMetadataStore;
 import com.slack.astra.metadata.search.SearchMetadata;
 import com.slack.astra.metadata.search.SearchMetadataStore;
+import com.slack.astra.metadata.snapshot.SnapshotMetadata;
 import com.slack.astra.metadata.snapshot.SnapshotMetadataStore;
 import com.slack.astra.proto.config.AstraConfigs;
 import com.slack.astra.proto.metadata.Metadata;
@@ -14,6 +16,8 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -66,6 +70,11 @@ public class CacheNodeSearchabilityService extends AbstractScheduledService {
 
   @Override
   protected void runOneIteration() throws Exception {
+    markSearchableCacheNodes();
+    evictLiveAssignmentsForSearchableSealedSnapshots();
+  }
+
+  private void markSearchableCacheNodes() throws Exception {
     List<CacheNodeMetadata> unsearchableCacheNodes =
         cacheNodeMetadataStore.listSync().stream()
             .filter(cacheNodeMetadata -> !cacheNodeMetadata.searchable)
@@ -117,6 +126,65 @@ public class CacheNodeSearchabilityService extends AbstractScheduledService {
         numberOfUnsearchableNodes.increment();
       }
     }
+  }
+
+  private void evictLiveAssignmentsForSearchableSealedSnapshots() {
+    Set<String> searchableSealedSnapshots =
+        searchMetadataStore.listSync().stream()
+            .filter(SearchMetadata::isSearchable)
+            .filter(
+                searchMetadata ->
+                    !searchMetadata.snapshotName.startsWith(ReadWriteChunk.LIVE_SNAPSHOT_PREFIX))
+            .map(searchMetadata -> searchMetadata.snapshotName)
+            .collect(java.util.stream.Collectors.toUnmodifiableSet());
+
+    if (searchableSealedSnapshots.isEmpty()) {
+      return;
+    }
+
+    Map<String, SnapshotMetadata> liveSnapshotsById =
+        snapshotMetadataStore.listSync().stream()
+            .filter(SnapshotMetadata::isLive)
+            .collect(
+                java.util.stream.Collectors.toMap(
+                    snapshotMetadata -> snapshotMetadata.snapshotId,
+                    snapshotMetadata -> snapshotMetadata));
+
+    cacheNodeAssignmentStore.listSync().stream()
+        .filter(
+            cacheNodeAssignment ->
+                cacheNodeAssignment.state
+                    == Metadata.CacheNodeAssignment.CacheNodeAssignmentState.LIVE)
+        .filter(
+            cacheNodeAssignment -> liveSnapshotsById.containsKey(cacheNodeAssignment.snapshotId))
+        .filter(
+            cacheNodeAssignment ->
+                searchableSealedSnapshots.contains(
+                    getRawSnapshotName(liveSnapshotsById.get(cacheNodeAssignment.snapshotId))))
+        .forEach(
+            cacheNodeAssignment -> {
+              String rawSnapshotName =
+                  getRawSnapshotName(liveSnapshotsById.get(cacheNodeAssignment.snapshotId));
+              LOG.info(
+                  "Marking live cache assignment {} for eviction because sealed snapshot {} is searchable",
+                  cacheNodeAssignment.assignmentId,
+                  rawSnapshotName);
+              try {
+                cacheNodeAssignmentStore
+                    .updateAssignmentState(
+                        cacheNodeAssignment,
+                        Metadata.CacheNodeAssignment.CacheNodeAssignmentState.EVICT)
+                    .get(5, TimeUnit.SECONDS);
+              } catch (Exception e) {
+                LOG.error("Failed to evict live cache assignment {}", cacheNodeAssignment, e);
+              }
+            });
+  }
+
+  private static String getRawSnapshotName(SnapshotMetadata snapshotMetadata) {
+    return snapshotMetadata.name.startsWith(ReadWriteChunk.LIVE_SNAPSHOT_PREFIX)
+        ? snapshotMetadata.name.substring(ReadWriteChunk.LIVE_SNAPSHOT_PREFIX.length())
+        : snapshotMetadata.name;
   }
 
   @Override

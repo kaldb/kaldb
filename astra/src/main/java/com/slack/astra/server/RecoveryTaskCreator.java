@@ -74,9 +74,14 @@ public class RecoveryTaskCreator {
   @VisibleForTesting
   public static List<SnapshotMetadata> getStaleLiveSnapshots(
       List<SnapshotMetadata> snapshots, String partitionId) {
+    if (partitionId == null) {
+      return List.of();
+    }
+
     return snapshots.stream()
         .filter(snapshotMetadata -> snapshotMetadata.partitionId.equals(partitionId))
         .filter(SnapshotMetadata::isLive)
+        .filter(snapshotMetadata -> snapshotMetadata.snapshotPath.isBlank())
         .collect(Collectors.toUnmodifiableList());
   }
 
@@ -167,8 +172,10 @@ public class RecoveryTaskCreator {
     }
 
     List<SnapshotMetadata> snapshots = snapshotMetadataStore.listSync();
+    List<SnapshotMetadata> staleSnapshots = deleteStaleLiveSnapshots(snapshots);
     List<SnapshotMetadata> snapshotsForPartition =
         snapshots.stream()
+            .filter(snapshotMetadata -> !staleSnapshots.contains(snapshotMetadata))
             .filter(
                 snapshotMetadata -> {
                   if (snapshotMetadata == null || snapshotMetadata.partitionId == null) {
@@ -181,18 +188,20 @@ public class RecoveryTaskCreator {
                       && snapshotMetadata.partitionId.equals(partitionId);
                 })
             .collect(Collectors.toUnmodifiableList());
-    List<SnapshotMetadata> deletedSnapshots = deleteStaleLiveSnapshots(snapshotsForPartition);
 
-    List<SnapshotMetadata> nonLiveSnapshotsForPartition =
+    List<SnapshotMetadata> durableSnapshotsForPartition =
         snapshotsForPartition.stream()
-            .filter(s -> !deletedSnapshots.contains(s))
+            .filter(
+                snapshotMetadata ->
+                    !snapshotMetadata.isLive() || !snapshotMetadata.snapshotPath.isBlank())
             .collect(Collectors.toUnmodifiableList());
 
     // Get the highest offset that is indexed in durable store.
     List<RecoveryTaskMetadata> recoveryTasks = recoveryTaskMetadataStore.listSync();
     long highestDurableOffsetForPartition =
         getHighestDurableOffsetForPartition(
-            nonLiveSnapshotsForPartition, recoveryTasks, partitionId);
+            durableSnapshotsForPartition, recoveryTasks, partitionId);
+
     LOG.debug(
         "The highest durable offset for partition {} is {}",
         partitionId,

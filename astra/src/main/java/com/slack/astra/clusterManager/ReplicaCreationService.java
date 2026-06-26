@@ -171,12 +171,14 @@ public class ReplicaCreationService extends AbstractScheduledService {
       AtomicInteger successCounter = new AtomicInteger(0);
       List<ListenableFuture<?>> createdReplicaMetadataList =
           snapshotMetadataStore.listSync().stream()
-              // only attempt to create replicas for snapshots that have not expired, not live, and
-              // do not already exist
+              // only attempt to create replicas for snapshots that have not expired, are either
+              // sealed or are live snapshots with a published snapshotPath, and do not already
+              // exist
               .filter(
                   snapshotMetadata ->
                       snapshotMetadata.endTimeEpochMs > snapshotExpiration
-                          && !snapshotMetadata.isLive()
+                          && (!snapshotMetadata.isLive()
+                              || !snapshotMetadata.snapshotPath.isBlank())
                           && !existingReplicas.contains(snapshotMetadata.snapshotId))
               .map(
                   (snapshotMetadata) -> {

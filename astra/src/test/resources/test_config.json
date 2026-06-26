@@ -31,6 +31,7 @@
     },
     "dataDirectory": "/tmp",
     "maxOffsetDelayMessages" : 10002,
+    "nrtEnabled": false,
     "serverConfig": {
       "serverPort": 8080,
       "serverAddress": "localhost",

@@ -451,6 +451,8 @@ public class IndexingChunkManagerTest {
     assertThat(fetchNonLiveSnapshot(snapshots)).isEmpty();
     assertThat(snapshots.get(0).isLive()).isTrue();
     assertThat(snapshots.get(0).maxOffset).isEqualTo(0);
+    assertThat(snapshots.get(0).snapshotGeneration).isZero();
+    assertThat(snapshots.get(0).snapshotPath).isEmpty();
     assertThat(snapshots.get(0).partitionId).isEqualTo(TEST_KAFKA_PARTITION_ID);
     assertThat(snapshots.get(0).startTimeEpochMs)
         .isCloseTo(creationTime.toEpochMilli(), Offset.offset(5000L));
@@ -532,6 +534,37 @@ public class IndexingChunkManagerTest {
                     messageWithInvalidTopic.toString().length(),
                     "differentKafkaTopic",
                     lowerOffset + 1));
+  }
+
+  @Test
+  public void testNrtEnabledPublishesLiveSnapshotMetadata() throws Exception {
+    ChunkRollOverStrategy chunkRollOverStrategy =
+        new DiskOrMessageCountBasedRolloverStrategy(
+            metricsRegistry, 10 * 1024 * 1024 * 1024L, 1000000L);
+    AstraConfigs.IndexerConfig indexerConfig =
+        AstraConfigUtil.makeIndexerConfig(TEST_PORT, 1000, 100).toBuilder()
+            .setNrtEnabled(true)
+            .build();
+    initChunkManager(
+        chunkRollOverStrategy, blobStore, MoreExecutors.newDirectExecutorService(), indexerConfig);
+
+    Trace.Span message = SpanUtil.makeSpan(1);
+    chunkManager.addMessage(message, message.toString().length(), TEST_KAFKA_PARTITION_ID, 42);
+
+    List<SnapshotMetadata> snapshots =
+        AstraMetadataTestUtils.listSyncUncached(snapshotMetadataStore);
+    List<SnapshotMetadata> liveSnapshots = fetchLiveSnapshot(snapshots);
+    assertThat(liveSnapshots.size()).isEqualTo(1);
+
+    SnapshotMetadata liveSnapshot = liveSnapshots.get(0);
+    assertThat(liveSnapshot.maxOffset).isEqualTo(42);
+    assertThat(liveSnapshot.snapshotGeneration).isEqualTo(1);
+    assertThat(liveSnapshot.snapshotPath)
+        .contains("/manifests/00000000000000000001-" + TEST_HOST + "-" + TEST_PORT + ".json");
+
+    String manifestJson = blobStore.readFileData(liveSnapshot.snapshotPath, false);
+    assertThat(manifestJson).contains("\"startOffsetInclusive\":42");
+    assertThat(manifestJson).contains("\"maxIndexedOffsetInclusive\":42");
   }
 
   private void testChunkManagerSearch(

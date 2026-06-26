@@ -12,6 +12,8 @@ import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListeningExecutorService;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.slack.astra.blobfs.BlobStore;
+import com.slack.astra.blobfs.nrt.NrtBlobStore;
+import com.slack.astra.blobfs.nrt.NrtSnapshotPublisher;
 import com.slack.astra.chunk.Chunk;
 import com.slack.astra.chunk.ChunkInfo;
 import com.slack.astra.chunk.IndexingChunkImpl;
@@ -21,6 +23,7 @@ import com.slack.astra.chunkrollover.ChunkRollOverStrategy;
 import com.slack.astra.chunkrollover.DiskOrMessageCountBasedRolloverStrategy;
 import com.slack.astra.logstore.LogMessage;
 import com.slack.astra.logstore.LogStore;
+import com.slack.astra.logstore.LuceneIndexStoreConfig;
 import com.slack.astra.logstore.LuceneIndexStoreImpl;
 import com.slack.astra.metadata.search.SearchMetadataStore;
 import com.slack.astra.metadata.snapshot.SnapshotMetadataStore;
@@ -66,6 +69,7 @@ public class IndexingChunkManager<T> extends ChunkManagerBase<T> {
   private final SearchContext searchContext;
   private final AstraConfigs.IndexerConfig indexerConfig;
   private final AstraConfigs.MetadataStoreConfig metadataStoreConfig;
+  private final NrtPublishController<T> nrtPublishController;
   private ReadWriteChunk<T> activeChunk;
 
   private final MeterRegistry meterRegistry;
@@ -141,6 +145,11 @@ public class IndexingChunkManager<T> extends ChunkManagerBase<T> {
     this.searchContext = searchContext;
     this.indexerConfig = indexerConfig;
     this.metadataStoreConfig = metadataStoreConfig;
+    long nrtPublishIntervalMs =
+        LuceneIndexStoreConfig.getCommitDuration(
+                indexerConfig.getLuceneConfig().getCommitDurationSecs())
+            .toMillis();
+    nrtPublishController = new NrtPublishController<>(nrtPublishIntervalMs);
 
     stopIngestion = true;
     activeChunk = null;
@@ -179,6 +188,7 @@ public class IndexingChunkManager<T> extends ChunkManagerBase<T> {
     // find the active chunk and add a message to it
     ReadWriteChunk<T> currentChunk = getOrCreateActiveChunk(kafkaPartitionId, indexerConfig);
     currentChunk.addMessage(message, kafkaPartitionId, offset);
+    nrtPublishController.onMessageIndexed(currentChunk, offset);
     long currentIndexedMessages = liveMessagesIndexedGauge.incrementAndGet();
     long currentIndexedBytes = liveBytesIndexedGauge.addAndGet(msgSize);
 
@@ -195,6 +205,7 @@ public class IndexingChunkManager<T> extends ChunkManagerBase<T> {
   private void doRollover(ReadWriteChunk<T> currentChunk) {
     // Set activeChunk to null first, so we can initiate the roll over.
     activeChunk = null;
+    nrtPublishController.onChunkRolledOver();
     liveBytesIndexedGauge.set(0);
     liveMessagesIndexedGauge.set(0);
     // Set the end time of the chunk and start the roll over.
@@ -275,6 +286,7 @@ public class IndexingChunkManager<T> extends ChunkManagerBase<T> {
               searchContext,
               kafkaPartitionId);
       chunkMap.put(newChunk.id(), newChunk);
+      nrtPublishController.onActiveChunkCreated();
       // Register the chunk, so we can search it.
       newChunk.postCreate();
       activeChunk = newChunk;
@@ -397,6 +409,18 @@ public class IndexingChunkManager<T> extends ChunkManagerBase<T> {
         new SearchMetadataStore(curatorFramework, metadataStoreConfig, meterRegistry, false);
     snapshotMetadataStore =
         new SnapshotMetadataStore(curatorFramework, metadataStoreConfig, meterRegistry);
+    if (indexerConfig.getNrtEnabled()) {
+      String writerNodeId = searchContext.hostname + "-" + searchContext.port;
+      nrtPublishController.enable(
+          new NrtSnapshotPublisher(
+              blobStore, new NrtBlobStore(blobStore), snapshotMetadataStore, writerNodeId));
+      LOG.info(
+          "NRT live snapshot publishing enabled with writerNodeId={} intervalMs={}",
+          writerNodeId,
+          LuceneIndexStoreConfig.getCommitDuration(
+                  indexerConfig.getLuceneConfig().getCommitDurationSecs())
+              .toMillis());
+    }
 
     stopIngestion = false;
   }

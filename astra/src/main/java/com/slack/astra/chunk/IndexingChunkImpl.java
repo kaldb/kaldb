@@ -5,6 +5,8 @@ import static com.slack.astra.chunk.ChunkInfo.toSnapshotMetadata;
 import com.slack.astra.logstore.LogStore;
 import com.slack.astra.metadata.search.SearchMetadataStore;
 import com.slack.astra.metadata.snapshot.SnapshotMetadata;
+import com.slack.astra.metadata.snapshot.SnapshotMetadata.IndexType;
+import com.slack.astra.metadata.snapshot.SnapshotMetadata.SnapshotType;
 import com.slack.astra.metadata.snapshot.SnapshotMetadataStore;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
@@ -74,7 +76,12 @@ public class IndexingChunkImpl<T> extends ReadWriteChunk<T> {
             chunkInfo.getDataEndTimeEpochMs(),
             chunkInfo.getMaxOffset(),
             chunkInfo.getKafkaPartitionId(),
-            liveSnapshotMetadata.sizeInBytesOnDisk);
+            liveSnapshotMetadata.sizeInBytesOnDisk,
+            SnapshotType.LIVE,
+            IndexType.LUCENE,
+            "",
+            0,
+            liveSnapshotMetadata.version);
     snapshotMetadataStore.updateSync(updatedSnapshotMetadata);
     liveSnapshotMetadata = updatedSnapshotMetadata;
 

@@ -159,6 +159,11 @@ message IndexerConfig {
   // past the max_chunks_on_disk. Chunks will be deleted in an oldest
   // to newest order.
   int32 max_chunks_on_disk = 13;
+
+  // Enables near-real-time publishing of live snapshot manifests from the indexer.
+  // When enabled, the active indexer chunk publishes manifest-backed live snapshots that cache
+  // and recovery flows can consume.
+  bool nrt_enabled = 15;
 }
 
 // A config object containing all the lucene configs.

@@ -284,6 +284,51 @@ public class ReplicaCreationServiceTest {
   }
 
   @Test
+  public void shouldCreateReplicasForLiveSnapshotsWithPublishedManifest() {
+    SnapshotMetadata snapshotLive =
+        new SnapshotMetadata(
+            "b",
+            Instant.now().toEpochMilli() - 1,
+            Instant.now().toEpochMilli(),
+            0,
+            "b",
+            0,
+            SnapshotMetadata.SnapshotType.LIVE,
+            SnapshotMetadata.IndexType.LUCENE,
+            "nrt/v1/partitions/b/chunks/b/manifests/00000000000000000001-indexer-1.json",
+            1,
+            SnapshotMetadata.DEFAULT_VERSION);
+    snapshotMetadataStore.createSync(snapshotLive);
+
+    AstraConfigs.ManagerConfig.ReplicaCreationServiceConfig replicaCreationServiceConfig =
+        AstraConfigs.ManagerConfig.ReplicaCreationServiceConfig.newBuilder()
+            .addAllReplicaSets(List.of("rep1"))
+            .setSchedulePeriodMins(10)
+            .setReplicaLifespanMins(1440)
+            .build();
+
+    AstraConfigs.ManagerConfig managerConfig =
+        AstraConfigs.ManagerConfig.newBuilder()
+            .setReplicaCreationServiceConfig(replicaCreationServiceConfig)
+            .setEventAggregationSecs(2)
+            .setScheduleInitialDelayMins(0)
+            .build();
+
+    ReplicaCreationService replicaCreationService =
+        new ReplicaCreationService(
+            replicaMetadataStore, snapshotMetadataStore, managerConfig, meterRegistry);
+
+    Map<String, Integer> assignReplicas =
+        replicaCreationService.createReplicasForUnassignedSnapshots();
+
+    assertThat(assignReplicas.get("rep1")).isEqualTo(1);
+    await().until(() -> replicaMetadataStore.listSync().size() == 1);
+    assertThat(replicaMetadataStore.listSync().get(0).snapshotId)
+        .isEqualTo(snapshotLive.snapshotId);
+    assertThat(replicaMetadataStore.listSync().stream().filter(r -> r.isRestored).count()).isZero();
+  }
+
+  @Test
   public void shouldHandleVeryLargeListOfIneligibleSnapshots() {
     int ineligibleSnapshotsToCreate = 500;
     int liveSnapshotsToCreate = 30;

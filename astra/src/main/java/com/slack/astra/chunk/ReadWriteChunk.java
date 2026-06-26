@@ -196,6 +196,18 @@ public abstract class ReadWriteChunk<T> implements Chunk<T> {
     this.readOnly = readOnly;
   }
 
+  public LogStore getLogStore() {
+    return logStore;
+  }
+
+  public SnapshotMetadata getLiveSnapshotMetadata() {
+    return liveSnapshotMetadata;
+  }
+
+  public void setLiveSnapshotMetadata(SnapshotMetadata liveSnapshotMetadata) {
+    this.liveSnapshotMetadata = liveSnapshotMetadata;
+  }
+
   @VisibleForTesting
   public void commit() {
     logStore.commit();

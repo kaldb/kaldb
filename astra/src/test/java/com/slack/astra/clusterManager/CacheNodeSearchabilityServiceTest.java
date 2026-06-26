@@ -5,20 +5,24 @@ import static org.mockito.Mockito.spy;
 
 import brave.Tracing;
 import com.slack.astra.metadata.cache.CacheNodeAssignment;
+import com.slack.astra.metadata.cache.CacheNodeAssignmentSerializer;
 import com.slack.astra.metadata.cache.CacheNodeAssignmentStore;
 import com.slack.astra.metadata.cache.CacheNodeMetadata;
 import com.slack.astra.metadata.cache.CacheNodeMetadataStore;
 import com.slack.astra.metadata.core.CuratorBuilder;
 import com.slack.astra.metadata.search.SearchMetadata;
 import com.slack.astra.metadata.search.SearchMetadataStore;
+import com.slack.astra.metadata.snapshot.SnapshotMetadata;
 import com.slack.astra.metadata.snapshot.SnapshotMetadataStore;
 import com.slack.astra.proto.config.AstraConfigs;
 import com.slack.astra.proto.metadata.Metadata;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import org.apache.curator.test.TestingServer;
 import org.apache.curator.x.async.AsyncCuratorFramework;
+import org.awaitility.Awaitility;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -253,5 +257,67 @@ public class CacheNodeSearchabilityServiceTest {
     SearchMetadata searchMetadata = searchMetadataStore.getSync("test-name");
     assertThat(cacheNodeMetadata.searchable).isFalse();
     assertThat(searchMetadata.isSearchable()).isFalse();
+  }
+
+  @Test
+  public void testCacheNodeSearchabilityServiceEvictsLiveAssignmentsWhenSealedSnapshotSearchable()
+      throws Exception {
+    cacheNodeMetadataStore.createSync(
+        new CacheNodeMetadata("test-id", "testhostname", 1, "rep1", true));
+
+    SnapshotMetadata liveSnapshot =
+        new SnapshotMetadata(
+            "LIVE_snapshot-id",
+            1L,
+            2L,
+            10L,
+            "partition",
+            0,
+            SnapshotMetadata.SnapshotType.LIVE,
+            SnapshotMetadata.IndexType.LUCENE,
+            "",
+            1,
+            SnapshotMetadata.DEFAULT_VERSION);
+    snapshotMetadataStore.createSync(liveSnapshot);
+
+    cacheNodeAssignmentStore.createSync(
+        new CacheNodeAssignment(
+            "assignment-id",
+            "test-id",
+            liveSnapshot.snapshotId,
+            "replica-id",
+            "rep1",
+            1,
+            Metadata.CacheNodeAssignment.CacheNodeAssignmentState.LIVE));
+
+    searchMetadataStore.createSync(
+        new SearchMetadata("sealed-name-test-id", "snapshot-id", "test-url:testhostname", true));
+
+    CacheNodeSearchabilityService cacheNodeSearchabilityService =
+        new CacheNodeSearchabilityService(
+            meterRegistry,
+            cacheNodeMetadataStore,
+            managerConfig,
+            cacheNodeAssignmentStore,
+            searchMetadataStore,
+            snapshotMetadataStore);
+    cacheNodeSearchabilityService.runOneIteration();
+
+    Awaitility.await()
+        .untilAsserted(
+            () -> {
+              CacheNodeAssignment cacheNodeAssignment =
+                  new CacheNodeAssignmentSerializer()
+                      .fromJsonStr(
+                          new String(
+                              curatorFramework
+                                  .getData()
+                                  .forPath("/cacheAssignment/test-id/assignment-id")
+                                  .toCompletableFuture()
+                                  .get(1, java.util.concurrent.TimeUnit.SECONDS),
+                              StandardCharsets.UTF_8));
+              assertThat(cacheNodeAssignment.state)
+                  .isEqualTo(Metadata.CacheNodeAssignment.CacheNodeAssignmentState.EVICT);
+            });
   }
 }

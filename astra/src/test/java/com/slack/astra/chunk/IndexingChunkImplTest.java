@@ -97,6 +97,8 @@ public class IndexingChunkImplTest {
     private boolean closeChunk = true;
     private MeterRegistry registry;
     private ReadWriteChunk<LogMessage> chunk;
+    private SnapshotMetadataStore snapshotMetadataStore;
+    private SearchMetadataStore searchMetadataStore;
     private TestingServer testingServer;
     private AsyncCuratorFramework curatorFramework;
 
@@ -123,9 +125,9 @@ public class IndexingChunkImplTest {
 
       curatorFramework = CuratorBuilder.build(registry, metadataStoreConfig.getZookeeperConfig());
 
-      SnapshotMetadataStore snapshotMetadataStore =
+      snapshotMetadataStore =
           new SnapshotMetadataStore(curatorFramework, metadataStoreConfig, registry);
-      SearchMetadataStore searchMetadataStore =
+      searchMetadataStore =
           new SearchMetadataStore(curatorFramework, metadataStoreConfig, registry, true);
 
       final LuceneIndexStoreImpl logStore =
@@ -156,6 +158,8 @@ public class IndexingChunkImplTest {
     public void tearDown() throws IOException, TimeoutException {
       if (closeChunk) chunk.close();
 
+      searchMetadataStore.close();
+      snapshotMetadataStore.close();
       curatorFramework.unwrap().close();
       testingServer.close();
       registry.close();
