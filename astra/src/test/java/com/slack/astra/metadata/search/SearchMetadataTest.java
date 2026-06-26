@@ -12,23 +12,30 @@ public class SearchMetadataTest {
   public void testSearchMetadata() {
     final String name = "testSearch";
     final String snapshotName = "testSnapshot";
+    final String snapshotId = "LIVE_testSnapshot";
     final String url = "http://10.10.1.1:9090";
 
-    SearchMetadata searchMetadata = new SearchMetadata(name, snapshotName, url);
+    SearchMetadata searchMetadata =
+        new SearchMetadata(name, snapshotName, snapshotId, url, true, true);
 
     assertThat(searchMetadata.name).isEqualTo(name);
     assertThat(searchMetadata.snapshotName).isEqualTo(snapshotName);
+    assertThat(searchMetadata.snapshotId).isEqualTo(snapshotId);
     assertThat(searchMetadata.url).isEqualTo(url);
+    assertThat(searchMetadata.isLiveChunkOnIndexer()).isTrue();
   }
 
   @Test
   public void testEqualsAndHashCode() {
     final String name = "testSearch";
     final String snapshotName = "testSnapshot";
+    final String snapshotId = "LIVE_testSnapshot";
     final String url = "http://10.10.1.1:9090";
 
-    SearchMetadata searchMetadata1 = new SearchMetadata(name, snapshotName, url);
-    SearchMetadata searchMetadata2 = new SearchMetadata(name + "2", snapshotName, url);
+    SearchMetadata searchMetadata1 =
+        new SearchMetadata(name, snapshotName, snapshotId, url, true, true);
+    SearchMetadata searchMetadata2 =
+        new SearchMetadata(name + "2", snapshotName, snapshotId, url, true, false);
 
     assertThat(searchMetadata1).isNotEqualTo(searchMetadata2);
 
@@ -43,17 +50,20 @@ public class SearchMetadataTest {
   public void testValidSearchMetadata() {
     final String name = "testSearch";
     final String snapshotName = "testSnapshot";
+    final String snapshotId = "LIVE_testSnapshot";
     final String url = "http://10.10.1.1:9090";
 
     assertThatIllegalArgumentException()
-        .isThrownBy(() -> new SearchMetadata("", snapshotName, url));
+        .isThrownBy(() -> new SearchMetadata("", snapshotName, snapshotId, url, true, false));
     assertThatIllegalArgumentException()
-        .isThrownBy(() -> new SearchMetadata(null, snapshotName, url));
-    assertThatIllegalArgumentException().isThrownBy(() -> new SearchMetadata(name, "", url));
-    assertThatIllegalArgumentException().isThrownBy(() -> new SearchMetadata(name, null, url));
+        .isThrownBy(() -> new SearchMetadata(null, snapshotName, snapshotId, url, true, false));
     assertThatIllegalArgumentException()
-        .isThrownBy(() -> new SearchMetadata(name, snapshotName, ""));
+        .isThrownBy(() -> new SearchMetadata(name, "", snapshotId, url, true, false));
     assertThatIllegalArgumentException()
-        .isThrownBy(() -> new SearchMetadata(name, snapshotName, ""));
+        .isThrownBy(() -> new SearchMetadata(name, null, snapshotId, url, true, false));
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> new SearchMetadata(name, snapshotName, snapshotId, "", true, false));
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> new SearchMetadata(name, snapshotName, "", url, true, false));
   }
 }

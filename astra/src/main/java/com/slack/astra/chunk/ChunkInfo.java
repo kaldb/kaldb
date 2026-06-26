@@ -40,7 +40,15 @@ public class ChunkInfo {
         chunkInfo.getDataEndTimeEpochMs(),
         chunkInfo.maxOffset,
         chunkInfo.kafkaPartitionId,
-        chunkInfo.sizeInBytesOnDisk);
+        chunkInfo.sizeInBytesOnDisk,
+        chunkInfo.sizeInBytesOnDisk == 0
+            ? SnapshotMetadata.SnapshotType.LIVE
+            : SnapshotMetadata.SnapshotType.SEALED,
+        SnapshotMetadata.IndexType.LUCENE,
+        "",
+        0,
+        SnapshotMetadata.DEFAULT_VERSION,
+        chunkInfo.chunkId);
   }
 
   /* A unique identifier for a the chunk. */

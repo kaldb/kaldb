@@ -24,6 +24,7 @@ import java.util.Objects;
  */
 public class SnapshotMetadata extends AstraPartitionedMetadata {
   public static final String DEFAULT_VERSION = "1";
+  public static final String LIVE_SNAPSHOT_PREFIX = "LIVE_";
 
   public enum SnapshotType {
     LIVE,
@@ -37,6 +38,7 @@ public class SnapshotMetadata extends AstraPartitionedMetadata {
   }
 
   public final String snapshotId;
+  public final String chunkId;
   public final String snapshotPath;
   public final SnapshotType snapshotType;
   public final IndexType indexType;
@@ -48,12 +50,8 @@ public class SnapshotMetadata extends AstraPartitionedMetadata {
   public final long snapshotGeneration;
   public final String version;
 
-  private static String normalizeSnapshotPath(
-      String snapshotPath, String snapshotId, SnapshotType snapshotType) {
-    if (snapshotPath != null && !snapshotPath.isBlank()) {
-      return snapshotPath;
-    }
-    return snapshotType == SnapshotType.LIVE ? "" : snapshotId;
+  static String normalizeSnapshotPath(String snapshotPath) {
+    return snapshotPath == null ? "" : snapshotPath;
   }
 
   private static String normalizeVersion(String version) {
@@ -79,9 +77,10 @@ public class SnapshotMetadata extends AstraPartitionedMetadata {
         sizeInBytesOnDisk,
         sizeInBytesOnDisk == 0 ? SnapshotType.LIVE : SnapshotType.SEALED,
         IndexType.LUCENE,
-        sizeInBytesOnDisk == 0 ? "" : snapshotId,
+        "",
         0,
-        DEFAULT_VERSION);
+        DEFAULT_VERSION,
+        null);
   }
 
   public SnapshotMetadata(
@@ -96,6 +95,34 @@ public class SnapshotMetadata extends AstraPartitionedMetadata {
       String snapshotPath,
       long snapshotGeneration,
       String version) {
+    this(
+        snapshotId,
+        startTimeEpochMs,
+        endTimeEpochMs,
+        maxOffset,
+        partitionId,
+        sizeInBytesOnDisk,
+        snapshotType,
+        indexType,
+        snapshotPath,
+        snapshotGeneration,
+        version,
+        null);
+  }
+
+  public SnapshotMetadata(
+      String snapshotId,
+      long startTimeEpochMs,
+      long endTimeEpochMs,
+      long maxOffset,
+      String partitionId,
+      long sizeInBytesOnDisk,
+      SnapshotType snapshotType,
+      IndexType indexType,
+      String snapshotPath,
+      long snapshotGeneration,
+      String version,
+      String chunkId) {
     super(snapshotId);
     checkArgument(snapshotId != null && !snapshotId.isEmpty(), "snapshotId can't be null or empty");
     checkArgument(startTimeEpochMs > 0, "start time should be greater than zero.");
@@ -107,11 +134,11 @@ public class SnapshotMetadata extends AstraPartitionedMetadata {
     checkArgument(
         partitionId != null && !partitionId.isEmpty(), "partitionId can't be null or empty");
     checkArgument(snapshotGeneration >= 0, "snapshotGeneration must be greater than or equal to 0");
-
     this.snapshotId = snapshotId;
     this.snapshotType = Objects.requireNonNull(snapshotType, "snapshotType");
     this.indexType = Objects.requireNonNull(indexType, "indexType");
-    this.snapshotPath = normalizeSnapshotPath(snapshotPath, snapshotId, this.snapshotType);
+    this.chunkId = chunkId;
+    this.snapshotPath = normalizeSnapshotPath(snapshotPath);
     this.startTimeEpochMs = startTimeEpochMs;
     this.endTimeEpochMs = endTimeEpochMs;
     this.maxOffset = maxOffset;
@@ -133,6 +160,7 @@ public class SnapshotMetadata extends AstraPartitionedMetadata {
         && sizeInBytesOnDisk == that.sizeInBytesOnDisk
         && snapshotGeneration == that.snapshotGeneration
         && snapshotId.equals(that.snapshotId)
+        && Objects.equals(chunkId, that.chunkId)
         && snapshotPath.equals(that.snapshotPath)
         && snapshotType == that.snapshotType
         && indexType == that.indexType
@@ -144,6 +172,7 @@ public class SnapshotMetadata extends AstraPartitionedMetadata {
   public int hashCode() {
     int result = super.hashCode();
     result = 31 * result + snapshotId.hashCode();
+    result = 31 * result + Objects.hashCode(chunkId);
     result = 31 * result + snapshotPath.hashCode();
     result = 31 * result + snapshotType.hashCode();
     result = 31 * result + indexType.hashCode();
@@ -162,6 +191,9 @@ public class SnapshotMetadata extends AstraPartitionedMetadata {
     return "SnapshotMetadata{"
         + "snapshotId='"
         + snapshotId
+        + '\''
+        + ", chunkId='"
+        + chunkId
         + '\''
         + ", snapshotPath='"
         + snapshotPath

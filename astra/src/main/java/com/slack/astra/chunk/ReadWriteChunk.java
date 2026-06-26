@@ -117,7 +117,7 @@ public abstract class ReadWriteChunk<T> implements Chunk<T> {
     this.meterRegistry = meterRegistry;
     fileUploadAttempts = meterRegistry.counter(INDEX_FILES_UPLOAD);
     liveSnapshotMetadata = toSnapshotMetadata(chunkInfo, LIVE_SNAPSHOT_PREFIX);
-    liveSearchMetadata = toSearchMetadata(liveSnapshotMetadata.snapshotId, searchContext);
+    liveSearchMetadata = toSearchMetadata(liveSnapshotMetadata, chunkInfo.chunkId, searchContext);
     this.searchMetadataStore = searchMetadataStore;
     this.snapshotMetadataStore = snapshotMetadataStore;
     this.logger = logger;
@@ -131,11 +131,15 @@ public abstract class ReadWriteChunk<T> implements Chunk<T> {
   public abstract void preClose();
 
   @VisibleForTesting
-  public static SearchMetadata toSearchMetadata(String snapshotName, SearchContext searchContext) {
+  public static SearchMetadata toSearchMetadata(
+      SnapshotMetadata snapshotMetadata, String chunkId, SearchContext searchContext) {
     return new SearchMetadata(
-        SearchMetadata.generateSearchContextSnapshotId(snapshotName, searchContext.hostname),
-        snapshotName,
+        SearchMetadata.generateSearchContextSnapshotId(
+            snapshotMetadata.snapshotId, searchContext.hostname),
+        chunkId,
+        snapshotMetadata.snapshotId,
         searchContext.toUrl(),
+        true,
         true);
   }
 

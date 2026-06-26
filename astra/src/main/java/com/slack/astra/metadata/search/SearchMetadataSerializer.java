@@ -11,16 +11,22 @@ public class SearchMetadataSerializer implements MetadataSerializer<SearchMetada
     return new SearchMetadata(
         searchMetadataProto.getName(),
         searchMetadataProto.getSnapshotName(),
+        searchMetadataProto.getSnapshotId().isEmpty()
+            ? searchMetadataProto.getSnapshotName()
+            : searchMetadataProto.getSnapshotId(),
         searchMetadataProto.getUrl(),
-        searchMetadataProto.getSearchable());
+        searchMetadataProto.getSearchable(),
+        searchMetadataProto.getDirectLiveChunk());
   }
 
   private static Metadata.SearchMetadata toSearchMetadataProto(SearchMetadata metadata) {
     return Metadata.SearchMetadata.newBuilder()
         .setName(metadata.name)
         .setSnapshotName(metadata.snapshotName)
+        .setSnapshotId(metadata.snapshotId)
         .setUrl(metadata.url)
         .setSearchable(metadata.isSearchable())
+        .setDirectLiveChunk(metadata.isLiveChunkOnIndexer())
         .build();
   }
 

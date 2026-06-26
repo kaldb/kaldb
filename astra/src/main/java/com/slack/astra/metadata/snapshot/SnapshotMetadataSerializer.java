@@ -8,24 +8,31 @@ import com.slack.astra.proto.metadata.Metadata;
 public class SnapshotMetadataSerializer implements MetadataSerializer<SnapshotMetadata> {
   private static Metadata.SnapshotMetadata toSnapshotMetadataProto(
       SnapshotMetadata snapshotMetadata) {
-    return Metadata.SnapshotMetadata.newBuilder()
-        .setName(snapshotMetadata.name)
-        .setSnapshotId(snapshotMetadata.snapshotId)
-        .setSnapshotPath(snapshotMetadata.snapshotPath)
-        .setStartTimeEpochMs(snapshotMetadata.startTimeEpochMs)
-        .setEndTimeEpochMs(snapshotMetadata.endTimeEpochMs)
-        .setPartitionId(snapshotMetadata.partitionId)
-        .setMaxOffset(snapshotMetadata.maxOffset)
-        .setSizeInBytes(snapshotMetadata.sizeInBytesOnDisk)
-        .setSnapshotType(toProtoSnapshotType(snapshotMetadata.snapshotType))
-        .setIndexType(toProtoIndexType(snapshotMetadata.indexType))
-        .setSnapshotGeneration(snapshotMetadata.snapshotGeneration)
-        .setVersion(snapshotMetadata.version)
-        .build();
+    Metadata.SnapshotMetadata.Builder builder =
+        Metadata.SnapshotMetadata.newBuilder()
+            .setName(snapshotMetadata.name)
+            .setSnapshotId(snapshotMetadata.snapshotId)
+            .setSnapshotPath(snapshotMetadata.snapshotPath)
+            .setStartTimeEpochMs(snapshotMetadata.startTimeEpochMs)
+            .setEndTimeEpochMs(snapshotMetadata.endTimeEpochMs)
+            .setPartitionId(snapshotMetadata.partitionId)
+            .setMaxOffset(snapshotMetadata.maxOffset)
+            .setSizeInBytes(snapshotMetadata.sizeInBytesOnDisk)
+            .setSnapshotType(toProtoSnapshotType(snapshotMetadata.snapshotType))
+            .setIndexType(toProtoIndexType(snapshotMetadata.indexType))
+            .setSnapshotGeneration(snapshotMetadata.snapshotGeneration)
+            .setVersion(snapshotMetadata.version);
+    if (snapshotMetadata.chunkId != null) {
+      builder.setChunkId(snapshotMetadata.chunkId);
+    }
+    return builder.build();
   }
 
   private static SnapshotMetadata fromSnapshotMetadataProto(
       Metadata.SnapshotMetadata protoSnapshotMetadata) {
+    SnapshotMetadata.SnapshotType snapshotType =
+        fromProtoSnapshotType(
+            protoSnapshotMetadata.getSnapshotType(), protoSnapshotMetadata.getSizeInBytes());
     return new SnapshotMetadata(
         protoSnapshotMetadata.getSnapshotId(),
         protoSnapshotMetadata.getStartTimeEpochMs(),
@@ -33,12 +40,12 @@ public class SnapshotMetadataSerializer implements MetadataSerializer<SnapshotMe
         protoSnapshotMetadata.getMaxOffset(),
         protoSnapshotMetadata.getPartitionId(),
         protoSnapshotMetadata.getSizeInBytes(),
-        fromProtoSnapshotType(
-            protoSnapshotMetadata.getSnapshotType(), protoSnapshotMetadata.getSizeInBytes()),
+        snapshotType,
         fromProtoIndexType(protoSnapshotMetadata.getIndexType()),
         protoSnapshotMetadata.getSnapshotPath(),
         protoSnapshotMetadata.getSnapshotGeneration(),
-        protoSnapshotMetadata.getVersion());
+        protoSnapshotMetadata.getVersion(),
+        protoSnapshotMetadata.getChunkId().isBlank() ? null : protoSnapshotMetadata.getChunkId());
   }
 
   private static Metadata.SnapshotMetadata.SnapshotType toProtoSnapshotType(

@@ -1,7 +1,6 @@
 package com.slack.astra.logstore.search;
 
 import static com.slack.astra.chunk.ChunkInfo.containsDataInTimeRange;
-import static com.slack.astra.chunk.ReadWriteChunk.LIVE_SNAPSHOT_PREFIX;
 
 import brave.ScopedSpan;
 import brave.Tracing;
@@ -119,6 +118,9 @@ public class AstraDistributedQueryService extends AstraQueryServiceBase implemen
   private final AstraMetadataStoreChangeListener<SearchMetadata> searchMetadataListener =
       (searchMetadata) -> triggerStubUpdate();
 
+  private record QueryableSearchNode(
+      SearchMetadata searchMetadata, SnapshotMetadata snapshotMetadata) {}
+
   private final int SCHEMA_TIMEOUT_MS =
       Integer.parseInt(System.getProperty("astra.query.schemaTimeoutMs", "500"));
 
@@ -126,6 +128,25 @@ public class AstraDistributedQueryService extends AstraQueryServiceBase implemen
       int expectedLogicalSnapshotCount,
       int missingQueryableSnapshotCount,
       Map<String, List<String>> assignedSnapshotsByNode) {}
+
+  /**
+   * Returns the logical chunk key used for query coverage and live/sealed dedup.
+   *
+   * <p>New metadata should use {@code chunkId}, which makes the logical identity explicit. Older
+   * rows may not have {@code chunkId}; in that case we intentionally fall back to the legacy
+   * snapshot-name convention so those rows continue to use the pre-NRT behavior instead of being
+   * guessed into the new chunk-aware path.
+   */
+  private static String logicalSnapshotKey(SnapshotMetadata snapshotMetadata) {
+    if (snapshotMetadata.chunkId != null && !snapshotMetadata.chunkId.isBlank()) {
+      return snapshotMetadata.chunkId;
+    }
+    if (snapshotMetadata.snapshotType == SnapshotMetadata.SnapshotType.LIVE
+        && snapshotMetadata.snapshotId.startsWith(SnapshotMetadata.LIVE_SNAPSHOT_PREFIX)) {
+      return snapshotMetadata.snapshotId.substring(SnapshotMetadata.LIVE_SNAPSHOT_PREFIX.length());
+    }
+    return snapshotMetadata.snapshotId;
+  }
 
   // For now we will use SearchMetadataStore to populate servers
   // But this is wasteful since we add snapshots more often than we add/remove nodes ( hopefully )
@@ -239,20 +260,22 @@ public class AstraDistributedQueryService extends AstraQueryServiceBase implemen
 
   @VisibleForTesting
   protected static Map<String, List<String>> getNodesAndSnapshotsToQuery(
-      Map<String, List<SearchMetadata>> searchMetadataNodesBySnapshotName) {
+      Map<String, List<QueryableSearchNode>> searchMetadataNodesBySnapshotName) {
     ScopedSpan getQueryNodesSpan =
         Tracing.currentTracer()
             .startScopedSpan("AstraDistributedQueryService.getNodesAndSnapshotsToQuery");
     Map<String, List<String>> nodeUrlToSnapshotNames = new HashMap<>();
-    for (List<SearchMetadata> searchMetadataList : searchMetadataNodesBySnapshotName.values()) {
-      SearchMetadata searchMetadata =
+    for (List<QueryableSearchNode> searchMetadataList :
+        searchMetadataNodesBySnapshotName.values()) {
+      QueryableSearchNode queryableSearchNode =
           AstraDistributedQueryService.pickSearchNodeToQuery(searchMetadataList);
+      SearchMetadata searchMetadata = queryableSearchNode.searchMetadata();
 
       if (nodeUrlToSnapshotNames.containsKey(searchMetadata.url)) {
-        nodeUrlToSnapshotNames.get(searchMetadata.url).add(getRawSnapshotName(searchMetadata));
+        nodeUrlToSnapshotNames.get(searchMetadata.url).add(searchMetadata.snapshotName);
       } else {
         List<String> snapshotNames = new ArrayList<>();
-        snapshotNames.add(getRawSnapshotName(searchMetadata));
+        snapshotNames.add(searchMetadata.snapshotName);
         nodeUrlToSnapshotNames.put(searchMetadata.url, snapshotNames);
       }
     }
@@ -262,7 +285,7 @@ public class AstraDistributedQueryService extends AstraQueryServiceBase implemen
   }
 
   @VisibleForTesting
-  protected static Map<String, List<SearchMetadata>> getMatchingSearchMetadata(
+  protected static Map<String, List<QueryableSearchNode>> getMatchingSearchMetadata(
       SearchMetadataStore searchMetadataStore, Map<String, SnapshotMetadata> snapshotsToSearch) {
     // iterate every search metadata whose snapshot needs to be searched.
     // if there are multiple search metadata nodes then pick the most on based on
@@ -271,9 +294,10 @@ public class AstraDistributedQueryService extends AstraQueryServiceBase implemen
         Tracing.currentTracer()
             .startScopedSpan("AstraDistributedQueryService.getMatchingSearchMetadata");
 
-    Map<String, List<SearchMetadata>> searchMetadataGroupedByName = new HashMap<>();
+    Map<String, List<QueryableSearchNode>> searchMetadataGroupedByName = new HashMap<>();
     for (SearchMetadata searchMetadata : searchMetadataStore.listSync()) {
-      if (!snapshotsToSearch.containsKey(searchMetadata.snapshotName)) {
+      SnapshotMetadata snapshotMetadata = snapshotsToSearch.get(searchMetadata.snapshotId);
+      if (snapshotMetadata == null) {
         continue;
       }
 
@@ -284,13 +308,15 @@ public class AstraDistributedQueryService extends AstraQueryServiceBase implemen
         continue;
       }
 
-      String rawSnapshotName = AstraDistributedQueryService.getRawSnapshotName(searchMetadata);
-      if (searchMetadataGroupedByName.containsKey(rawSnapshotName)) {
-        searchMetadataGroupedByName.get(rawSnapshotName).add(searchMetadata);
+      String chunkId = logicalSnapshotKey(snapshotMetadata);
+      if (searchMetadataGroupedByName.containsKey(chunkId)) {
+        searchMetadataGroupedByName
+            .get(chunkId)
+            .add(new QueryableSearchNode(searchMetadata, snapshotMetadata));
       } else {
-        List<SearchMetadata> searchMetadataList = new ArrayList<>();
-        searchMetadataList.add(searchMetadata);
-        searchMetadataGroupedByName.put(rawSnapshotName, searchMetadataList);
+        List<QueryableSearchNode> searchMetadataList = new ArrayList<>();
+        searchMetadataList.add(new QueryableSearchNode(searchMetadata, snapshotMetadata));
+        searchMetadataGroupedByName.put(chunkId, searchMetadataList);
       }
     }
     getMatchingSearchMetadataSpan.finish();
@@ -324,7 +350,7 @@ public class AstraDistributedQueryService extends AstraQueryServiceBase implemen
               queryStartTimeEpochMs,
               queryEndTimeEpochMs)
           && isSnapshotInPartition(snapshotMetadata, partitions)) {
-        snapshotsToSearch.put(snapshotMetadata.name, snapshotMetadata);
+        snapshotsToSearch.put(snapshotMetadata.snapshotId, snapshotMetadata);
       }
     }
     snapshotsToSearchSpan.finish();
@@ -346,62 +372,62 @@ public class AstraDistributedQueryService extends AstraQueryServiceBase implemen
     return false;
   }
 
-  private static String getRawSnapshotName(SearchMetadata searchMetadata) {
-    return getRawSnapshotName(searchMetadata.snapshotName);
-  }
-
-  private static String getRawSnapshotName(String snapshotName) {
-    return snapshotName.startsWith(LIVE_SNAPSHOT_PREFIX)
-        ? snapshotName.substring(LIVE_SNAPSHOT_PREFIX.length())
-        : snapshotName;
-  }
-
-  // Logical snapshot names matching the query: SnapshotMetadata rows can hold both LIVE_xyz and
-  // xyz for the same chunk during rollover, so dedup to a single logical-coverage unit. This is
-  // the unit everything else in this branch (fulfilled coverage, _shards.failed, the missing-
-  // metadata gap) is measured in.
-  private static Set<String> getExpectedLogicalSnapshots(
+  // Chunk identifiers matching the query: SnapshotMetadata rows can hold both live and sealed
+  // forms of the same chunk during rollover, so dedup to a single logical coverage unit.
+  private static Set<String> getExpectedChunkIds(
       Map<String, SnapshotMetadata> snapshotsMatchingQuery) {
-    return snapshotsMatchingQuery.keySet().stream()
-        .map(AstraDistributedQueryService::getRawSnapshotName)
+    return snapshotsMatchingQuery.values().stream()
+        .map(AstraDistributedQueryService::logicalSnapshotKey)
         .collect(Collectors.toSet());
   }
 
-  private static int countMissingQueryableLogicalSnapshots(
-      Set<String> expectedLogicalSnapshotNames, Set<String> queryableLogicalSnapshotNames) {
+  private static int countMissingQueryableChunkIds(
+      Set<String> expectedChunkIds, Set<String> queryableChunkIds) {
     return (int)
-        expectedLogicalSnapshotNames.stream()
-            .filter(name -> !queryableLogicalSnapshotNames.contains(name))
-            .count();
+        expectedChunkIds.stream().filter(name -> !queryableChunkIds.contains(name)).count();
   }
 
   /*
    If there is only one node hosting the snapshot use that.
-   Prefer a searchable live indexer when one is available.
-   Otherwise, fall back to a searchable cache node when one is available.
+   Prefer a searchable sealed snapshot when one is available.
+   Otherwise, prefer a searchable live indexer snapshot.
+   Otherwise, fall back to a searchable cache-hosted live NRT snapshot with a published manifest.
    If there are multiple nodes in the same tier, pick one at random.
   */
-  private static SearchMetadata pickSearchNodeToQuery(
-      List<SearchMetadata> queryableSearchMetadataNodes) {
+  private static QueryableSearchNode pickSearchNodeToQuery(
+      List<QueryableSearchNode> queryableSearchMetadataNodes) {
     if (queryableSearchMetadataNodes.size() == 1) {
       return queryableSearchMetadataNodes.get(0);
     }
 
-    List<SearchMetadata> liveIndexSearchMetadata = new ArrayList<>();
-    List<SearchMetadata> cacheNodeHostedSearchMetadata = new ArrayList<>();
-    for (SearchMetadata searchMetadata : queryableSearchMetadataNodes) {
-      if (searchMetadata.snapshotName.startsWith(LIVE_SNAPSHOT_PREFIX)) {
-        liveIndexSearchMetadata.add(searchMetadata);
+    List<QueryableSearchNode> searchableSealedSearchMetadata = new ArrayList<>();
+    List<QueryableSearchNode> sealedSearchMetadata = new ArrayList<>();
+    List<QueryableSearchNode> searchableLiveIndexSearchMetadata = new ArrayList<>();
+    List<QueryableSearchNode> liveIndexerSearchMetadata = new ArrayList<>();
+    List<QueryableSearchNode> searchableCacheNodeHostedSearchMetadata = new ArrayList<>();
+    List<QueryableSearchNode> cacheNodeHostedSearchMetadata = new ArrayList<>();
+    for (QueryableSearchNode queryableSearchNode : queryableSearchMetadataNodes) {
+      if (!queryableSearchNode.snapshotMetadata().isLive()) {
+        sealedSearchMetadata.add(queryableSearchNode);
+        if (queryableSearchNode.searchMetadata().isSearchable()) {
+          searchableSealedSearchMetadata.add(queryableSearchNode);
+        }
+      } else if (isLiveIndexerSearchNode(queryableSearchNode)) {
+        liveIndexerSearchMetadata.add(queryableSearchNode);
+        if (queryableSearchNode.searchMetadata().isSearchable()) {
+          searchableLiveIndexSearchMetadata.add(queryableSearchNode);
+        }
       } else {
-        cacheNodeHostedSearchMetadata.add(searchMetadata);
+        cacheNodeHostedSearchMetadata.add(queryableSearchNode);
+        if (queryableSearchNode.searchMetadata().isSearchable()) {
+          searchableCacheNodeHostedSearchMetadata.add(queryableSearchNode);
+        }
       }
     }
 
-    List<SearchMetadata> searchableLiveIndexSearchMetadata = new ArrayList<>();
-    for (SearchMetadata searchMetadata : liveIndexSearchMetadata) {
-      if (searchMetadata.isSearchable()) {
-        searchableLiveIndexSearchMetadata.add(searchMetadata);
-      }
+    if (!searchableSealedSearchMetadata.isEmpty()) {
+      return searchableSealedSearchMetadata.get(
+          ThreadLocalRandom.current().nextInt(searchableSealedSearchMetadata.size()));
     }
 
     if (!searchableLiveIndexSearchMetadata.isEmpty()) {
@@ -409,25 +435,29 @@ public class AstraDistributedQueryService extends AstraQueryServiceBase implemen
           ThreadLocalRandom.current().nextInt(searchableLiveIndexSearchMetadata.size()));
     }
 
-    List<SearchMetadata> searchableCacheNodeHostedSearchMetadata = new ArrayList<>();
-    for (SearchMetadata searchMetadata : cacheNodeHostedSearchMetadata) {
-      if (searchMetadata.isSearchable()) {
-        searchableCacheNodeHostedSearchMetadata.add(searchMetadata);
-      }
-    }
-
     if (!searchableCacheNodeHostedSearchMetadata.isEmpty()) {
       return searchableCacheNodeHostedSearchMetadata.get(
           ThreadLocalRandom.current().nextInt(searchableCacheNodeHostedSearchMetadata.size()));
     }
 
-    if (!liveIndexSearchMetadata.isEmpty()) {
-      return liveIndexSearchMetadata.get(
-          ThreadLocalRandom.current().nextInt(liveIndexSearchMetadata.size()));
+    if (!sealedSearchMetadata.isEmpty()) {
+      return sealedSearchMetadata.get(
+          ThreadLocalRandom.current().nextInt(sealedSearchMetadata.size()));
+    }
+
+    if (!liveIndexerSearchMetadata.isEmpty()) {
+      return liveIndexerSearchMetadata.get(
+          ThreadLocalRandom.current().nextInt(liveIndexerSearchMetadata.size()));
     }
 
     return cacheNodeHostedSearchMetadata.get(
         ThreadLocalRandom.current().nextInt(cacheNodeHostedSearchMetadata.size()));
+  }
+
+  private static boolean isLiveIndexerSearchNode(QueryableSearchNode queryableSearchNode) {
+    SearchMetadata searchMetadata = queryableSearchNode.searchMetadata();
+    SnapshotMetadata snapshotMetadata = queryableSearchNode.snapshotMetadata();
+    return snapshotMetadata.isLive() && searchMetadata.isLiveChunkOnIndexer();
   }
 
   private AstraServiceGrpc.AstraServiceFutureStub getStub(String url) {
@@ -544,14 +574,13 @@ public class AstraDistributedQueryService extends AstraQueryServiceBase implemen
             distributedSearchRequest.getEndTimeEpochMs(),
             distributedSearchRequest.getDataset());
 
-    Map<String, List<SearchMetadata>> queryableSearchMetadataBySnapshot =
+    Map<String, List<QueryableSearchNode>> queryableSearchMetadataBySnapshot =
         getMatchingSearchMetadata(searchMetadataStore, snapshotsMatchingQuery);
-    Set<String> expectedLogicalSnapshots = getExpectedLogicalSnapshots(snapshotsMatchingQuery);
+    Set<String> expectedChunkIds = getExpectedChunkIds(snapshotsMatchingQuery);
 
     return new DistributedSearchPlan(
-        expectedLogicalSnapshots.size(),
-        countMissingQueryableLogicalSnapshots(
-            expectedLogicalSnapshots, queryableSearchMetadataBySnapshot.keySet()),
+        expectedChunkIds.size(),
+        countMissingQueryableChunkIds(expectedChunkIds, queryableSearchMetadataBySnapshot.keySet()),
         getNodesAndSnapshotsToQuery(queryableSearchMetadataBySnapshot));
   }
 
@@ -697,7 +726,7 @@ public class AstraDistributedQueryService extends AstraQueryServiceBase implemen
             distribSchemaReq.getDataset());
 
     // for each matching snapshot, we find the search metadata nodes that we can potentially query
-    Map<String, List<SearchMetadata>> searchMetadataNodesMatchingQuery =
+    Map<String, List<QueryableSearchNode>> searchMetadataNodesMatchingQuery =
         getMatchingSearchMetadata(searchMetadataStore, snapshotsMatchingQuery);
 
     // from the list of search metadata nodes per snapshot, pick one. Additionally map it to the

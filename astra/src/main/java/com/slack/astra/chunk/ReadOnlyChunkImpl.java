@@ -468,8 +468,7 @@ public class ReadOnlyChunkImpl<T> implements Chunk<T> {
 
   private void publishSearchMetadataIfNeeded() {
     if (searchMetadata == null) {
-      searchMetadata =
-          registerSearchMetadata(searchMetadataStore, searchContext, snapshotMetadata.name);
+      searchMetadata = registerSearchMetadata(searchMetadataStore, searchContext, snapshotMetadata);
     } else if (!searchMetadata.isSearchable()) {
       searchMetadataStore.updateSearchability(searchMetadata, true);
     }
@@ -612,8 +611,7 @@ public class ReadOnlyChunkImpl<T> implements Chunk<T> {
         throw new InterruptedException("Failed to set chunk metadata state to loading");
       }
 
-      searchMetadata =
-          registerSearchMetadata(searchMetadataStore, searchContext, snapshotMetadata.name);
+      searchMetadata = registerSearchMetadata(searchMetadataStore, searchContext, snapshotMetadata);
       long durationNanos = assignmentTimer.stop(chunkAssignmentTimerSuccess);
 
       LOG.debug(
@@ -678,14 +676,16 @@ public class ReadOnlyChunkImpl<T> implements Chunk<T> {
   private SearchMetadata registerSearchMetadata(
       SearchMetadataStore searchMetadataStore,
       SearchContext cacheSearchContext,
-      String snapshotName) {
+      SnapshotMetadata snapshotMetadata) {
     SearchMetadata metadata =
         new SearchMetadata(
             SearchMetadata.generateSearchContextSnapshotId(
-                snapshotName, cacheSearchContext.hostname),
-            snapshotName,
+                snapshotMetadata.snapshotId, cacheSearchContext.hostname),
+            chunkInfo.chunkId,
+            snapshotMetadata.snapshotId,
             cacheSearchContext.toUrl(),
-            isSearchableCacheNode());
+            isSearchableCacheNode(),
+            false);
     searchMetadataStore.createSync(metadata);
     return metadata;
   }

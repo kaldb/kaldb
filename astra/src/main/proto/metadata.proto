@@ -89,6 +89,9 @@ message SnapshotMetadata {
   // If not, should be same as name
   string snapshot_id = 2;
 
+  // Stable chunk identifier shared by the live and sealed forms of the same chunk.
+  string chunk_id = 15;
+
   // Path of the snapshot root for sealed snapshots or stable NRT manifest for live snapshots.
   string snapshot_path = 3;
   // earliest timestamp of the event in the snapshot file.
@@ -118,7 +121,6 @@ message SnapshotMetadata {
 
   // Snapshot metadata schema version.
   string version = 14;
-
   reserved 13;
   reserved "snapshot_version_token";
 }
@@ -127,8 +129,11 @@ message SearchMetadata {
   // Name of search metadata
   string name = 1;
 
-  // snapshot name
+  // Exact chunk id that should be sent to this node when issuing a distributed search.
   string snapshot_name = 2;
+
+  // SnapshotMetadata.snapshot_id row served by this node.
+  string snapshot_id = 5;
 
   // url
   string url = 3;
@@ -137,6 +142,10 @@ message SearchMetadata {
   // This is false when a cache node is still hydrating new data, and becomes true once the initial
   // hydration is finished
   bool searchable = 4;
+
+  // True when this node serves a live chunk directly from an indexer instead of a materialized
+  // snapshot downloaded from blob storage.
+  bool direct_live_chunk = 6;
 }
 
 message RecoveryNodeMetadata {

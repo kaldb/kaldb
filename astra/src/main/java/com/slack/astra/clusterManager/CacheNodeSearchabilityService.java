@@ -1,11 +1,11 @@
 package com.slack.astra.clusterManager;
 
 import com.google.common.util.concurrent.AbstractScheduledService;
-import com.slack.astra.chunk.ReadWriteChunk;
 import com.slack.astra.metadata.cache.CacheNodeAssignment;
 import com.slack.astra.metadata.cache.CacheNodeAssignmentStore;
 import com.slack.astra.metadata.cache.CacheNodeMetadata;
 import com.slack.astra.metadata.cache.CacheNodeMetadataStore;
+import com.slack.astra.metadata.core.InternalMetadataStoreException;
 import com.slack.astra.metadata.search.SearchMetadata;
 import com.slack.astra.metadata.search.SearchMetadataStore;
 import com.slack.astra.metadata.snapshot.SnapshotMetadata;
@@ -15,6 +15,8 @@ import com.slack.astra.proto.metadata.Metadata;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -129,46 +131,65 @@ public class CacheNodeSearchabilityService extends AbstractScheduledService {
   }
 
   private void evictLiveAssignmentsForSearchableSealedSnapshots() {
-    Set<String> searchableSealedSnapshots =
-        searchMetadataStore.listSync().stream()
-            .filter(SearchMetadata::isSearchable)
+    List<SearchMetadata> searchMetadata = searchMetadataStore.listSync();
+    List<CacheNodeAssignment> liveAssignments =
+        cacheNodeAssignmentStore.listSync().stream()
             .filter(
-                searchMetadata ->
-                    !searchMetadata.snapshotName.startsWith(ReadWriteChunk.LIVE_SNAPSHOT_PREFIX))
-            .map(searchMetadata -> searchMetadata.snapshotName)
+                cacheNodeAssignment ->
+                    cacheNodeAssignment.state
+                        == Metadata.CacheNodeAssignment.CacheNodeAssignmentState.LIVE)
+            .toList();
+
+    Set<String> referencedSnapshotIds = new HashSet<>();
+    searchMetadata.stream()
+        .map(searchMetadataEntry -> searchMetadataEntry.snapshotId)
+        .forEach(referencedSnapshotIds::add);
+    liveAssignments.stream()
+        .map(cacheNodeAssignment -> cacheNodeAssignment.snapshotId)
+        .forEach(referencedSnapshotIds::add);
+
+    Map<String, SnapshotMetadata> snapshotsById = new HashMap<>();
+    for (String snapshotId : referencedSnapshotIds) {
+      SnapshotMetadata snapshotMetadata = findSnapshot(snapshotId);
+      if (snapshotMetadata != null) {
+        snapshotsById.put(snapshotId, snapshotMetadata);
+      }
+    }
+
+    Set<String> searchableSealedSnapshots =
+        searchMetadata.stream()
+            .filter(SearchMetadata::isSearchable)
+            .map(searchMetadataEntry -> snapshotsById.get(searchMetadataEntry.snapshotId))
+            .filter(java.util.Objects::nonNull)
+            .filter(snapshotMetadata -> !snapshotMetadata.isLive())
+            .filter(
+                snapshotMetadata ->
+                    snapshotMetadata.chunkId != null && !snapshotMetadata.chunkId.isBlank())
+            .map(snapshotMetadata -> snapshotMetadata.chunkId)
             .collect(java.util.stream.Collectors.toUnmodifiableSet());
 
     if (searchableSealedSnapshots.isEmpty()) {
       return;
     }
 
-    Map<String, SnapshotMetadata> liveSnapshotsById =
-        snapshotMetadataStore.listSync().stream()
-            .filter(SnapshotMetadata::isLive)
-            .collect(
-                java.util.stream.Collectors.toMap(
-                    snapshotMetadata -> snapshotMetadata.snapshotId,
-                    snapshotMetadata -> snapshotMetadata));
-
-    cacheNodeAssignmentStore.listSync().stream()
+    liveAssignments.stream()
+        .filter(cacheNodeAssignment -> snapshotsById.containsKey(cacheNodeAssignment.snapshotId))
         .filter(
-            cacheNodeAssignment ->
-                cacheNodeAssignment.state
-                    == Metadata.CacheNodeAssignment.CacheNodeAssignmentState.LIVE)
-        .filter(
-            cacheNodeAssignment -> liveSnapshotsById.containsKey(cacheNodeAssignment.snapshotId))
+            cacheNodeAssignment -> {
+              SnapshotMetadata snapshotMetadata = snapshotsById.get(cacheNodeAssignment.snapshotId);
+              return snapshotMetadata.chunkId != null && !snapshotMetadata.chunkId.isBlank();
+            })
         .filter(
             cacheNodeAssignment ->
                 searchableSealedSnapshots.contains(
-                    getRawSnapshotName(liveSnapshotsById.get(cacheNodeAssignment.snapshotId))))
+                    snapshotsById.get(cacheNodeAssignment.snapshotId).chunkId))
         .forEach(
             cacheNodeAssignment -> {
-              String rawSnapshotName =
-                  getRawSnapshotName(liveSnapshotsById.get(cacheNodeAssignment.snapshotId));
+              String chunkId = snapshotsById.get(cacheNodeAssignment.snapshotId).chunkId;
               LOG.info(
-                  "Marking live cache assignment {} for eviction because sealed snapshot {} is searchable",
+                  "Marking live cache assignment {} for eviction because sealed snapshot chunk {} is searchable",
                   cacheNodeAssignment.assignmentId,
-                  rawSnapshotName);
+                  chunkId);
               try {
                 cacheNodeAssignmentStore
                     .updateAssignmentState(
@@ -181,10 +202,13 @@ public class CacheNodeSearchabilityService extends AbstractScheduledService {
             });
   }
 
-  private static String getRawSnapshotName(SnapshotMetadata snapshotMetadata) {
-    return snapshotMetadata.name.startsWith(ReadWriteChunk.LIVE_SNAPSHOT_PREFIX)
-        ? snapshotMetadata.name.substring(ReadWriteChunk.LIVE_SNAPSHOT_PREFIX.length())
-        : snapshotMetadata.name;
+  private SnapshotMetadata findSnapshot(String snapshotId) {
+    try {
+      return snapshotMetadataStore.findSync(snapshotId);
+    } catch (InternalMetadataStoreException e) {
+      LOG.debug("Snapshot {} not found while evaluating cache evictions", snapshotId);
+      return null;
+    }
   }
 
   @Override

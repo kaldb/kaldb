@@ -80,7 +80,8 @@ final class NrtPublishController<T> {
               liveSnapshotMetadata.indexType,
               liveSnapshotMetadata.snapshotPath,
               liveSnapshotMetadata.snapshotGeneration,
-              liveSnapshotMetadata.version);
+              liveSnapshotMetadata.version,
+              liveSnapshotMetadata.chunkId);
       currentChunk.setLiveSnapshotMetadata(
           nrtSnapshotPublisher.publish(
               currentChunk.getLogStore(),

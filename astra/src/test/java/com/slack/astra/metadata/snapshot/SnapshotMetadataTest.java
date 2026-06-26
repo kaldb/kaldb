@@ -24,6 +24,7 @@ public class SnapshotMetadataTest {
 
     assertThat(snapshotMetadata.name).isEqualTo(name);
     assertThat(snapshotMetadata.snapshotId).isEqualTo(name);
+    assertThat(snapshotMetadata.chunkId).isNull();
     assertThat(snapshotMetadata.startTimeEpochMs).isEqualTo(startTime);
     assertThat(snapshotMetadata.endTimeEpochMs).isEqualTo(endTime);
     assertThat(snapshotMetadata.maxOffset).isEqualTo(maxOffset);
@@ -48,7 +49,8 @@ public class SnapshotMetadataTest {
 
     assertThat(snapshotMetadata.snapshotType).isEqualTo(SnapshotType.SEALED);
     assertThat(snapshotMetadata.indexType).isEqualTo(IndexType.LUCENE);
-    assertThat(snapshotMetadata.snapshotPath).isEqualTo(name);
+    assertThat(snapshotMetadata.chunkId).isNull();
+    assertThat(snapshotMetadata.snapshotPath).isEmpty();
     assertThat(snapshotMetadata.snapshotGeneration).isZero();
     assertThat(snapshotMetadata.version).isEqualTo(SnapshotMetadata.DEFAULT_VERSION);
   }
@@ -67,12 +69,33 @@ public class SnapshotMetadataTest {
             IndexType.LUCENE,
             "nrt/v1/partitions/1/chunks/snapshot-1/manifest.json",
             7,
-            "2");
+            "2",
+            "snapshot-1");
 
     assertThat(snapshotMetadata.snapshotPath)
         .isEqualTo("nrt/v1/partitions/1/chunks/snapshot-1/manifest.json");
+    assertThat(snapshotMetadata.chunkId).isEqualTo("snapshot-1");
     assertThat(snapshotMetadata.snapshotGeneration).isEqualTo(7);
     assertThat(snapshotMetadata.version).isEqualTo("2");
+  }
+
+  @Test
+  public void testLiveLogicalSnapshotDefaultsForLegacyPrefix() {
+    SnapshotMetadata snapshotMetadata =
+        new SnapshotMetadata(
+            "LIVE_snapshot-1",
+            1,
+            100,
+            123,
+            "1",
+            0,
+            SnapshotType.LIVE,
+            IndexType.LUCENE,
+            "",
+            0,
+            SnapshotMetadata.DEFAULT_VERSION);
+
+    assertThat(snapshotMetadata.chunkId).isNull();
   }
 
   @Test
@@ -91,7 +114,7 @@ public class SnapshotMetadataTest {
             0,
             SnapshotMetadata.DEFAULT_VERSION);
 
-    assertThat(sealedSnapshot.snapshotPath).isEqualTo("snapshot-1");
+    assertThat(sealedSnapshot.snapshotPath).isEmpty();
     assertThat(sealedSnapshot.isLive()).isFalse();
   }
 

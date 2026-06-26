@@ -81,7 +81,8 @@ public class IndexingChunkImpl<T> extends ReadWriteChunk<T> {
             IndexType.LUCENE,
             "",
             0,
-            liveSnapshotMetadata.version);
+            liveSnapshotMetadata.version,
+            liveSnapshotMetadata.chunkId);
     snapshotMetadataStore.updateSync(updatedSnapshotMetadata);
     liveSnapshotMetadata = updatedSnapshotMetadata;
 

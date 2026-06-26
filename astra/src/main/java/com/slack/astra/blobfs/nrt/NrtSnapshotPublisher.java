@@ -149,7 +149,8 @@ public class NrtSnapshotPublisher {
               liveSnapshotMetadata.indexType,
               snapshotPath,
               manifestGeneration,
-              liveSnapshotMetadata.version);
+              liveSnapshotMetadata.version,
+              liveSnapshotMetadata.chunkId);
       snapshotMetadataStore.updateSync(updatedSnapshotMetadata);
       LOG.info(
           "Published NRT snapshot partition={} snapshot={} generation={} path={} offset={}",

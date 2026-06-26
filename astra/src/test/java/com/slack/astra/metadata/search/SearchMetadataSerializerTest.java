@@ -13,9 +13,11 @@ public class SearchMetadataSerializerTest {
   public void testSearchMetadataSerializer() throws InvalidProtocolBufferException {
     final String name = "testSearch";
     final String snapshotName = "testSnapshot";
+    final String snapshotId = "LIVE_testSnapshot";
     final String url = "http://10.10.1.1:9090";
 
-    SearchMetadata searchMetadata = new SearchMetadata(name, snapshotName, url);
+    SearchMetadata searchMetadata =
+        new SearchMetadata(name, snapshotName, snapshotId, url, true, true);
 
     String serializedSearchMetadata = serDe.toJsonStr(searchMetadata);
     assertThat(serializedSearchMetadata).isNotEmpty();
@@ -25,7 +27,9 @@ public class SearchMetadataSerializerTest {
 
     assertThat(deserializedSearchMetadata.name).isEqualTo(name);
     assertThat(deserializedSearchMetadata.snapshotName).isEqualTo(snapshotName);
+    assertThat(deserializedSearchMetadata.snapshotId).isEqualTo(snapshotId);
     assertThat(deserializedSearchMetadata.url).isEqualTo(url);
+    assertThat(deserializedSearchMetadata.isLiveChunkOnIndexer()).isTrue();
   }
 
   @Test

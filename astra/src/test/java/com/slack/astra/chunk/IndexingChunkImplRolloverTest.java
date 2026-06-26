@@ -136,6 +136,6 @@ class IndexingChunkImplRolloverTest {
     assertThat(sealedSnapshot.isLive()).isFalse();
     assertThat(sealedSnapshot.snapshotGeneration).isZero();
     assertThat(sealedSnapshot.maxOffset).isEqualTo(offset - 1);
-    assertThat(sealedSnapshot.snapshotPath).isEqualTo(chunk.info().chunkId);
+    assertThat(sealedSnapshot.snapshotPath).isEmpty();
   }
 }
