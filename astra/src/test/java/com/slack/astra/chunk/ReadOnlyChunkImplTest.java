@@ -904,7 +904,11 @@ public class ReadOnlyChunkImplTest {
     addMessages(logStore, 1, 10, true);
     NrtSnapshotPublisher publisher =
         new NrtSnapshotPublisher(
-            blobStore, new NrtBlobStore(blobStore), snapshotMetadataStore, "indexer-1");
+            blobStore,
+            new NrtBlobStore(blobStore),
+            snapshotMetadataStore,
+            "indexer-1",
+            meterRegistry);
     SnapshotMetadata published =
         publisher.publish(
             logStore,
@@ -1056,7 +1060,11 @@ public class ReadOnlyChunkImplTest {
     addMessages(logStore, 1, 10, true);
     NrtSnapshotPublisher publisher =
         new NrtSnapshotPublisher(
-            blobStore, new NrtBlobStore(blobStore), snapshotMetadataStore, "indexer-1");
+            blobStore,
+            new NrtBlobStore(blobStore),
+            snapshotMetadataStore,
+            "indexer-1",
+            meterRegistry);
     SnapshotMetadata published =
         publisher.publish(
             logStore,

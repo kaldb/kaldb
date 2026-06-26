@@ -89,6 +89,8 @@ public class AstraDistributedQueryService extends AstraQueryServiceBase implemen
       "distributed_query_requested_snapshots";
   public static final String DISTRIBUTED_QUERY_FULFILLED_SNAPSHOTS =
       "distributed_query_fulfilled_snapshots";
+  public static final String DISTRIBUTED_QUERY_LIVE_SNAPSHOT_SOURCE_TOTAL =
+      "distributed_query_live_snapshot_source_total";
 
   public static final String ASTRA_QUERIES_SUCCESSFUL_COUNT = "astra_queries_successful_count";
   public static final String ASTRA_QUERIES_INCOMPLETE_COUNT = "astra_queries_incomplete_count";
@@ -105,6 +107,8 @@ public class AstraDistributedQueryService extends AstraQueryServiceBase implemen
   private final Counter distributedQueryApdexFrustrated;
   private final Counter distributedQueryRequestedSnapshots;
   private final Counter distributedQueryFulfilledSnapshots;
+  private final Counter distributedQueryLiveSnapshotSourceIndexer;
+  private final Counter distributedQueryLiveSnapshotSourceCache;
   private final Counter successfulQueryCount;
   private final Counter incompleteQueryCount;
   private final Counter failedQueryCount;
@@ -196,6 +200,10 @@ public class AstraDistributedQueryService extends AstraQueryServiceBase implemen
         meterRegistry.counter(DISTRIBUTED_QUERY_REQUESTED_SNAPSHOTS);
     this.distributedQueryFulfilledSnapshots =
         meterRegistry.counter(DISTRIBUTED_QUERY_FULFILLED_SNAPSHOTS);
+    this.distributedQueryLiveSnapshotSourceIndexer =
+        meterRegistry.counter(DISTRIBUTED_QUERY_LIVE_SNAPSHOT_SOURCE_TOTAL, "source", "indexer");
+    this.distributedQueryLiveSnapshotSourceCache =
+        meterRegistry.counter(DISTRIBUTED_QUERY_LIVE_SNAPSHOT_SOURCE_TOTAL, "source", "cache");
     this.successfulQueryCount = meterRegistry.counter(ASTRA_QUERIES_SUCCESSFUL_COUNT);
     this.incompleteQueryCount = meterRegistry.counter(ASTRA_QUERIES_INCOMPLETE_COUNT);
     this.failedQueryCount = meterRegistry.counter(ASTRA_QUERIES_FAILED_COUNT);
@@ -294,6 +302,15 @@ public class AstraDistributedQueryService extends AstraQueryServiceBase implemen
   protected static Map<String, List<String>> getNodesAndSnapshotsToQuery(
       Map<String, List<QueryableSearchNode>> searchMetadataNodesBySnapshotName,
       AstraConfigs.QueryServiceConfig.PreferredLiveSnapshotSource preferredLiveSnapshotSource) {
+    return getNodesAndSnapshotsToQuery(
+        searchMetadataNodesBySnapshotName, preferredLiveSnapshotSource, null, null);
+  }
+
+  private static Map<String, List<String>> getNodesAndSnapshotsToQuery(
+      Map<String, List<QueryableSearchNode>> searchMetadataNodesBySnapshotName,
+      AstraConfigs.QueryServiceConfig.PreferredLiveSnapshotSource preferredLiveSnapshotSource,
+      Counter liveSnapshotSourceIndexerCounter,
+      Counter liveSnapshotSourceCacheCounter) {
     ScopedSpan getQueryNodesSpan =
         Tracing.currentTracer()
             .startScopedSpan("AstraDistributedQueryService.getNodesAndSnapshotsToQuery");
@@ -303,6 +320,8 @@ public class AstraDistributedQueryService extends AstraQueryServiceBase implemen
       QueryableSearchNode queryableSearchNode =
           AstraDistributedQueryService.pickSearchNodeToQuery(
               searchMetadataList, preferredLiveSnapshotSource);
+      recordLiveSnapshotSourceSelection(
+          queryableSearchNode, liveSnapshotSourceIndexerCounter, liveSnapshotSourceCacheCounter);
       SearchMetadata searchMetadata = queryableSearchNode.searchMetadata();
 
       if (nodeUrlToSnapshotNames.containsKey(searchMetadata.url)) {
@@ -316,6 +335,24 @@ public class AstraDistributedQueryService extends AstraQueryServiceBase implemen
     getQueryNodesSpan.tag("nodes_to_query", String.valueOf(nodeUrlToSnapshotNames.size()));
     getQueryNodesSpan.finish();
     return nodeUrlToSnapshotNames;
+  }
+
+  private static void recordLiveSnapshotSourceSelection(
+      QueryableSearchNode queryableSearchNode,
+      Counter liveSnapshotSourceIndexerCounter,
+      Counter liveSnapshotSourceCacheCounter) {
+    if (!queryableSearchNode.snapshotMetadata().isLive()) {
+      return;
+    }
+    if (isLiveIndexerSearchNode(queryableSearchNode)) {
+      if (liveSnapshotSourceIndexerCounter != null) {
+        liveSnapshotSourceIndexerCounter.increment();
+      }
+      return;
+    }
+    if (liveSnapshotSourceCacheCounter != null) {
+      liveSnapshotSourceCacheCounter.increment();
+    }
   }
 
   @VisibleForTesting
@@ -643,7 +680,10 @@ public class AstraDistributedQueryService extends AstraQueryServiceBase implemen
         expectedChunkIds.size(),
         countMissingQueryableChunkIds(expectedChunkIds, queryableSearchMetadataBySnapshot.keySet()),
         getNodesAndSnapshotsToQuery(
-            queryableSearchMetadataBySnapshot, preferredLiveSnapshotSource));
+            queryableSearchMetadataBySnapshot,
+            preferredLiveSnapshotSource,
+            distributedQueryLiveSnapshotSourceIndexer,
+            distributedQueryLiveSnapshotSourceCache));
   }
 
   private Map<String, StructuredTaskScope.Subtask<SearchResult<LogMessage>>>

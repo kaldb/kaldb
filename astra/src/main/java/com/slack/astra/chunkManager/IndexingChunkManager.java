@@ -413,7 +413,11 @@ public class IndexingChunkManager<T> extends ChunkManagerBase<T> {
       String writerNodeId = searchContext.hostname + "-" + searchContext.port;
       nrtPublishController.enable(
           new NrtSnapshotPublisher(
-              blobStore, new NrtBlobStore(blobStore), snapshotMetadataStore, writerNodeId));
+              blobStore,
+              new NrtBlobStore(blobStore),
+              snapshotMetadataStore,
+              writerNodeId,
+              meterRegistry));
       LOG.info(
           "NRT live snapshot publishing enabled with writerNodeId={} intervalMs={}",
           writerNodeId,

@@ -38,7 +38,10 @@ import com.slack.astra.proto.config.AstraConfigs;
 import com.slack.astra.proto.schema.Schema;
 import com.slack.astra.proto.service.AstraSearch;
 import com.slack.astra.proto.service.AstraServiceGrpc;
+import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
@@ -813,6 +816,66 @@ public class AstraDistributedQueryServiceTest {
     List<String> chunks = searchNodes.values().iterator().next();
     assertThat(chunks.size()).isEqualTo(1);
     assertThat(chunks.iterator().next()).isEqualTo(liveSnapshotMetadata.name);
+  }
+
+  @Test
+  public void testLiveSnapshotRoutingMetricsCountCacheSelections() throws Exception {
+    Instant chunkCreationTime = Instant.ofEpochMilli(100);
+    Instant chunkEndTime = Instant.ofEpochMilli(200);
+    SnapshotMetadata liveSnapshotMetadata =
+        createSnapshot(chunkCreationTime, chunkEndTime, true, "1");
+    SearchMetadata cacheSearchMetadata =
+        new SearchMetadata(
+            SearchMetadata.generateSearchContextSnapshotId(
+                liveSnapshotMetadata.name, cache1SearchContext.hostname),
+            liveSnapshotMetadata.name,
+            liveSnapshotMetadata.name,
+            cache1SearchContext.toUrl(),
+            true,
+            false);
+
+    Class<?> queryableSearchNodeClass =
+        Class.forName(AstraDistributedQueryService.class.getName() + "$QueryableSearchNode");
+    Constructor<?> queryableSearchNodeConstructor =
+        queryableSearchNodeClass.getDeclaredConstructor(
+            SearchMetadata.class, SnapshotMetadata.class);
+    queryableSearchNodeConstructor.setAccessible(true);
+    Object queryableSearchNode =
+        queryableSearchNodeConstructor.newInstance(cacheSearchMetadata, liveSnapshotMetadata);
+
+    Method getNodesAndSnapshotsToQuery =
+        AstraDistributedQueryService.class.getDeclaredMethod(
+            "getNodesAndSnapshotsToQuery",
+            Map.class,
+            AstraConfigs.QueryServiceConfig.PreferredLiveSnapshotSource.class,
+            Counter.class,
+            Counter.class);
+    getNodesAndSnapshotsToQuery.setAccessible(true);
+
+    Counter indexerCounter =
+        metricsRegistry.counter(
+            AstraDistributedQueryService.DISTRIBUTED_QUERY_LIVE_SNAPSHOT_SOURCE_TOTAL,
+            "source",
+            "indexer");
+    Counter cacheCounter =
+        metricsRegistry.counter(
+            AstraDistributedQueryService.DISTRIBUTED_QUERY_LIVE_SNAPSHOT_SOURCE_TOTAL,
+            "source",
+            "cache");
+
+    @SuppressWarnings("unchecked")
+    Map<String, List<String>> searchNodes =
+        (Map<String, List<String>>)
+            getNodesAndSnapshotsToQuery.invoke(
+                null,
+                Map.of(liveSnapshotMetadata.chunkId, List.of(queryableSearchNode)),
+                AstraConfigs.QueryServiceConfig.PreferredLiveSnapshotSource.CACHE,
+                indexerCounter,
+                cacheCounter);
+
+    assertThat(searchNodes).hasSize(1);
+    assertThat(indexerCounter.count()).isZero();
+    assertThat(cacheCounter.count()).isEqualTo(1);
   }
 
   @Test

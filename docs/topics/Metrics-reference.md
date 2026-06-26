@@ -316,6 +316,33 @@ Labels automatically applied to all exported Prometheus metrics.
       </def>
     </deflist>
   </def>
+  <def title="nrt_live_snapshot_download_total | counter">
+        <deflist type="full" collapsible="true">
+      <def title="labels" default-state="collapsed">
+        <deflist type="full">
+          <include from="Metrics-reference.md" element-id="common-configs" />
+        </deflist>
+      </def>
+    </deflist>
+  </def>
+  <def title="nrt_live_snapshot_download_failed_total | counter">
+        <deflist type="full" collapsible="true">
+      <def title="labels" default-state="collapsed">
+        <deflist type="full">
+          <include from="Metrics-reference.md" element-id="common-configs" />
+        </deflist>
+      </def>
+    </deflist>
+  </def>
+  <def title="nrt_live_snapshot_download_seconds | summary">
+        <deflist type="full" collapsible="true">
+      <def title="labels" default-state="collapsed">
+        <deflist type="full">
+          <include from="Metrics-reference.md" element-id="common-configs" />
+        </deflist>
+      </def>
+    </deflist>
+  </def>
   <def title="convert_and_duplicate_field_total | counter">
         <deflist type="full" collapsible="true">
       <def title="labels" default-state="collapsed">
@@ -383,6 +410,17 @@ Labels automatically applied to all exported Prometheus metrics.
         <deflist type="full" collapsible="true">
       <def title="labels" default-state="collapsed">
         <deflist type="full">
+          <include from="Metrics-reference.md" element-id="common-configs" />
+        </deflist>
+      </def>
+    </deflist>
+  </def>
+  <def title="distributed_query_live_snapshot_source_total | counter">
+        Count of live snapshot queries routed to a source tier during planning.
+        <deflist type="full" collapsible="true">
+      <def title="labels" default-state="collapsed">
+        <deflist type="full">
+          <def title="source"></def>
           <include from="Metrics-reference.md" element-id="common-configs" />
         </deflist>
       </def>
@@ -816,6 +854,33 @@ Labels automatically applied to all exported Prometheus metrics.
     </deflist>
   </def>
   <def title="search_metadata_total_change_counter_total | counter">
+        <deflist type="full" collapsible="true">
+      <def title="labels" default-state="collapsed">
+        <deflist type="full">
+          <include from="Metrics-reference.md" element-id="common-configs" />
+        </deflist>
+      </def>
+    </deflist>
+  </def>
+  <def title="nrt_live_snapshot_publish_total | counter">
+        <deflist type="full" collapsible="true">
+      <def title="labels" default-state="collapsed">
+        <deflist type="full">
+          <include from="Metrics-reference.md" element-id="common-configs" />
+        </deflist>
+      </def>
+    </deflist>
+  </def>
+  <def title="nrt_live_snapshot_publish_failed_total | counter">
+        <deflist type="full" collapsible="true">
+      <def title="labels" default-state="collapsed">
+        <deflist type="full">
+          <include from="Metrics-reference.md" element-id="common-configs" />
+        </deflist>
+      </def>
+    </deflist>
+  </def>
+  <def title="nrt_live_snapshot_publish_seconds | summary">
         <deflist type="full" collapsible="true">
       <def title="labels" default-state="collapsed">
         <deflist type="full">

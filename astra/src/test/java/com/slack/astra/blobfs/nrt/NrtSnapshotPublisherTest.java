@@ -18,6 +18,7 @@ import com.slack.astra.logstore.LogStore;
 import com.slack.astra.metadata.schema.LuceneFieldDef;
 import com.slack.astra.metadata.snapshot.SnapshotMetadata;
 import com.slack.astra.metadata.snapshot.SnapshotMetadataStore;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -30,6 +31,7 @@ import org.mockito.ArgumentCaptor;
 class NrtSnapshotPublisherTest {
   private static final String SNAPSHOT_ID = "LIVE_chunk-1";
   private static final String PARTITION_ID = "0";
+  private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
 
   @Test
   void testSuccessfulPublishUpdatesManifestAndSnapshotMetadata() throws Exception {
@@ -42,6 +44,18 @@ class NrtSnapshotPublisherTest {
     assertThat(updated.snapshotPath).isEqualTo(context.snapshotPath);
     assertThat(updated.sizeInBytesOnDisk).isEqualTo(236);
     verify(context.snapshotMetadataStore).updateSync(updated);
+    assertThat(
+            meterRegistry
+                .get(NrtSnapshotPublisher.NRT_LIVE_SNAPSHOT_PUBLISH_TOTAL)
+                .counter()
+                .count())
+        .isEqualTo(1);
+    assertThat(
+            meterRegistry
+                .get(NrtSnapshotPublisher.NRT_LIVE_SNAPSHOT_PUBLISH_FAILED_TOTAL)
+                .counter()
+                .count())
+        .isZero();
 
     ArgumentCaptor<String> manifestCaptor = ArgumentCaptor.forClass(String.class);
     verify(context.blobStore)
@@ -75,6 +89,18 @@ class NrtSnapshotPublisherTest {
 
     verify(context.blobStore, never()).uploadData(anyString(), anyString(), anyBoolean());
     verify(context.snapshotMetadataStore, never()).updateSync(any());
+    assertThat(
+            meterRegistry
+                .get(NrtSnapshotPublisher.NRT_LIVE_SNAPSHOT_PUBLISH_TOTAL)
+                .counter()
+                .count())
+        .isZero();
+    assertThat(
+            meterRegistry
+                .get(NrtSnapshotPublisher.NRT_LIVE_SNAPSHOT_PUBLISH_FAILED_TOTAL)
+                .counter()
+                .count())
+        .isEqualTo(1);
   }
 
   @Test
@@ -90,6 +116,12 @@ class NrtSnapshotPublisherTest {
         .hasMessageContaining("manifest failed");
 
     verify(context.snapshotMetadataStore, never()).updateSync(any());
+    assertThat(
+            meterRegistry
+                .get(NrtSnapshotPublisher.NRT_LIVE_SNAPSHOT_PUBLISH_FAILED_TOTAL)
+                .counter()
+                .count())
+        .isEqualTo(1);
   }
 
   @Test
@@ -105,6 +137,12 @@ class NrtSnapshotPublisherTest {
         .hasMessageContaining("metadata failed");
 
     verify(context.blobStore).uploadData(eq(context.snapshotPath), anyString(), eq(false));
+    assertThat(
+            meterRegistry
+                .get(NrtSnapshotPublisher.NRT_LIVE_SNAPSHOT_PUBLISH_FAILED_TOTAL)
+                .counter()
+                .count())
+        .isEqualTo(1);
   }
 
   @Test
@@ -121,10 +159,15 @@ class NrtSnapshotPublisherTest {
     verify(context.blobStore).upload(anyString(), any());
     verify(context.blobStore).uploadData(eq(context.snapshotPath), anyString(), eq(false));
     verify(context.snapshotMetadataStore).updateSync(updated);
+    assertThat(
+            meterRegistry
+                .get(NrtSnapshotPublisher.NRT_LIVE_SNAPSHOT_PUBLISH_TOTAL)
+                .counter()
+                .count())
+        .isEqualTo(1);
   }
 
-  private static TestContext testContext(String currentSnapshotPath, long generation)
-      throws Exception {
+  private TestContext testContext(String currentSnapshotPath, long generation) throws Exception {
     Path indexDirectory = Files.createTempDirectory("nrt-publisher-test");
     Files.writeString(indexDirectory.resolve("segments_1"), "segment data");
 
@@ -165,7 +208,8 @@ class NrtSnapshotPublisherTest {
         nrtBlobStore,
         snapshotMetadataStore,
         logStore,
-        new NrtSnapshotPublisher(blobStore, nrtBlobStore, snapshotMetadataStore, "indexer-1"),
+        new NrtSnapshotPublisher(
+            blobStore, nrtBlobStore, snapshotMetadataStore, "indexer-1", meterRegistry),
         snapshotMetadata,
         snapshotPath,
         filesPath);

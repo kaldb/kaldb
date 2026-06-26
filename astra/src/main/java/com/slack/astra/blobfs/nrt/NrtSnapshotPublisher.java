@@ -8,6 +8,9 @@ import com.slack.astra.logstore.LogStore;
 import com.slack.astra.metadata.schema.ChunkSchema;
 import com.slack.astra.metadata.snapshot.SnapshotMetadata;
 import com.slack.astra.metadata.snapshot.SnapshotMetadataStore;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import java.io.File;
 import java.io.InputStream;
 import java.nio.file.Files;
@@ -26,11 +29,20 @@ import org.slf4j.LoggerFactory;
 public class NrtSnapshotPublisher {
   private static final Logger LOG = LoggerFactory.getLogger(NrtSnapshotPublisher.class);
   private static final int MANIFEST_VERSION = 1;
+  public static final String NRT_LIVE_SNAPSHOT_PUBLISH_TOTAL = "nrt_live_snapshot_publish_total";
+  public static final String NRT_LIVE_SNAPSHOT_PUBLISH_FAILED_TOTAL =
+      "nrt_live_snapshot_publish_failed_total";
+  public static final String NRT_LIVE_SNAPSHOT_PUBLISH_SECONDS =
+      "nrt_live_snapshot_publish_seconds";
 
   private final BlobStore blobStore;
   private final NrtBlobStore nrtBlobStore;
   private final SnapshotMetadataStore snapshotMetadataStore;
   private final String writerNodeId;
+  private final MeterRegistry meterRegistry;
+  private final Counter publishSuccessCounter;
+  private final Counter publishFailureCounter;
+  private final Timer publishTimer;
 
   private static void writeSchemaFile(LogStore logStore, String snapshotId, Path indexDirectory)
       throws Exception {
@@ -79,13 +91,18 @@ public class NrtSnapshotPublisher {
       BlobStore blobStore,
       NrtBlobStore nrtBlobStore,
       SnapshotMetadataStore snapshotMetadataStore,
-      String writerNodeId) {
+      String writerNodeId,
+      MeterRegistry meterRegistry) {
     this.blobStore = Objects.requireNonNull(blobStore, "blobStore");
     this.nrtBlobStore = Objects.requireNonNull(nrtBlobStore, "nrtBlobStore");
     this.snapshotMetadataStore =
         Objects.requireNonNull(snapshotMetadataStore, "snapshotMetadataStore");
     checkArgument(writerNodeId != null && !writerNodeId.isBlank(), "writerNodeId is required");
     this.writerNodeId = writerNodeId;
+    this.meterRegistry = Objects.requireNonNull(meterRegistry, "meterRegistry");
+    publishSuccessCounter = meterRegistry.counter(NRT_LIVE_SNAPSHOT_PUBLISH_TOTAL);
+    publishFailureCounter = meterRegistry.counter(NRT_LIVE_SNAPSHOT_PUBLISH_FAILED_TOTAL);
+    publishTimer = meterRegistry.timer(NRT_LIVE_SNAPSHOT_PUBLISH_SECONDS);
   }
 
   /** Commits, uploads, writes the manifest, and updates the live snapshot pointer. */
@@ -96,6 +113,7 @@ public class NrtSnapshotPublisher {
     checkArgument(liveSnapshotMetadata.isLive(), "Only live snapshots can be published as NRT");
     checkArgument(startOffsetInclusive >= 0, "startOffsetInclusive must be non-negative");
 
+    Timer.Sample publishDuration = Timer.start(meterRegistry);
     long manifestGeneration = liveSnapshotMetadata.snapshotGeneration + 1;
     String filesPath =
         NrtBlobStore.filesPath(liveSnapshotMetadata.partitionId, liveSnapshotMetadata.snapshotId);
@@ -159,10 +177,16 @@ public class NrtSnapshotPublisher {
           updatedSnapshotMetadata.snapshotGeneration,
           updatedSnapshotMetadata.snapshotPath,
           updatedSnapshotMetadata.maxOffset);
+      publishSuccessCounter.increment();
+      publishDuration.stop(publishTimer);
       return updatedSnapshotMetadata;
     } catch (RuntimeException e) {
+      publishFailureCounter.increment();
+      publishDuration.stop(publishTimer);
       throw e;
     } catch (Exception e) {
+      publishFailureCounter.increment();
+      publishDuration.stop(publishTimer);
       throw new RuntimeException("Failed to publish NRT snapshot", e);
     } finally {
       logStore.releaseIndexCommit(indexCommit);

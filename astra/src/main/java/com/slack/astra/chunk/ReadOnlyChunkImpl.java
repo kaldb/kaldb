@@ -27,6 +27,7 @@ import com.slack.astra.metadata.search.SearchMetadataStore;
 import com.slack.astra.metadata.snapshot.SnapshotMetadata;
 import com.slack.astra.metadata.snapshot.SnapshotMetadataStore;
 import com.slack.astra.proto.metadata.Metadata;
+import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import java.io.IOException;
@@ -86,11 +87,19 @@ public class ReadOnlyChunkImpl<T> implements Chunk<T> {
 
   public static final String CHUNK_ASSIGNMENT_TIMER = "chunk_assignment_timer";
   public static final String CHUNK_EVICTION_TIMER = "chunk_eviction_timer";
+  public static final String NRT_LIVE_SNAPSHOT_DOWNLOAD_TOTAL = "nrt_live_snapshot_download_total";
+  public static final String NRT_LIVE_SNAPSHOT_DOWNLOAD_FAILED_TOTAL =
+      "nrt_live_snapshot_download_failed_total";
+  public static final String NRT_LIVE_SNAPSHOT_DOWNLOAD_SECONDS =
+      "nrt_live_snapshot_download_seconds";
 
   private final Timer chunkAssignmentTimerSuccess;
   private final Timer chunkAssignmentTimerFailure;
   private final Timer chunkEvictionTimerSuccess;
   private final Timer chunkEvictionTimerFailure;
+  private final Timer nrtLiveSnapshotDownloadTimer;
+  private final Counter nrtLiveSnapshotDownloadSuccessCounter;
+  private final Counter nrtLiveSnapshotDownloadFailureCounter;
   private final CacheNodeMetadataStore cacheNodeMetadataStore;
   private final NrtBlobStore nrtBlobStore;
 
@@ -191,6 +200,10 @@ public class ReadOnlyChunkImpl<T> implements Chunk<T> {
         meterRegistry.timer(CHUNK_ASSIGNMENT_TIMER, "successful", "false");
     chunkEvictionTimerSuccess = meterRegistry.timer(CHUNK_EVICTION_TIMER, "successful", "true");
     chunkEvictionTimerFailure = meterRegistry.timer(CHUNK_EVICTION_TIMER, "successful", "false");
+    nrtLiveSnapshotDownloadTimer = meterRegistry.timer(NRT_LIVE_SNAPSHOT_DOWNLOAD_SECONDS);
+    nrtLiveSnapshotDownloadSuccessCounter = meterRegistry.counter(NRT_LIVE_SNAPSHOT_DOWNLOAD_TOTAL);
+    nrtLiveSnapshotDownloadFailureCounter =
+        meterRegistry.counter(NRT_LIVE_SNAPSHOT_DOWNLOAD_FAILED_TOTAL);
 
     LOG.debug("Created a new read only chunk - zkSlotId: {}", slotId);
   }
@@ -334,6 +347,7 @@ public class ReadOnlyChunkImpl<T> implements Chunk<T> {
 
   private void downloadLiveSnapshot() {
     Timer.Sample assignmentTimer = null;
+    Timer.Sample downloadTimer = null;
     chunkAssignmentLock.lock();
     try {
       if (USE_S3_STREAMING) {
@@ -350,6 +364,7 @@ public class ReadOnlyChunkImpl<T> implements Chunk<T> {
       }
 
       assignmentTimer = Timer.start(meterRegistry);
+      downloadTimer = Timer.start(meterRegistry);
       Path stagingDirectory = createStagingDirectory();
       NrtBlobStore.NrtManifest manifest = nrtBlobStore.readManifest(snapshotMetadata.snapshotPath);
       if (manifest == null) {
@@ -390,6 +405,8 @@ public class ReadOnlyChunkImpl<T> implements Chunk<T> {
         lastKnownAssignmentState = Metadata.CacheNodeAssignment.CacheNodeAssignmentState.LIVE;
       }
       publishSearchMetadataIfNeeded();
+      nrtLiveSnapshotDownloadSuccessCounter.increment();
+      downloadTimer.stop(nrtLiveSnapshotDownloadTimer);
       long durationNanos = assignmentTimer.stop(chunkAssignmentTimerSuccess);
       LOG.info(
           "Downloaded chunk with snapshot id '{}' in {} seconds, was {}",
@@ -404,6 +421,10 @@ public class ReadOnlyChunkImpl<T> implements Chunk<T> {
       LOG.error("Error handling chunk assignment", e);
       if (assignmentTimer != null) {
         assignmentTimer.stop(chunkAssignmentTimerFailure);
+      }
+      if (downloadTimer != null) {
+        nrtLiveSnapshotDownloadFailureCounter.increment();
+        downloadTimer.stop(nrtLiveSnapshotDownloadTimer);
       }
     } finally {
       chunkAssignmentLock.unlock();
