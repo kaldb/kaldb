@@ -16,6 +16,7 @@ import com.slack.astra.metadata.search.SearchMetadata;
 import com.slack.astra.metadata.search.SearchMetadataStore;
 import com.slack.astra.metadata.snapshot.SnapshotMetadata;
 import com.slack.astra.metadata.snapshot.SnapshotMetadataStore;
+import com.slack.astra.proto.config.AstraConfigs;
 import com.slack.astra.proto.service.AstraSearch;
 import com.slack.astra.proto.service.AstraServiceGrpc;
 import com.slack.astra.server.AstraQueryServiceBase;
@@ -117,6 +118,8 @@ public class AstraDistributedQueryService extends AstraQueryServiceBase implemen
   private ScheduledFuture<?> pendingStubUpdate;
   private final AstraMetadataStoreChangeListener<SearchMetadata> searchMetadataListener =
       (searchMetadata) -> triggerStubUpdate();
+  private final AstraConfigs.QueryServiceConfig.PreferredLiveSnapshotSource
+      preferredLiveSnapshotSource;
 
   private record QueryableSearchNode(
       SearchMetadata searchMetadata, SnapshotMetadata snapshotMetadata) {}
@@ -160,10 +163,29 @@ public class AstraDistributedQueryService extends AstraQueryServiceBase implemen
       MeterRegistry meterRegistry,
       Duration requestTimeout,
       Duration defaultQueryTimeout) {
+    this(
+        searchMetadataStore,
+        snapshotMetadataStore,
+        datasetMetadataStore,
+        meterRegistry,
+        requestTimeout,
+        defaultQueryTimeout,
+        AstraConfigs.QueryServiceConfig.PreferredLiveSnapshotSource.AUTO);
+  }
+
+  public AstraDistributedQueryService(
+      SearchMetadataStore searchMetadataStore,
+      SnapshotMetadataStore snapshotMetadataStore,
+      DatasetMetadataStore datasetMetadataStore,
+      MeterRegistry meterRegistry,
+      Duration requestTimeout,
+      Duration defaultQueryTimeout,
+      AstraConfigs.QueryServiceConfig.PreferredLiveSnapshotSource preferredLiveSnapshotSource) {
     this.searchMetadataStore = searchMetadataStore;
     this.snapshotMetadataStore = snapshotMetadataStore;
     this.datasetMetadataStore = datasetMetadataStore;
     this.defaultQueryTimeout = defaultQueryTimeout;
+    this.preferredLiveSnapshotSource = preferredLiveSnapshotSource;
     searchMetadataTotalChangeCounter = meterRegistry.counter(SEARCH_METADATA_TOTAL_CHANGE_COUNTER);
     this.distributedQueryApdexSatisfied = meterRegistry.counter(DISTRIBUTED_QUERY_APDEX_SATISFIED);
     this.distributedQueryApdexTolerating =
@@ -181,6 +203,8 @@ public class AstraDistributedQueryService extends AstraQueryServiceBase implemen
 
     // start listening for new events
     this.searchMetadataStore.addListener(searchMetadataListener);
+    LOG.info(
+        "Distributed query live snapshot preference set to {}", this.preferredLiveSnapshotSource);
 
     // trigger an update, if it hasn't already happened
     triggerStubUpdate();
@@ -261,6 +285,15 @@ public class AstraDistributedQueryService extends AstraQueryServiceBase implemen
   @VisibleForTesting
   protected static Map<String, List<String>> getNodesAndSnapshotsToQuery(
       Map<String, List<QueryableSearchNode>> searchMetadataNodesBySnapshotName) {
+    return getNodesAndSnapshotsToQuery(
+        searchMetadataNodesBySnapshotName,
+        AstraConfigs.QueryServiceConfig.PreferredLiveSnapshotSource.AUTO);
+  }
+
+  @VisibleForTesting
+  protected static Map<String, List<String>> getNodesAndSnapshotsToQuery(
+      Map<String, List<QueryableSearchNode>> searchMetadataNodesBySnapshotName,
+      AstraConfigs.QueryServiceConfig.PreferredLiveSnapshotSource preferredLiveSnapshotSource) {
     ScopedSpan getQueryNodesSpan =
         Tracing.currentTracer()
             .startScopedSpan("AstraDistributedQueryService.getNodesAndSnapshotsToQuery");
@@ -268,7 +301,8 @@ public class AstraDistributedQueryService extends AstraQueryServiceBase implemen
     for (List<QueryableSearchNode> searchMetadataList :
         searchMetadataNodesBySnapshotName.values()) {
       QueryableSearchNode queryableSearchNode =
-          AstraDistributedQueryService.pickSearchNodeToQuery(searchMetadataList);
+          AstraDistributedQueryService.pickSearchNodeToQuery(
+              searchMetadataList, preferredLiveSnapshotSource);
       SearchMetadata searchMetadata = queryableSearchNode.searchMetadata();
 
       if (nodeUrlToSnapshotNames.containsKey(searchMetadata.url)) {
@@ -390,12 +424,14 @@ public class AstraDistributedQueryService extends AstraQueryServiceBase implemen
   /*
    If there is only one node hosting the snapshot use that.
    Prefer a searchable sealed snapshot when one is available.
-   Otherwise, prefer a searchable live indexer snapshot.
-   Otherwise, fall back to a searchable cache-hosted live NRT snapshot with a published manifest.
+   Otherwise, prefer between live indexer and cache-hosted live NRT snapshots based on
+   preferredLiveSnapshotSource.
    If there are multiple nodes in the same tier, pick one at random.
   */
-  private static QueryableSearchNode pickSearchNodeToQuery(
-      List<QueryableSearchNode> queryableSearchMetadataNodes) {
+  @VisibleForTesting
+  static QueryableSearchNode pickSearchNodeToQuery(
+      List<QueryableSearchNode> queryableSearchMetadataNodes,
+      AstraConfigs.QueryServiceConfig.PreferredLiveSnapshotSource preferredLiveSnapshotSource) {
     if (queryableSearchMetadataNodes.size() == 1) {
       return queryableSearchMetadataNodes.get(0);
     }
@@ -426,32 +462,57 @@ public class AstraDistributedQueryService extends AstraQueryServiceBase implemen
     }
 
     if (!searchableSealedSearchMetadata.isEmpty()) {
-      return searchableSealedSearchMetadata.get(
-          ThreadLocalRandom.current().nextInt(searchableSealedSearchMetadata.size()));
+      return pickRandomNode(searchableSealedSearchMetadata);
     }
 
-    if (!searchableLiveIndexSearchMetadata.isEmpty()) {
-      return searchableLiveIndexSearchMetadata.get(
-          ThreadLocalRandom.current().nextInt(searchableLiveIndexSearchMetadata.size()));
-    }
-
-    if (!searchableCacheNodeHostedSearchMetadata.isEmpty()) {
-      return searchableCacheNodeHostedSearchMetadata.get(
-          ThreadLocalRandom.current().nextInt(searchableCacheNodeHostedSearchMetadata.size()));
+    QueryableSearchNode preferredSearchableLiveNode =
+        pickPreferredLiveNode(
+            searchableLiveIndexSearchMetadata,
+            searchableCacheNodeHostedSearchMetadata,
+            preferredLiveSnapshotSource);
+    if (preferredSearchableLiveNode != null) {
+      return preferredSearchableLiveNode;
     }
 
     if (!sealedSearchMetadata.isEmpty()) {
-      return sealedSearchMetadata.get(
-          ThreadLocalRandom.current().nextInt(sealedSearchMetadata.size()));
+      return pickRandomNode(sealedSearchMetadata);
     }
 
-    if (!liveIndexerSearchMetadata.isEmpty()) {
-      return liveIndexerSearchMetadata.get(
-          ThreadLocalRandom.current().nextInt(liveIndexerSearchMetadata.size()));
+    QueryableSearchNode preferredLiveNode =
+        pickPreferredLiveNode(
+            liveIndexerSearchMetadata, cacheNodeHostedSearchMetadata, preferredLiveSnapshotSource);
+    if (preferredLiveNode != null) {
+      return preferredLiveNode;
     }
 
-    return cacheNodeHostedSearchMetadata.get(
-        ThreadLocalRandom.current().nextInt(cacheNodeHostedSearchMetadata.size()));
+    throw new IllegalArgumentException("queryableSearchMetadataNodes cannot be empty");
+  }
+
+  private static QueryableSearchNode pickPreferredLiveNode(
+      List<QueryableSearchNode> liveIndexerNodes,
+      List<QueryableSearchNode> cacheHostedNodes,
+      AstraConfigs.QueryServiceConfig.PreferredLiveSnapshotSource preferredLiveSnapshotSource) {
+    if (preferredLiveSnapshotSource
+        == AstraConfigs.QueryServiceConfig.PreferredLiveSnapshotSource.CACHE) {
+      QueryableSearchNode cacheNode = pickRandomNode(cacheHostedNodes);
+      if (cacheNode != null) {
+        return cacheNode;
+      }
+      return pickRandomNode(liveIndexerNodes);
+    }
+
+    QueryableSearchNode indexerNode = pickRandomNode(liveIndexerNodes);
+    if (indexerNode != null) {
+      return indexerNode;
+    }
+    return pickRandomNode(cacheHostedNodes);
+  }
+
+  private static QueryableSearchNode pickRandomNode(List<QueryableSearchNode> nodes) {
+    if (nodes.isEmpty()) {
+      return null;
+    }
+    return nodes.get(ThreadLocalRandom.current().nextInt(nodes.size()));
   }
 
   private static boolean isLiveIndexerSearchNode(QueryableSearchNode queryableSearchNode) {
@@ -581,7 +642,8 @@ public class AstraDistributedQueryService extends AstraQueryServiceBase implemen
     return new DistributedSearchPlan(
         expectedChunkIds.size(),
         countMissingQueryableChunkIds(expectedChunkIds, queryableSearchMetadataBySnapshot.keySet()),
-        getNodesAndSnapshotsToQuery(queryableSearchMetadataBySnapshot));
+        getNodesAndSnapshotsToQuery(
+            queryableSearchMetadataBySnapshot, preferredLiveSnapshotSource));
   }
 
   private Map<String, StructuredTaskScope.Subtask<SearchResult<LogMessage>>>

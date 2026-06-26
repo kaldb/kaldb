@@ -290,6 +290,35 @@ public class AstraDistributedQueryServiceTest {
             SnapshotMetadata.DEFAULT_VERSION,
             rawSnapshotName);
     snapshotMetadataStore.updateSync(publishedLiveSnapshotMetadata);
+    searchNodes =
+        getSearchNodesToQuery(
+            snapshotMetadataStore,
+            searchMetadataStore,
+            datasetMetadataStore,
+            chunkCreationTime.toEpochMilli(),
+            chunkEndTime.toEpochMilli(),
+            indexName,
+            AstraConfigs.QueryServiceConfig.PreferredLiveSnapshotSource.INDEXER);
+
+    assertThat(searchNodes).hasSize(1);
+    assertThat(searchNodes).containsKey(indexer1SearchContext.toString());
+    assertThat(searchNodes.get(indexer1SearchContext.toString())).containsExactly(rawSnapshotName);
+
+    searchNodes =
+        getSearchNodesToQuery(
+            snapshotMetadataStore,
+            searchMetadataStore,
+            datasetMetadataStore,
+            chunkCreationTime.toEpochMilli(),
+            chunkEndTime.toEpochMilli(),
+            indexName,
+            AstraConfigs.QueryServiceConfig.PreferredLiveSnapshotSource.CACHE);
+
+    assertThat(searchNodes).hasSize(1);
+    assertThat(searchNodes).containsKey(cache1SearchContext.toString());
+    assertThat(searchNodes.get(cache1SearchContext.toString()))
+        .containsExactly(LIVE_SNAPSHOT_PREFIX + rawSnapshotName);
+
     SearchMetadata liveIndexerSearchMetadata =
         searchMetadataStore.listSync().stream()
             .filter(searchMetadata -> searchMetadata.url.equals(indexer1SearchContext.toUrl()))
@@ -1549,6 +1578,24 @@ public class AstraDistributedQueryServiceTest {
       long queryStartTimeEpochMs,
       long queryEndTimeEpochMs,
       String dataset) {
+    return getSearchNodesToQuery(
+        snapshotMetadataStore,
+        searchMetadataStore,
+        datasetMetadataStore,
+        queryStartTimeEpochMs,
+        queryEndTimeEpochMs,
+        dataset,
+        AstraConfigs.QueryServiceConfig.PreferredLiveSnapshotSource.AUTO);
+  }
+
+  private Map<String, List<String>> getSearchNodesToQuery(
+      SnapshotMetadataStore snapshotMetadataStore,
+      SearchMetadataStore searchMetadataStore,
+      DatasetMetadataStore datasetMetadataStore,
+      long queryStartTimeEpochMs,
+      long queryEndTimeEpochMs,
+      String dataset,
+      AstraConfigs.QueryServiceConfig.PreferredLiveSnapshotSource preferredLiveSnapshotSource) {
     Map<String, SnapshotMetadata> snapshotsToSearch =
         getMatchingSnapshots(
             snapshotMetadataStore,
@@ -1559,6 +1606,6 @@ public class AstraDistributedQueryServiceTest {
 
     var searchMetadataToQuery = getMatchingSearchMetadata(searchMetadataStore, snapshotsToSearch);
 
-    return getNodesAndSnapshotsToQuery(searchMetadataToQuery);
+    return getNodesAndSnapshotsToQuery(searchMetadataToQuery, preferredLiveSnapshotSource);
   }
 }

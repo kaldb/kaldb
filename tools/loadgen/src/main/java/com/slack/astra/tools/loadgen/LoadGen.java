@@ -19,6 +19,9 @@ public class LoadGen {
   public static void main(String[] args) {
     final String bulkUrl = env("KALDB_BULK_URL", "http://localhost:8086/_bulk");
     final String index = env("INDEX", "test");
+    final String serviceName = env("SERVICE_NAME", "test");
+    final String testRunId = env("TEST_RUN_ID", "");
+    final String messagePrefix = env("MESSAGE_PREFIX", "Synthetic log");
     final int batchSize = Integer.parseInt(env("BATCH_SIZE", "5"));
     final double intervalSec = Double.parseDouble(env("INTERVAL_SEC", "1.0"));
     long id = Long.parseLong(env("START_ID", "100"));
@@ -47,8 +50,8 @@ public class LoadGen {
                 }));
 
     System.out.printf(
-        "🌊 Streaming logs to %s (index=%s, batch=%d, every %.3fs). Ctrl+C to stop.%n",
-        bulkUrl, index, batchSize, intervalSec);
+        "🌊 Streaming logs to %s (index=%s, service=%s, run_id=%s, prefix=%s, batch=%d, every %.3fs). Ctrl+C to stop.%n",
+        bulkUrl, index, serviceName, testRunId, messagePrefix, batchSize, intervalSec);
 
     double backoff = intervalSec;
     long sent = 0;
@@ -69,9 +72,20 @@ public class LoadGen {
             .append(ts)
             .append("\", \"level\": \"")
             .append(level)
-            .append("\", \"message\": \"Synthetic log ")
+            .append("\", \"message\": \"")
+            .append(messagePrefix)
+            .append(" ")
             .append(id)
-            .append("\", \"service-name\": \"test\" }\n");
+            .append("\", \"service-name\": \"")
+            .append(serviceName)
+            .append("\"");
+        if (!testRunId.isBlank()) {
+          ndjson
+              .append(", \"test_run_id\": \"")
+              .append(testRunId.replace("\"", "\\\""))
+              .append("\"");
+        }
+        ndjson.append(" }\n");
         id++;
       }
 

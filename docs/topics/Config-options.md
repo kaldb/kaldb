@@ -384,6 +384,25 @@ queryConfig:
 <tldr>experimental</tldr>
 Host address for manager node, used for on-demand recovery requests.
 
+### preferredLiveSnapshotSource
+
+```yaml
+queryConfig:
+  preferredLiveSnapshotSource: CACHE
+```
+
+Preferred source for live snapshot queries when both the live indexer and a cache-hosted live NRT
+snapshot are available for the same logical chunk.
+
+Allowed values:
+
+- `AUTO`: default behavior; prefer the live indexer, then fall back to cache-hosted live NRT
+- `INDEXER`: force live-indexer preference for manual testing and debugging
+- `CACHE`: force cache-hosted live NRT preference for manual testing and debugging
+
+This setting only affects live snapshot tie-breaking. Searchable sealed snapshots still take
+priority over both live sources.
+
 ## metadataStoreConfig
 ```yaml
 metadataStoreConfig:

@@ -57,6 +57,7 @@ queryConfig:
   zipkinDefaultDataFreshnessSecs: ${ASTRA_QUERY_DEFAULT_DATA_FRESHNESS_SECONDS:-900}
   managerConnectString: ${ASTRA_MANAGER_CONNECTION_STRING:-localhost:8083}
   depGraphConfigFile: ${DEP_GRAPH_CONFIG_FILE:-}
+  preferredLiveSnapshotSource: ${ASTRA_QUERY_PREFERRED_LIVE_SNAPSHOT_SOURCE:-AUTO}
 
 metadataStoreConfig:
   mode: ${ASTRA_METADATA_MODE:-ZOOKEEPER_EXCLUSIVE}

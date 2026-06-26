@@ -97,6 +97,21 @@ message TracingConfig {
 
 // Configuration for the query service.
 message QueryServiceConfig {
+  // Preferred source to query when both a live indexer and a cache-hosted live NRT snapshot are
+  // available for the same logical chunk. This does not affect sealed snapshots, which remain the
+  // highest-priority source.
+  enum PreferredLiveSnapshotSource {
+    // Preserve the default behavior: prefer live indexers, then fall back to cache-hosted live
+    // NRT snapshots.
+    AUTO = 0;
+
+    // Prefer querying the live indexer when both live sources are available.
+    INDEXER = 1;
+
+    // Prefer querying the cache-hosted live NRT snapshot when both live sources are available.
+    CACHE = 2;
+  }
+
   ServerConfig server_config = 1;
   int32 default_query_timeout_ms = 2;
   string managerConnectString = 3;
@@ -104,6 +119,11 @@ message QueryServiceConfig {
   int32 zipkin_default_lookback_mins = 5;
   int64 zipkin_default_data_freshness_secs = 6;
   string dep_graph_config_file = 7;
+
+  // Preferred source for live snapshot queries when both indexer and cache-hosted NRT coverage are
+  // available for the same logical chunk. Use AUTO for the normal selection order, INDEXER to
+  // force live-indexer preference, or CACHE to force cache-hosted live NRT preference.
+  PreferredLiveSnapshotSource preferred_live_snapshot_source = 8;
 }
 
 message RedactionUpdateServiceConfig {
