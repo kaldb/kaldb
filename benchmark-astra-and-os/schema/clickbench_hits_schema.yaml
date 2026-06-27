@@ -1,0 +1,211 @@
+fields:
+  "@timestamp":
+    type: DATE
+  ConstantOne:
+    type: INTEGER
+  AdvEngineID:
+    type: SHORT
+  Age:
+    type: SHORT
+  BrowserCountry:
+    type: KEYWORD
+  BrowserLanguage:
+    type: KEYWORD
+  CLID:
+    type: INTEGER
+  ClientEventTime:
+    type: DATE
+  ClientIP:
+    type: LONG
+  ClientTimeZone:
+    type: SHORT
+  CodeVersion:
+    type: INTEGER
+  ConnectTiming:
+    type: INTEGER
+  CookieEnable:
+    type: SHORT
+  CounterClass:
+    type: SHORT
+  CounterID:
+    type: INTEGER
+  DNSTiming:
+    type: INTEGER
+  DontCountHits:
+    type: BOOLEAN
+  EventDate:
+    type: DATE
+  EventTime:
+    type: DATE
+  FUniqID:
+    type: LONG
+  FetchTiming:
+    type: INTEGER
+  FlashMajor:
+    type: SHORT
+  FlashMinor:
+    type: SHORT
+  FlashMinor2:
+    type: SHORT
+  FromTag:
+    type: KEYWORD
+  GoodEvent:
+    type: SHORT
+  HID:
+    type: INTEGER
+  HTTPError:
+    type: SHORT
+  HasGCLID:
+    type: SHORT
+  HistoryLength:
+    type: SHORT
+  HitColor:
+    type: KEYWORD
+  IPNetworkID:
+    type: INTEGER
+  Income:
+    type: SHORT
+  Interests:
+    type: SHORT
+  IsArtifical:
+    type: SHORT
+  IsDownload:
+    type: SHORT
+  IsEvent:
+    type: SHORT
+  IsLink:
+    type: SHORT
+  IsMobile:
+    type: SHORT
+  IsNotBounce:
+    type: SHORT
+  IsOldCounter:
+    type: SHORT
+  IsParameter:
+    type: SHORT
+  IsRefresh:
+    type: BOOLEAN
+  JavaEnable:
+    type: SHORT
+  JavascriptEnable:
+    type: SHORT
+  LocalEventTime:
+    type: DATE
+  MobilePhone:
+    type: SHORT
+  MobilePhoneModel:
+    type: KEYWORD
+  NetMajor:
+    type: SHORT
+  NetMinor:
+    type: SHORT
+  OS:
+    type: SHORT
+  OpenerName:
+    type: INTEGER
+  OpenstatAdID:
+    type: KEYWORD
+  OpenstatCampaignID:
+    type: KEYWORD
+  OpenstatServiceName:
+    type: KEYWORD
+  OpenstatSourceID:
+    type: KEYWORD
+  OriginalURL:
+    type: KEYWORD
+  PageCharset:
+    type: KEYWORD
+  ParamCurrency:
+    type: KEYWORD
+  ParamCurrencyID:
+    type: SHORT
+  ParamOrderID:
+    type: KEYWORD
+  ParamPrice:
+    type: LONG
+  Params:
+    type: KEYWORD
+  Referer:
+    type: KEYWORD
+  RefererCategoryID:
+    type: SHORT
+  RefererHash:
+    type: LONG
+  RefererRegionID:
+    type: INTEGER
+  RegionID:
+    type: INTEGER
+  RemoteIP:
+    type: INTEGER
+  ResolutionDepth:
+    type: SHORT
+  ResolutionHeight:
+    type: SHORT
+  ResolutionWidth:
+    type: SHORT
+  ResponseEndTiming:
+    type: INTEGER
+  ResponseStartTiming:
+    type: INTEGER
+  Robotness:
+    type: SHORT
+  SearchEngineID:
+    type: SHORT
+  SearchPhrase:
+    type: KEYWORD
+  SendTiming:
+    type: INTEGER
+  Sex:
+    type: SHORT
+  SilverlightVersion1:
+    type: SHORT
+  SilverlightVersion2:
+    type: SHORT
+  SilverlightVersion3:
+    type: INTEGER
+  SilverlightVersion4:
+    type: SHORT
+  SocialSourceNetworkID:
+    type: SHORT
+  SocialSourcePage:
+    type: KEYWORD
+  Title:
+    type: KEYWORD
+  TraficSourceID:
+    type: SHORT
+  URL:
+    type: KEYWORD
+  URLCategoryID:
+    type: SHORT
+  URLHash:
+    type: LONG
+  URLRegionID:
+    type: INTEGER
+  UTMCampaign:
+    type: KEYWORD
+  UTMContent:
+    type: KEYWORD
+  UTMMedium:
+    type: KEYWORD
+  UTMSource:
+    type: KEYWORD
+  UTMTerm:
+    type: KEYWORD
+  UserAgent:
+    type: SHORT
+  UserAgentMajor:
+    type: SHORT
+  UserAgentMinor:
+    type: KEYWORD
+  UserID:
+    type: LONG
+  WatchID:
+    type: LONG
+  WindowClientHeight:
+    type: SHORT
+  WindowClientWidth:
+    type: SHORT
+  WindowName:
+    type: INTEGER
+  WithHash:
+    type: SHORT

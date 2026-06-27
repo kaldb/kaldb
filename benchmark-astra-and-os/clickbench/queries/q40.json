@@ -1,0 +1,75 @@
+{
+  "size": 0,
+  "query": {
+    "bool": {
+      "filter": [
+        {
+          "term": {
+            "CounterID": 62
+          }
+        },
+        {
+          "range": {
+            "EventDate": {
+              "gte": "2013-07-01T00:00:00Z",
+              "lte": "2013-07-31T23:59:59Z"
+            }
+          }
+        },
+        {
+          "terms": {
+            "TraficSourceID": [
+              -1,
+              6
+            ]
+          }
+        },
+        {
+          "term": {
+            "RefererHash": 3594120000172545465
+          }
+        }
+      ],
+      "must_not": [
+        {
+          "term": {
+            "IsRefresh": true
+          }
+        }
+      ]
+    }
+  },
+  "aggs": {
+    "url_hash_dates": {
+      "multi_terms": {
+        "terms": [
+          {
+            "field": "URLHash"
+          },
+          {
+            "field": "EventDate"
+          }
+        ],
+        "size": 110,
+        "order": {
+          "_count": "desc"
+        }
+      },
+      "aggs": {
+        "page": {
+          "bucket_sort": {
+            "sort": [
+              {
+                "_count": {
+                  "order": "desc"
+                }
+              }
+            ],
+            "from": 100,
+            "size": 10
+          }
+        }
+      }
+    }
+  }
+}

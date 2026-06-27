@@ -1,0 +1,10 @@
+{
+  "size": 0,
+  "aggs": {
+    "row_count": {
+      "value_count": {
+        "field": "@timestamp"
+      }
+    }
+  }
+}

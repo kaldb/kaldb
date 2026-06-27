@@ -1,0 +1,33 @@
+{
+  "size": 0,
+  "aggs": {
+    "client_ip_expressions": {
+      "multi_terms": {
+        "terms": [
+          {
+            "field": "ClientIP"
+          },
+          {
+            "script": {
+              "source": "doc['ClientIP'].value - 1"
+            }
+          },
+          {
+            "script": {
+              "source": "doc['ClientIP'].value - 2"
+            }
+          },
+          {
+            "script": {
+              "source": "doc['ClientIP'].value - 3"
+            }
+          }
+        ],
+        "size": 10,
+        "order": {
+          "_count": "desc"
+        }
+      }
+    }
+  }
+}

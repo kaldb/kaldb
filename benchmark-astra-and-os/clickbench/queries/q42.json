@@ -1,0 +1,58 @@
+{
+  "size": 0,
+  "query": {
+    "bool": {
+      "filter": [
+        {
+          "term": {
+            "CounterID": 62
+          }
+        },
+        {
+          "range": {
+            "EventDate": {
+              "gte": "2013-07-14T00:00:00Z",
+              "lte": "2013-07-15T23:59:59Z"
+            }
+          }
+        }
+      ],
+      "must_not": [
+        {
+          "term": {
+            "DontCountHits": true
+          }
+        },
+        {
+          "term": {
+            "IsRefresh": true
+          }
+        }
+      ]
+    }
+  },
+  "aggs": {
+    "minutes": {
+      "date_histogram": {
+        "field": "@timestamp",
+        "interval": "1m",
+        "min_doc_count": 1
+      },
+      "aggs": {
+        "page": {
+          "bucket_sort": {
+            "sort": [
+              {
+                "_key": {
+                  "order": "asc"
+                }
+              }
+            ],
+            "from": 1000,
+            "size": 10
+          }
+        }
+      }
+    }
+  }
+}

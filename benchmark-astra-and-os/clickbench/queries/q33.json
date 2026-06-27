@@ -1,0 +1,14 @@
+{
+  "size": 0,
+  "aggs": {
+    "urls": {
+      "terms": {
+        "field": "URL",
+        "size": 10,
+        "order": {
+          "_count": "desc"
+        }
+      }
+    }
+  }
+}

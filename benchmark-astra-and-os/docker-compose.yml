@@ -1,0 +1,352 @@
+x-healthcheck-common: &healthcheck-common
+  interval: 5s
+  timeout: 5s
+  retries: 20
+
+services:
+  zookeeper:
+    image: zookeeper:3.9
+    container_name: dep_zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOO_STANDALONE_ENABLED: "true"
+      ZOO_4LW_COMMANDS_WHITELIST: "ruok,stat"
+
+  kafka:
+    image: 'bitnamilegacy/kafka:3.2.3'
+    container_name: dep_kafka
+    ports:
+      - '9092:9092'
+      - '29092:29092'
+    environment:
+      - KAFKA_BROKER_ID=1
+      - KAFKA_LISTENERS=INTERNAL://:29092,EXTERNAL://:9092
+      - KAFKA_ADVERTISED_LISTENERS=INTERNAL://kafka:29092,EXTERNAL://127.0.0.1:9092
+      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      - KAFKA_INTER_BROKER_LISTENER_NAME=INTERNAL
+      - KAFKA_ZOOKEEPER_CONNECT=zookeeper:2181
+      - ALLOW_PLAINTEXT_LISTENER=yes
+      - KAFKA_CREATE_TOPICS=test-topic:1:1
+      - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
+    depends_on:
+      - zookeeper
+
+  grafana:
+    image: 'grafana/grafana:8.0.3'
+    container_name: dep_grafana
+    ports:
+      - '3000:3000'
+    volumes:
+      - ./config/grafana/provisioning:/etc/grafana/provisioning
+      - ../slack-astra-app:/var/lib/grafana/plugins
+    environment:
+      GF_LOG_MODE: "console file"
+      GF_LOG_LEVEL: "info"
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
+      GF_PATHS_PLUGINS: "/var/lib/grafana/plugins"
+      GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS: "slack-astra-app,slack-astra-app-backend-datasource"
+
+  opensearch:
+    image: 'opensearchproject/opensearch:2.11.1'
+    container_name: dep_opensearch
+    environment:
+      - cluster.name=opensearch-local
+      - node.name=opensearch-node1
+      - discovery.type=single-node
+      - OPENSEARCH_JAVA_OPTS=${OPENSEARCH_JAVA_OPTS:--Xms4g -Xmx4g}
+      - DISABLE_INSTALL_DEMO_CONFIG=true
+      - DISABLE_SECURITY_PLUGIN=true
+    volumes:
+      - opensearch-data1:/usr/share/opensearch/data
+    ports:
+      - '9200:9200'
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9200 >/dev/null || exit 1"]
+      <<: *healthcheck-common
+      start_period: 10s
+
+  opensearch_dashboards:
+    image: 'opensearchproject/opensearch-dashboards:2.11.1'
+    container_name: dep_opensearch_dashboards
+    ports:
+      - '5601:5601'
+    environment:
+      OPENSEARCH_HOSTS: '["http://astra_dashboards_gateway:9200"]'
+      DISABLE_SECURITY_DASHBOARDS_PLUGIN: "true"
+    depends_on:
+      astra_dashboards_gateway:
+        condition: service_healthy
+      opensearch:
+        condition: service_healthy
+
+  astra_dashboards_gateway:
+    build:
+      context: ..
+      dockerfile: contrib/dashboards-gateway.Dockerfile
+    image: 'kaldb/dashboards-gateway:local'
+    container_name: dep_astra_dashboards_gateway
+    environment:
+      ASTRA_URL: 'http://astra-query:8081'
+      OPENSEARCH_URL: 'http://opensearch:9200'
+      LISTEN_PORT: '9200'
+      MAX_REQUEST_BYTES: '10485760'
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9200/_astra/gateway/health >/dev/null || exit 1"]
+      <<: *healthcheck-common
+      start_period: 5s
+    depends_on:
+      - astra_query
+      - opensearch
+
+  s3:
+    image: 'quay.io/minio/minio:latest'
+    container_name: dep_s3
+    ports:
+      - 9090:9090
+      - 9091:9091
+    environment:
+      - MINIO_ROOT_USER=access
+      - MINIO_ROOT_PASSWORD=keykeykey
+    command: server /data --address ":9090" --console-address ":9091"
+    networks:
+      default:
+        aliases:
+          - test-s3-bucket.s3
+
+  openzipkin:
+    image: 'openzipkin/zipkin-slim'
+    container_name: dep_openzipkin
+    ports:
+      - 9411:9411
+
+  astra_single:
+    profiles:
+      - single-node
+    image: 'slackhq/astra'
+    container_name: astra_single
+    ports:
+      - 8080:8080
+      - 8081:8081
+      - 8082:8082
+      - 8083:8083
+      - 8085:8085
+      - 8086:8086
+    volumes:
+      - ./schema:/config/benchmark-schema:ro
+    environment:
+      - JAVA_TOOL_OPTIONS=${ASTRA_JAVA_TOOL_OPTIONS:-}
+      - NODE_ROLES=${ASTRA_SINGLE_NODE_ROLES:-PREPROCESSOR,INDEX,MANAGER,QUERY,CACHE,RECOVERY}
+      - ASTRA_PREPROCESSOR_USE_BULK_API=true
+      - ASTRA_PREPROCESSOR_SERVER_ADDRESS=astra_single
+      - ASTRA_PREPROCESSOR_REQUEST_TIMEOUT_MS=${ASTRA_PREPROCESSOR_REQUEST_TIMEOUT_MS:-120000}
+      - PREPROCESSOR_SCHEMA_FILE=${PREPROCESSOR_SCHEMA_FILE:-/config/benchmark-schema/clickbench_hits_schema.yaml}
+      - ASTRA_INDEX_SERVER_ADDRESS=astra_single
+      - INDEXER_MAX_MESSAGES_PER_CHUNK=${INDEXER_MAX_MESSAGES_PER_CHUNK:-1000000}
+      - INDEXER_MAX_BYTES_PER_CHUNK=${INDEXER_MAX_BYTES_PER_CHUNK:-1000000000}
+      - INDEXER_MAX_CHUNKS_ON_DISK=${INDEXER_MAX_CHUNKS_ON_DISK:-5}
+      - ASTRA_INDEX_DEFAULT_QUERY_TIMEOUT_MS=${ASTRA_INDEX_DEFAULT_QUERY_TIMEOUT_MS:-300000}
+      - ASTRA_INDEX_REQUEST_TIMEOUT_MS=${ASTRA_INDEX_REQUEST_TIMEOUT_MS:-360000}
+      - ASTRA_MANAGER_SERVER_ADDRESS=astra_single
+      - ASTRA_MANAGER_API_MIN_NUMBER_OF_PARTITIONS=1
+      - ASTRA_MANAGER_REPLICA_LIFESPAN_MINS=${ASTRA_MANAGER_REPLICA_LIFESPAN_MINS:-1440}
+      - ASTRA_MANAGER_SNAPSHOT_LIFESPAN_MINS=${ASTRA_MANAGER_SNAPSHOT_LIFESPAN_MINS:-10080}
+      - ASTRA_QUERY_SERVER_ADDRESS=astra_single
+      - ASTRA_MANAGER_CONNECTION_STRING=astra_single:8083
+      - ASTRA_QUERY_DEFAULT_QUERY_TIMEOUT_MS=${ASTRA_QUERY_DEFAULT_QUERY_TIMEOUT_MS:-300000}
+      - ASTRA_QUERY_REQUEST_TIMEOUT_MS=${ASTRA_QUERY_REQUEST_TIMEOUT_MS:-360000}
+      - ASTRA_CACHE_SERVER_ADDRESS=astra_single
+      - ASTRA_CACHE_DEFAULT_QUERY_TIMEOUT_MS=${ASTRA_CACHE_DEFAULT_QUERY_TIMEOUT_MS:-300000}
+      - ASTRA_CACHE_REQUEST_TIMEOUT_MS=${ASTRA_CACHE_REQUEST_TIMEOUT_MS:-360000}
+      - ASTRA_RECOVERY_SERVER_ADDRESS=astra_single
+      - ASTRA_ZK_CONNECTION_STRING=zookeeper:2181
+      - ASTRA_ZK_SESSION_TIMEOUT_MS=${ASTRA_ZK_SESSION_TIMEOUT_MS:-60000}
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - ZIPKIN_TRACING_ENDPOINT=http://openzipkin:9411/api/v2/spans
+      - S3_ACCESS_KEY=access
+      - S3_SECRET_KEY=keykeykey
+      - S3_ENDPOINT=http://s3:9090
+      - S3_TARGET_THROUGHPUT_GBPS=${S3_TARGET_THROUGHPUT_GBPS:-1}
+      - S3_PATH_PREFIX=${S3_PATH_PREFIX:-}
+    depends_on:
+      - zookeeper
+      - kafka
+      - s3
+      - openzipkin
+    networks:
+      default:
+        aliases:
+          - astra-query
+          - astra-index
+
+  #to build this image run 'docker build -t slackhq/astra .'
+  astra_preprocessor:
+    image: 'slackhq/astra'
+    container_name: astra_preprocessor
+    ports:
+      - 8086:8086
+    volumes:
+      - ./schema:/config/benchmark-schema:ro
+    environment:
+      # Node specific settings
+      - JAVA_TOOL_OPTIONS=${ASTRA_JAVA_TOOL_OPTIONS:-}
+      - NODE_ROLES=PREPROCESSOR
+      - ASTRA_PREPROCESSOR_USE_BULK_API=true
+      - ASTRA_PREPROCESSOR_SERVER_ADDRESS=astra_preprocessor
+      - ASTRA_PREPROCESSOR_REQUEST_TIMEOUT_MS=${ASTRA_PREPROCESSOR_REQUEST_TIMEOUT_MS:-120000}
+      - PREPROCESSOR_SCHEMA_FILE=${PREPROCESSOR_SCHEMA_FILE:-/config/benchmark-schema/clickbench_hits_schema.yaml}
+      # Shared settings
+      - ASTRA_ZK_CONNECTION_STRING=zookeeper:2181
+      - ASTRA_ZK_SESSION_TIMEOUT_MS=${ASTRA_ZK_SESSION_TIMEOUT_MS:-60000}
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - ZIPKIN_TRACING_ENDPOINT=http://openzipkin:9411/api/v2/spans
+      - S3_ACCESS_KEY=access
+      - S3_SECRET_KEY=keykeykey
+      - S3_ENDPOINT=http://s3:9090
+      - S3_TARGET_THROUGHPUT_GBPS=${S3_TARGET_THROUGHPUT_GBPS:-1}
+      - S3_PATH_PREFIX=${S3_PATH_PREFIX:-}
+    depends_on:
+      - zookeeper
+      - kafka
+      - s3
+      - openzipkin
+
+  astra_index:
+    image: 'slackhq/astra'
+    container_name: astra_index
+    ports:
+      - 8080:8080
+    environment:
+      # Node specific settings
+      - JAVA_TOOL_OPTIONS=${ASTRA_JAVA_TOOL_OPTIONS:-}
+      - NODE_ROLES=INDEX
+      - ASTRA_INDEX_SERVER_ADDRESS=astra_index
+      - INDEXER_MAX_MESSAGES_PER_CHUNK=${INDEXER_MAX_MESSAGES_PER_CHUNK:-1000000}
+      - INDEXER_MAX_BYTES_PER_CHUNK=${INDEXER_MAX_BYTES_PER_CHUNK:-1000000000}
+      - INDEXER_MAX_CHUNKS_ON_DISK=${INDEXER_MAX_CHUNKS_ON_DISK:-5}
+      - ASTRA_INDEX_DEFAULT_QUERY_TIMEOUT_MS=${ASTRA_INDEX_DEFAULT_QUERY_TIMEOUT_MS:-300000}
+      - ASTRA_INDEX_REQUEST_TIMEOUT_MS=${ASTRA_INDEX_REQUEST_TIMEOUT_MS:-360000}
+      # Shared settings
+      - ASTRA_ZK_CONNECTION_STRING=zookeeper:2181
+      - ASTRA_ZK_SESSION_TIMEOUT_MS=${ASTRA_ZK_SESSION_TIMEOUT_MS:-60000}
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - ZIPKIN_TRACING_ENDPOINT=http://openzipkin:9411/api/v2/spans
+      - S3_ACCESS_KEY=access
+      - S3_SECRET_KEY=keykeykey
+      - S3_ENDPOINT=http://s3:9090
+      - S3_TARGET_THROUGHPUT_GBPS=${S3_TARGET_THROUGHPUT_GBPS:-1}
+      - S3_PATH_PREFIX=${S3_PATH_PREFIX:-}
+    depends_on:
+      - astra_preprocessor
+    networks:
+      default:
+        aliases:
+          - astra-index
+
+  astra_manager:
+    image: 'slackhq/astra'
+    container_name: astra_manager
+    ports:
+      - 8083:8083
+    environment:
+      # Node specific settings
+      - JAVA_TOOL_OPTIONS=${ASTRA_JAVA_TOOL_OPTIONS:-}
+      - NODE_ROLES=MANAGER
+      - ASTRA_MANAGER_SERVER_ADDRESS=astra_manager
+      - ASTRA_MANAGER_API_MIN_NUMBER_OF_PARTITIONS=1
+      - ASTRA_MANAGER_REPLICA_LIFESPAN_MINS=${ASTRA_MANAGER_REPLICA_LIFESPAN_MINS:-1440}
+      - ASTRA_MANAGER_SNAPSHOT_LIFESPAN_MINS=${ASTRA_MANAGER_SNAPSHOT_LIFESPAN_MINS:-10080}
+      # Shared settings
+      - ASTRA_ZK_CONNECTION_STRING=zookeeper:2181
+      - ASTRA_ZK_SESSION_TIMEOUT_MS=${ASTRA_ZK_SESSION_TIMEOUT_MS:-60000}
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - ZIPKIN_TRACING_ENDPOINT=http://openzipkin:9411/api/v2/spans
+      - S3_ACCESS_KEY=access
+      - S3_SECRET_KEY=keykeykey
+      - S3_ENDPOINT=http://s3:9090
+      - S3_TARGET_THROUGHPUT_GBPS=${S3_TARGET_THROUGHPUT_GBPS:-1}
+      - S3_PATH_PREFIX=${S3_PATH_PREFIX:-}
+    depends_on:
+      - astra_preprocessor
+
+  astra_query:
+    image: 'slackhq/astra'
+    container_name: astra_query
+    ports:
+      - 8081:8081
+    environment:
+      # Node specific settings
+      - JAVA_TOOL_OPTIONS=${ASTRA_JAVA_TOOL_OPTIONS:-}
+      - NODE_ROLES=QUERY
+      - ASTRA_QUERY_SERVER_ADDRESS=astra_query
+      - ASTRA_MANAGER_CONNECTION_STRING=astra_manager:8083
+      - ASTRA_QUERY_DEFAULT_QUERY_TIMEOUT_MS=${ASTRA_QUERY_DEFAULT_QUERY_TIMEOUT_MS:-300000}
+      - ASTRA_QUERY_REQUEST_TIMEOUT_MS=${ASTRA_QUERY_REQUEST_TIMEOUT_MS:-360000}
+      # Shared settings
+      - ASTRA_ZK_CONNECTION_STRING=zookeeper:2181
+      - ASTRA_ZK_SESSION_TIMEOUT_MS=${ASTRA_ZK_SESSION_TIMEOUT_MS:-60000}
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - ZIPKIN_TRACING_ENDPOINT=http://openzipkin:9411/api/v2/spans
+      - S3_ACCESS_KEY=access
+      - S3_SECRET_KEY=keykeykey
+      - S3_ENDPOINT=http://s3:9090
+      - S3_TARGET_THROUGHPUT_GBPS=${S3_TARGET_THROUGHPUT_GBPS:-1}
+      - S3_PATH_PREFIX=${S3_PATH_PREFIX:-}
+    depends_on:
+      - astra_preprocessor
+    networks:
+      default:
+        aliases:
+          - astra-query
+
+  astra_cache:
+    image: 'slackhq/astra'
+    container_name: astra_cache
+    ports:
+      - 8082:8082
+    environment:
+      # Node specific settings
+      - JAVA_TOOL_OPTIONS=${ASTRA_JAVA_TOOL_OPTIONS:-}
+      - NODE_ROLES=CACHE
+      - ASTRA_CACHE_SERVER_ADDRESS=astra_cache
+      - ASTRA_CACHE_DEFAULT_QUERY_TIMEOUT_MS=${ASTRA_CACHE_DEFAULT_QUERY_TIMEOUT_MS:-300000}
+      - ASTRA_CACHE_REQUEST_TIMEOUT_MS=${ASTRA_CACHE_REQUEST_TIMEOUT_MS:-360000}
+      # Shared settings
+      - ASTRA_ZK_CONNECTION_STRING=zookeeper:2181
+      - ASTRA_ZK_SESSION_TIMEOUT_MS=${ASTRA_ZK_SESSION_TIMEOUT_MS:-60000}
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - ZIPKIN_TRACING_ENDPOINT=http://openzipkin:9411/api/v2/spans
+      - S3_ACCESS_KEY=access
+      - S3_SECRET_KEY=keykeykey
+      - S3_ENDPOINT=http://s3:9090
+      - S3_TARGET_THROUGHPUT_GBPS=${S3_TARGET_THROUGHPUT_GBPS:-1}
+      - S3_PATH_PREFIX=${S3_PATH_PREFIX:-}
+    depends_on:
+      - astra_preprocessor
+
+  astra_recovery:
+    image: 'slackhq/astra'
+    container_name: astra_recovery
+    ports:
+      - 8085:8085
+    environment:
+      # Node specific settings
+      - JAVA_TOOL_OPTIONS=${ASTRA_JAVA_TOOL_OPTIONS:-}
+      - NODE_ROLES=RECOVERY
+      - ASTRA_RECOVERY_SERVER_ADDRESS=astra_recovery
+      # Shared settings
+      - ASTRA_ZK_CONNECTION_STRING=zookeeper:2181
+      - ASTRA_ZK_SESSION_TIMEOUT_MS=${ASTRA_ZK_SESSION_TIMEOUT_MS:-60000}
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - ZIPKIN_TRACING_ENDPOINT=http://openzipkin:9411/api/v2/spans
+      - S3_ACCESS_KEY=access
+      - S3_SECRET_KEY=keykeykey
+      - S3_ENDPOINT=http://s3:9090
+      - S3_PATH_PREFIX=${S3_PATH_PREFIX:-}
+    depends_on:
+      - astra_preprocessor
+
+volumes:
+  opensearch-data1:

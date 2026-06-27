@@ -1,0 +1,34 @@
+{
+  "size": 0,
+  "query": {
+    "bool": {
+      "filter": [
+        {
+          "wildcard": {
+            "URL": {
+              "value": "*google*"
+            }
+          }
+        }
+      ],
+      "must_not": [
+        {
+          "term": {
+            "SearchPhrase": ""
+          }
+        }
+      ]
+    }
+  },
+  "aggs": {
+    "phrases": {
+      "terms": {
+        "field": "SearchPhrase",
+        "size": 10,
+        "order": {
+          "_count": "desc"
+        }
+      }
+    }
+  }
+}

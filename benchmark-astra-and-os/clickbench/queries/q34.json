@@ -1,0 +1,21 @@
+{
+  "size": 0,
+  "aggs": {
+    "constant_urls": {
+      "multi_terms": {
+        "terms": [
+          {
+            "field": "ConstantOne"
+          },
+          {
+            "field": "URL"
+          }
+        ],
+        "size": 10,
+        "order": {
+          "_count": "desc"
+        }
+      }
+    }
+  }
+}

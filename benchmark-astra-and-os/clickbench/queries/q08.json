@@ -1,0 +1,21 @@
+{
+  "size": 0,
+  "aggs": {
+    "regions": {
+      "terms": {
+        "field": "RegionID",
+        "size": 10,
+        "order": {
+          "users": "desc"
+        }
+      },
+      "aggs": {
+        "users": {
+          "cardinality": {
+            "field": "UserID"
+          }
+        }
+      }
+    }
+  }
+}

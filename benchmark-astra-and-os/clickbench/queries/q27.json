@@ -1,0 +1,35 @@
+{
+  "size": 0,
+  "query": {
+    "bool": {
+      "must_not": [
+        {
+          "term": {
+            "URL": ""
+          }
+        }
+      ]
+    }
+  },
+  "aggs": {
+    "counters": {
+      "terms": {
+        "field": "CounterID",
+        "size": 25,
+        "min_doc_count": 100001,
+        "order": {
+          "avg_url_length": "desc"
+        }
+      },
+      "aggs": {
+        "avg_url_length": {
+          "avg": {
+            "script": {
+              "source": "doc['URL'].value.length()"
+            }
+          }
+        }
+      }
+    }
+  }
+}

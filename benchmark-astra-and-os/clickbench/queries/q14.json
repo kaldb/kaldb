@@ -1,0 +1,32 @@
+{
+  "size": 0,
+  "query": {
+    "bool": {
+      "must_not": [
+        {
+          "term": {
+            "SearchPhrase": ""
+          }
+        }
+      ]
+    }
+  },
+  "aggs": {
+    "engine_phrases": {
+      "multi_terms": {
+        "terms": [
+          {
+            "field": "SearchEngineID"
+          },
+          {
+            "field": "SearchPhrase"
+          }
+        ],
+        "size": 10,
+        "order": {
+          "_count": "desc"
+        }
+      }
+    }
+  }
+}

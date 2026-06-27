@@ -1,0 +1,10 @@
+{
+  "size": 0,
+  "aggs": {
+    "phrases": {
+      "cardinality": {
+        "field": "SearchPhrase"
+      }
+    }
+  }
+}

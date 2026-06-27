@@ -1,0 +1,26 @@
+{
+  "size": 0,
+  "aggs": {
+    "user_minute_phrases": {
+      "multi_terms": {
+        "terms": [
+          {
+            "field": "UserID"
+          },
+          {
+            "script": {
+              "source": "doc['@timestamp'].value.getMinute()"
+            }
+          },
+          {
+            "field": "SearchPhrase"
+          }
+        ],
+        "size": 10,
+        "order": {
+          "_count": "desc"
+        }
+      }
+    }
+  }
+}

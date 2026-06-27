@@ -1,0 +1,72 @@
+{
+  "size": 0,
+  "query": {
+    "bool": {
+      "filter": [
+        {
+          "term": {
+            "CounterID": 62
+          }
+        },
+        {
+          "range": {
+            "EventDate": {
+              "gte": "2013-07-01T00:00:00Z",
+              "lte": "2013-07-31T23:59:59Z"
+            }
+          }
+        },
+        {
+          "term": {
+            "URLHash": 2868770270353813622
+          }
+        }
+      ],
+      "must_not": [
+        {
+          "term": {
+            "IsRefresh": true
+          }
+        },
+        {
+          "term": {
+            "DontCountHits": true
+          }
+        }
+      ]
+    }
+  },
+  "aggs": {
+    "window_sizes": {
+      "multi_terms": {
+        "terms": [
+          {
+            "field": "WindowClientWidth"
+          },
+          {
+            "field": "WindowClientHeight"
+          }
+        ],
+        "size": 10010,
+        "order": {
+          "_count": "desc"
+        }
+      },
+      "aggs": {
+        "page": {
+          "bucket_sort": {
+            "sort": [
+              {
+                "_count": {
+                  "order": "desc"
+                }
+              }
+            ],
+            "from": 10000,
+            "size": 10
+          }
+        }
+      }
+    }
+  }
+}
