@@ -28,6 +28,41 @@ readonly SCRIPT_IMAGE_LABEL_VALUE="true"
 # ------------------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------------------
+require_command() {
+  local command_name=$1 install_hint=${2:-}
+
+  if command -v "$command_name" >/dev/null 2>&1; then
+    return
+  fi
+
+  echo "❌ Missing required command: $command_name" >&2
+  if [ -n "$install_hint" ]; then
+    echo "   $install_hint" >&2
+  fi
+  echo "   On Debian/Ubuntu, run: scripts/setup-linux-deps.sh" >&2
+  exit 1
+}
+
+check_dependencies() {
+  require_command docker "Docker is required to build and run the KalDB demo stack."
+  require_command curl "curl is required to configure and check local KalDB services."
+
+  if ! docker compose version >/dev/null 2>&1; then
+    echo "❌ Missing required command: docker compose" >&2
+    echo "   Docker Compose v2 is required to run the KalDB demo stack." >&2
+    echo "   On Debian/Ubuntu, run: scripts/setup-linux-deps.sh" >&2
+    exit 1
+  fi
+
+  if ! docker info >/dev/null 2>&1; then
+    echo "❌ Cannot connect to the Docker daemon." >&2
+    echo "   Start Docker and make sure your user can access /var/run/docker.sock." >&2
+    echo "   If scripts/setup-linux-deps.sh just added you to the docker group, log out and back in." >&2
+    echo "   To apply the group in the current shell, you can run: newgrp docker" >&2
+    exit 1
+  fi
+}
+
 wait_for_http() {
   local name=$1 url=$2 max_attempts=${3:-60} sleep_secs=${4:-2}
   echo "⏳ Waiting for $name at $url ..."
@@ -87,6 +122,8 @@ for arg in "$@"; do
       ;;
   esac
 done
+
+check_dependencies
 
 echo "🚀 Starting KalDB demo environment..."
 

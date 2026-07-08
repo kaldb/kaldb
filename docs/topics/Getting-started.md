@@ -8,6 +8,12 @@ project.
 
 ## Quick start
 
+On Debian/Ubuntu systems, install the local toolchain and Docker dependencies first:
+
+```bash
+scripts/setup-linux-deps.sh
+```
+
 1. Build and run docker compose to bring up dependencies and Astra nodes
 ```bash
 docker build -t slackhq/astra .

@@ -98,6 +98,7 @@ KalDB exposes OpenSearch-compatible APIs for query and ingest workflows, which h
 - The `.run/` directory contains run configurations for each node role.
 - Shared runtime defaults live in `config/config.yaml`.
 - CI builds with JDK 21.
+- On Debian/Ubuntu, install local build and Docker dependencies with `scripts/setup-linux-deps.sh`.
 
 ### Common commands
 
