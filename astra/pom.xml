@@ -164,6 +164,16 @@
             <artifactId>lucene-core</artifactId>
             <version>${lucene.version}</version>
         </dependency>
+        <!--
+            Required to read chunks written by an older Lucene major version. This currently
+            arrives transitively via OpenSearch, but is declared explicitly so that a future
+            dependency prune cannot silently break loading of all historical chunks.
+        -->
+        <dependency>
+            <groupId>org.apache.lucene</groupId>
+            <artifactId>lucene-backward-codecs</artifactId>
+            <version>${lucene.version}</version>
+        </dependency>
         <dependency>
             <groupId>org.apache.lucene</groupId>
             <artifactId>lucene-queries</artifactId>
