@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.slack.astra.logstore.LogMessage;
 import com.slack.astra.metadata.schema.LuceneFieldDef;
+import java.io.Closeable;
 import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -66,7 +67,7 @@ import org.slf4j.LoggerFactory;
  * class should ultimately act as an adapter where OpenSearch code is not needed external to this
  * class.
  */
-public class OpenSearchAdapter {
+public class OpenSearchAdapter implements Closeable {
   private static final Logger LOG = LoggerFactory.getLogger(OpenSearchAdapter.class);
 
   private static final IndexSettings indexSettings = AstraIndexSettings.getInstance();
@@ -74,17 +75,46 @@ public class OpenSearchAdapter {
   private static final ThreadPool FIELD_DATA_THREAD_POOL =
       new ThreadPool(Settings.builder().put("node.name", "astra-opensearch-adapter").build());
 
+  /**
+   * Node level field data cache, shared by every adapter. This must be built once per JVM -
+   * building it per query would both defeat field data caching entirely and log a WARN on every
+   * search, as OpenSearch warns when constructed without a cluster service.
+   */
+  private static final IndicesFieldDataCache indicesFieldDataCache =
+      new IndicesFieldDataCache(
+          indexSettings.getSettings(),
+          new IndexFieldDataCache.Listener() {},
+          null,
+          FIELD_DATA_THREAD_POOL);
+
+  private static final ValuesSourceRegistry valuesSourceRegistry = buildValueSourceRegistry();
+
   static {
     Runtime.getRuntime().addShutdownHook(new Thread(FIELD_DATA_THREAD_POOL::shutdown));
   }
 
   private final MapperService mapperService;
 
+  private final IndexFieldDataService indexFieldDataService;
+
   private final Map<String, LuceneFieldDef> chunkSchema;
 
   public OpenSearchAdapter(Map<String, LuceneFieldDef> chunkSchema) {
     this.mapperService = buildMapperService();
+    this.indexFieldDataService =
+        new IndexFieldDataService(
+            indexSettings,
+            indicesFieldDataCache,
+            new NoneCircuitBreakerService(),
+            mapperService,
+            FIELD_DATA_THREAD_POOL);
     this.chunkSchema = chunkSchema;
+  }
+
+  /** Releases the field data cached for this adapter's chunk. */
+  @Override
+  public void close() throws IOException {
+    indexFieldDataService.close();
   }
 
   /** Aggregation execution state for one local Lucene search. */
@@ -106,7 +136,7 @@ public class OpenSearchAdapter {
       AggregatorFactories.Builder aggregatorFactoriesBuilder,
       Query query) {
     QueryShardContext queryShardContext =
-        buildQueryShardContext(AstraBigArrays.getInstance(), indexSearcher, mapperService);
+        buildQueryShardContext(AstraBigArrays.getInstance(), indexSearcher);
 
     if (aggregatorFactoriesBuilder != null) {
       try {
@@ -141,7 +171,7 @@ public class OpenSearchAdapter {
   public Query buildQuery(IndexSearcher indexSearcher, String dataset, QueryBuilder queryBuilder)
       throws IOException {
     QueryShardContext queryShardContext =
-        buildQueryShardContext(AstraBigArrays.getInstance(), indexSearcher, mapperService);
+        buildQueryShardContext(AstraBigArrays.getInstance(), indexSearcher);
 
     QueryBuilder scopedQueryBuilder = queryBuilder;
     if (dataset != null && !dataset.isBlank() && !dataset.equals("_all") && !dataset.equals("*")) {
@@ -306,25 +336,14 @@ public class OpenSearchAdapter {
    * Minimal implementation of an OpenSearch QueryShardContext while still allowing an
    * AggregatorFactory to successfully instantiate. See AggregatorFactory.class
    */
-  private static QueryShardContext buildQueryShardContext(
-      BigArrays bigArrays, IndexSearcher indexSearcher, MapperService mapperService) {
-    final ValuesSourceRegistry valuesSourceRegistry = buildValueSourceRegistry();
+  private QueryShardContext buildQueryShardContext(
+      BigArrays bigArrays, IndexSearcher indexSearcher) {
     return new QueryShardContext(
         0,
         OpenSearchAdapter.indexSettings,
         bigArrays,
         null,
-        new IndexFieldDataService(
-                OpenSearchAdapter.indexSettings,
-                new IndicesFieldDataCache(
-                    OpenSearchAdapter.indexSettings.getSettings(),
-                    new IndexFieldDataCache.Listener() {},
-                    null,
-                    FIELD_DATA_THREAD_POOL),
-                new NoneCircuitBreakerService(),
-                mapperService,
-                FIELD_DATA_THREAD_POOL)
-            ::getForField,
+        indexFieldDataService::getForField,
         mapperService,
         OpenSearchAdapter.similarityService,
         ScriptServiceProvider.getInstance(),

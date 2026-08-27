@@ -300,6 +300,7 @@ public class LogIndexSearcherImpl implements LogIndexSearcher<LogMessage> {
     try {
       searcherManager.removeListener(refreshListener);
       astraSearcherManager.close();
+      openSearchAdapter.close();
     } catch (IOException e) {
       LOG.error("Encountered error closing searcher manager", e);
     }
