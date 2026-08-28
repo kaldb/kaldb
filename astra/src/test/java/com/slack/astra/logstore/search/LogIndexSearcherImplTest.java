@@ -53,6 +53,8 @@ import java.util.stream.Collectors;
 import org.apache.curator.test.TestingServer;
 import org.apache.curator.x.async.AsyncCuratorFramework;
 import org.apache.lucene.document.InetAddressPoint;
+import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.search.SearcherManager;
 import org.apache.lucene.util.BytesRef;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -256,6 +258,46 @@ public class LogIndexSearcherImplTest {
       assertThat(messages.get(0).getSource().containsKey("message")).isTrue();
       assertThat(messages.get(0).getSource().get("message")).isEqualTo("REDACTED");
       featureFlagEnabledStrictLogStore.closeAll();
+    }
+
+    @Test
+    public void testRedactionAppliesToStoredFieldsReadPath() throws Exception {
+      String redactionName = "testStoredFieldsRedaction";
+      long start = Instant.now().minus(1, ChronoUnit.DAYS).toEpochMilli();
+      long end = Instant.now().plus(2, ChronoUnit.DAYS).toEpochMilli();
+
+      TemporaryLogStoreAndSearcherExtension logStoreAndSearcher =
+          new TemporaryLogStoreAndSearcherExtension(true);
+      logStoreAndSearcher.logStore.addMessage(SpanUtil.makeSpan(1, Instant.now()));
+      logStoreAndSearcher.logStore.commit();
+      logStoreAndSearcher.logStore.refresh();
+
+      fieldRedactionMetadataStore.createSync(
+          new FieldRedactionMetadata(redactionName, "message", start, end));
+      await()
+          .until(
+              () ->
+                  AstraMetadataTestUtils.listSyncUncached(fieldRedactionMetadataStore).size() == 1);
+      Thread.sleep(redactionUpdateServiceConfig.getRedactionUpdatePeriodSecs() * 1000);
+
+      // Read _source through storedFields() rather than through logSearcher.search(). The leaf
+      // reader exposes more than one way to reach stored fields, and a redaction wrapper that
+      // only covers the path the searcher happens to use today is one upstream API change away
+      // from returning unredacted data.
+      SearcherManager searcherManager =
+          logStoreAndSearcher.logStore.getAstraSearcherManager().getLuceneSearcherManager();
+      IndexSearcher searcher = searcherManager.acquire();
+      try {
+        String source =
+            searcher.storedFields().document(0).get(LogMessage.SystemField.SOURCE.fieldName);
+        assertThat(source).contains("REDACTED");
+        assertThat(source).doesNotContain("The identifier in this message is Message1");
+        // fields outside the redaction are returned intact
+        assertThat(source).contains("String-1");
+      } finally {
+        searcherManager.release(searcher);
+      }
+      logStoreAndSearcher.closeAll();
     }
 
     @Test

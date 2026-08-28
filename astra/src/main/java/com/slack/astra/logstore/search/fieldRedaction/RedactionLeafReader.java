@@ -27,17 +27,24 @@ class RedactionLeafReader extends SequentialStoredFieldsLeafReader {
     return in.getSortedDocValues(field);
   }
 
+  // Both stored field read paths must redact. document() and storedFields() are independent
+  // ways to reach the same data, so redacting in only one of them leaves the other unfiltered.
   @Override
   public StoredFields storedFields() throws IOException {
-    return in.storedFields();
+    StoredFields storedFields = in.storedFields();
+    return new StoredFields() {
+      @Override
+      public void document(int docID, StoredFieldVisitor visitor) throws IOException {
+        HashMap<String, FieldRedactionMetadata> fieldRedactionsMap = getFieldRedactionsMap();
+        storedFields.document(docID, new RedactionStoredFieldVisitor(visitor, fieldRedactionsMap));
+      }
+    };
   }
 
-  // RedactionStoredFieldVisitor can be called here or in the RedactedFieldReader
   @Override
   public void document(int docID, StoredFieldVisitor visitor) throws IOException {
     HashMap<String, FieldRedactionMetadata> fieldRedactionsMap = getFieldRedactionsMap();
-    visitor = new RedactionStoredFieldVisitor(visitor, fieldRedactionsMap);
-    in.document(docID, visitor);
+    in.document(docID, new RedactionStoredFieldVisitor(visitor, fieldRedactionsMap));
   }
 
   @Override
