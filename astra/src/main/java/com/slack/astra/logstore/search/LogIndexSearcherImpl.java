@@ -22,6 +22,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
+import org.apache.lucene.index.StoredFields;
 import org.apache.lucene.search.Collector;
 import org.apache.lucene.search.FieldDoc;
 import org.apache.lucene.search.IndexSearcher;
@@ -138,9 +139,12 @@ public class LogIndexSearcherImpl implements LogIndexSearcher<LogMessage> {
           TopFieldDocs topDocs = topFieldCollector.topDocs();
           ScoreDoc[] hits = topDocs.scoreDocs;
           results = new ArrayList<>(hits.length);
+          // Obtained once and reused for every hit - a StoredFields caches its per-leaf
+          // accessors, so acquiring one per hit rebuilds them for each document.
+          StoredFields storedFields = searcher.storedFields();
           for (ScoreDoc hit : hits) {
             FieldDoc fieldDoc = (FieldDoc) hit;
-            LogWireMessage wireMessage = buildLogWireMessage(searcher, fieldDoc);
+            LogWireMessage wireMessage = buildLogWireMessage(storedFields, fieldDoc);
             results.add(
                 new SearchResultHit<>(
                     buildLogMessage(wireMessage, searchQuery.sourceFieldFilter),
@@ -192,10 +196,10 @@ public class LogIndexSearcherImpl implements LogIndexSearcher<LogMessage> {
     return HitSortValue.of(value);
   }
 
-  private LogWireMessage buildLogWireMessage(IndexSearcher searcher, ScoreDoc hit) {
+  private LogWireMessage buildLogWireMessage(StoredFields storedFields, ScoreDoc hit) {
     String s = "";
     try {
-      s = searcher.doc(hit.doc).get(SystemField.SOURCE.fieldName);
+      s = storedFields.document(hit.doc).get(SystemField.SOURCE.fieldName);
       return JsonUtil.read(s, LogWireMessage.class);
     } catch (Exception e) {
       throw new IllegalStateException("Error fetching and parsing a result from index: " + s, e);
