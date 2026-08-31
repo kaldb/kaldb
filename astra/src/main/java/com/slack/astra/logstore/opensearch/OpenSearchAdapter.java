@@ -19,6 +19,7 @@ import org.opensearch.cluster.ClusterModule;
 import org.opensearch.common.CheckedConsumer;
 import org.opensearch.common.compress.CompressedXContent;
 import org.opensearch.common.settings.Settings;
+import org.opensearch.common.unit.TimeValue;
 import org.opensearch.common.util.BigArrays;
 import org.opensearch.common.xcontent.XContentFactory;
 import org.opensearch.core.common.bytes.BytesReference;
@@ -58,6 +59,7 @@ import org.opensearch.search.aggregations.metrics.SumAggregationBuilder;
 import org.opensearch.search.aggregations.metrics.ValueCountAggregationBuilder;
 import org.opensearch.search.aggregations.support.ValuesSourceRegistry;
 import org.opensearch.search.internal.SearchContext;
+import org.opensearch.threadpool.Scheduler.Cancellable;
 import org.opensearch.threadpool.ThreadPool;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -70,10 +72,9 @@ import org.slf4j.LoggerFactory;
 public class OpenSearchAdapter implements Closeable {
   private static final Logger LOG = LoggerFactory.getLogger(OpenSearchAdapter.class);
 
-  private static final IndexSettings indexSettings = AstraIndexSettings.getInstance();
-  private static final SimilarityService similarityService = AstraSimilarityService.getInstance();
   private static final ThreadPool FIELD_DATA_THREAD_POOL =
       new ThreadPool(Settings.builder().put("node.name", "astra-opensearch-adapter").build());
+  private static final TimeValue FIELD_DATA_CACHE_CLEANUP_INTERVAL = TimeValue.timeValueMinutes(1);
 
   /**
    * Node level field data cache, shared by every adapter. This must be built once per JVM -
@@ -82,16 +83,50 @@ public class OpenSearchAdapter implements Closeable {
    */
   private static final IndicesFieldDataCache indicesFieldDataCache =
       new IndicesFieldDataCache(
-          indexSettings.getSettings(),
+          AstraIndexSettings.getSharedServiceSettings(),
           new IndexFieldDataCache.Listener() {},
           null,
           FIELD_DATA_THREAD_POOL);
 
   private static final ValuesSourceRegistry valuesSourceRegistry = buildValueSourceRegistry();
+  private static final Cancellable FIELD_DATA_CACHE_CLEANER =
+      FIELD_DATA_THREAD_POOL.scheduleWithFixedDelay(
+          OpenSearchAdapter::cleanFieldDataCache,
+          FIELD_DATA_CACHE_CLEANUP_INTERVAL,
+          ThreadPool.Names.SAME);
 
   static {
-    Runtime.getRuntime().addShutdownHook(new Thread(FIELD_DATA_THREAD_POOL::shutdown));
+    Runtime.getRuntime()
+        .addShutdownHook(
+            new Thread(
+                OpenSearchAdapter::shutdownFieldDataCache, "astra-opensearch-field-data-shutdown"));
   }
+
+  private static void shutdownFieldDataCache() {
+    FIELD_DATA_CACHE_CLEANER.cancel();
+    try {
+      indicesFieldDataCache.close();
+    } finally {
+      FIELD_DATA_THREAD_POOL.shutdown();
+    }
+  }
+
+  /** Drains the reader and index removals queued by OpenSearch's field-data cache. */
+  static void cleanFieldDataCache() {
+    try {
+      indicesFieldDataCache.clear();
+    } catch (Exception e) {
+      LOG.warn("Exception during periodic field data cache cleanup", e);
+    }
+  }
+
+  static long fieldDataCacheEntryCount() {
+    return indicesFieldDataCache.getCache().count();
+  }
+
+  private final IndexSettings indexSettings;
+
+  private final SimilarityService similarityService;
 
   private final MapperService mapperService;
 
@@ -100,7 +135,9 @@ public class OpenSearchAdapter implements Closeable {
   private final Map<String, LuceneFieldDef> chunkSchema;
 
   public OpenSearchAdapter(Map<String, LuceneFieldDef> chunkSchema) {
-    this.mapperService = buildMapperService();
+    this.indexSettings = AstraIndexSettings.create();
+    this.similarityService = new SimilarityService(indexSettings, null, Map.of());
+    this.mapperService = buildMapperService(indexSettings, similarityService);
     this.indexFieldDataService =
         new IndexFieldDataService(
             indexSettings,
@@ -318,12 +355,13 @@ public class OpenSearchAdapter implements Closeable {
    * initializing the mapper service, individual fields will still need to be added using
    * this.registerField()
    */
-  private static MapperService buildMapperService() {
+  private static MapperService buildMapperService(
+      IndexSettings indexSettings, SimilarityService similarityService) {
     return new MapperService(
-        OpenSearchAdapter.indexSettings,
+        indexSettings,
         AstraIndexAnalyzer.getInstance(),
         new NamedXContentRegistry(ClusterModule.getNamedXWriteables()),
-        OpenSearchAdapter.similarityService,
+        similarityService,
         AstraMapperRegistry.buildNewInstance(),
         () -> {
           throw new UnsupportedOperationException();
@@ -340,12 +378,12 @@ public class OpenSearchAdapter implements Closeable {
       BigArrays bigArrays, IndexSearcher indexSearcher) {
     return new QueryShardContext(
         0,
-        OpenSearchAdapter.indexSettings,
+        indexSettings,
         bigArrays,
         null,
         indexFieldDataService::getForField,
         mapperService,
-        OpenSearchAdapter.similarityService,
+        similarityService,
         ScriptServiceProvider.getInstance(),
         null,
         null,
