@@ -1908,7 +1908,8 @@ public class ElasticsearchApiServiceTest {
 
     assertThat(aggregatedRes.status().code()).isEqualTo(200);
     assertThat(jsonNode.get("cluster_name").asText()).isEqualTo("astra");
-    assertThat(jsonNode.get("version").get("number").asText()).isEqualTo("2.11.1");
+    assertThat(jsonNode.get("version").get("number").asText()).isEqualTo("3.7.0");
+    assertThat(jsonNode.get("version").get("lucene_version").asText()).isEqualTo("10.4.0");
   }
 
   @Test
@@ -1928,7 +1929,7 @@ public class ElasticsearchApiServiceTest {
     assertThat(aggregatedRes.status().code()).isEqualTo(200);
     assertThat(jsonNode.get("_nodes").get("total").asInt()).isEqualTo(1);
     assertThat(jsonNode.get("nodes").get("localhost:8081").get("version").asText())
-        .isEqualTo("2.11.1");
+        .isEqualTo("3.7.0");
   }
 
   @Test
