@@ -23,10 +23,12 @@
         <armeria.version>1.32.5</armeria.version>
         <armeria-brave.version>1.27.3</armeria-brave.version>
         <kafka.version>3.5.0</kafka.version>
-        <jackson.version>2.19.1</jackson.version>
-        <jackson.databind.version>2.19.1</jackson.databind.version>
-        <lucene.version>9.7.0</lucene.version>
-        <opensearch.version>2.11.1</opensearch.version>
+        <jackson.version>2.21.3</jackson.version>
+        <jackson.databind.version>2.21.3</jackson.databind.version>
+        <!-- Jackson annotations switched to a two-component version in 2.20. -->
+        <jackson.annotations.version>2.21</jackson.annotations.version>
+        <lucene.version>10.4.0</lucene.version>
+        <opensearch.version>3.7.0</opensearch.version>
         <curator.version>5.8.0</curator.version>
         <log4j.version>2.24.3</log4j.version>
         <aws.sdk.version>2.31.63</aws.sdk.version>
@@ -36,6 +38,19 @@
 
     <repositories>
     </repositories>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- Keep transitive Jackson 2 modules aligned with the directly used modules. -->
+            <dependency>
+                <groupId>com.fasterxml.jackson</groupId>
+                <artifactId>jackson-bom</artifactId>
+                <version>${jackson.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
 
     <licenses>
         <license>
@@ -164,25 +179,20 @@
             <artifactId>lucene-core</artifactId>
             <version>${lucene.version}</version>
         </dependency>
+        <!--
+            Required to read chunks written by an older Lucene major version. This currently
+            arrives transitively via OpenSearch, but is declared explicitly so that a future
+            dependency prune cannot silently break loading of all historical chunks.
+        -->
         <dependency>
             <groupId>org.apache.lucene</groupId>
-            <artifactId>lucene-queries</artifactId>
+            <artifactId>lucene-backward-codecs</artifactId>
             <version>${lucene.version}</version>
         </dependency>
         <dependency>
             <groupId>org.apache.lucene</groupId>
-            <artifactId>lucene-test-framework</artifactId>
+            <artifactId>lucene-queries</artifactId>
             <version>${lucene.version}</version>
-            <exclusions>
-                <exclusion>
-                    <groupId>junit</groupId>
-                    <artifactId>junit</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>org.hamcrest</groupId>
-                    <artifactId>hamcrest</artifactId>
-                </exclusion>
-            </exclusions>
         </dependency>
         <dependency>
             <groupId>org.apache.lucene</groupId>
@@ -232,7 +242,7 @@
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-annotations</artifactId>
-            <version>${jackson.version}</version>
+            <version>${jackson.annotations.version}</version>
         </dependency>
 
         <dependency>

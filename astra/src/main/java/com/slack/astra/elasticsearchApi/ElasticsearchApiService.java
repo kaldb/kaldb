@@ -60,9 +60,9 @@ public class ElasticsearchApiService {
   private static final Logger LOG = LoggerFactory.getLogger(ElasticsearchApiService.class);
   // Keep this in sync with the OpenSearch and OpenSearch Dashboards image versions in
   // docker-compose.yml. Dashboards uses the reported backend version during its startup handshake.
-  private static final String OPEN_SEARCH_COMPAT_VERSION = "2.11.1";
+  private static final String OPEN_SEARCH_COMPAT_VERSION = "3.7.0";
   // Keep this in sync with astra/pom.xml's lucene.version property.
-  private static final String OPEN_SEARCH_COMPAT_LUCENE_VERSION = "9.7.0";
+  private static final String OPEN_SEARCH_COMPAT_LUCENE_VERSION = "10.4.0";
   private final AstraQueryServiceBase searcher;
   private final CompatibilityMetadata compatibilityMetadata;
   private final OpenSearchSchemaAdapter openSearchSchemaAdapter;

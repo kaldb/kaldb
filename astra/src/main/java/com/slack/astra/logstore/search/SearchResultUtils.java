@@ -20,9 +20,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 import org.opensearch.common.settings.Settings;
-import org.opensearch.common.xcontent.json.JsonXContentParser;
+import org.opensearch.common.xcontent.json.JsonXContent;
 import org.opensearch.core.xcontent.DeprecationHandler;
 import org.opensearch.core.xcontent.NamedXContentRegistry;
+import org.opensearch.core.xcontent.XContentParser;
 import org.opensearch.index.query.AbstractQueryBuilder;
 import org.opensearch.index.query.QueryBuilder;
 import org.opensearch.search.SearchModule;
@@ -112,11 +113,11 @@ public class SearchResultUtils {
 
     if (!searchRequest.getQuery().isEmpty()) {
       try {
-        JsonXContentParser jsonXContentParser =
-            new JsonXContentParser(
+        XContentParser jsonXContentParser =
+            JsonXContent.jsonXContent.createParser(
                 namedXContentRegistry,
                 DeprecationHandler.IGNORE_DEPRECATIONS,
-                objectMapper.createParser(searchRequest.getQuery()));
+                searchRequest.getQuery());
         queryBuilder = AbstractQueryBuilder.parseInnerQueryBuilder(jsonXContentParser);
       } catch (Exception e) {
         throw new IllegalArgumentException(e);
@@ -126,11 +127,11 @@ public class SearchResultUtils {
     AggregatorFactories.Builder aggregatorFactoriesBuilder = null;
     if (!searchRequest.getAggregationJson().isEmpty()) {
       try {
-        JsonXContentParser jsonXContentParser =
-            new JsonXContentParser(
+        XContentParser jsonXContentParser =
+            JsonXContent.jsonXContent.createParser(
                 namedXContentRegistry,
                 DeprecationHandler.IGNORE_DEPRECATIONS,
-                objectMapper.createParser(searchRequest.getAggregationJson()));
+                searchRequest.getAggregationJson());
 
         jsonXContentParser.nextToken();
         aggregatorFactoriesBuilder = AggregatorFactories.parseAggregators(jsonXContentParser);
