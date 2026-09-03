@@ -638,7 +638,8 @@ public class AstraDistributedQueryService extends AstraQueryServiceBase implemen
       List<SearchResult<LogMessage>> searchResults = distributedSearch(request);
       SearchResult<LogMessage> aggregatedResult =
           ((SearchResultAggregator<LogMessage>)
-                  new SearchResultAggregatorImpl<>(SearchResultUtils.fromSearchRequest(request)))
+                  new SearchResultAggregatorImpl<>(
+                      SearchResultUtils.fromSearchRequest(request, true)))
               .aggregate(searchResults, true);
 
       // We report a query with more than 0% of requested nodes, but less than 2% as a tolerable

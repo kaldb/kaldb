@@ -54,6 +54,17 @@ public class AstraConfigTest {
   }
 
   @Test
+  public void shouldParseDedicatedOnlyClusterFlag() throws Exception {
+    String configWithDedicatedPartitions =
+        readResource("test_config.yaml")
+            .replace("  allPartitionsDedicated: false", "  allPartitionsDedicated: true");
+
+    AstraConfigs.AstraConfig config = AstraConfig.fromYamlConfig(configWithDedicatedPartitions);
+
+    assertThat(config.getClusterConfig().getAllPartitionsDedicated()).isTrue();
+  }
+
+  @Test
   public void testInitWithMissingConfigFile() {
     assertThatExceptionOfType(IllegalArgumentException.class)
         .isThrownBy(() -> AstraConfig.initFromFile(Path.of("missing_config_file.json")));
@@ -475,6 +486,7 @@ public class AstraConfigTest {
     final AstraConfigs.ClusterConfig clusterConfig = config.getClusterConfig();
     assertThat(clusterConfig.getClusterName()).isEqualTo("test_astra_cluster");
     assertThat(clusterConfig.getEnv()).isEqualTo("test_astra_env");
+    assertThat(clusterConfig.getAllPartitionsDedicated()).isFalse();
 
     final AstraConfigs.ManagerConfig.ReplicaCreationServiceConfig replicaCreationServiceConfig =
         managerConfig.getReplicaCreationServiceConfig();

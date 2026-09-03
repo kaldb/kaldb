@@ -199,6 +199,7 @@ public class RecoveryChunkManagerTest {
     SearchQuery searchQuery =
         new SearchQuery(
             MessageUtil.TEST_DATASET_NAME,
+            true,
             0,
             MAX_TIME,
             10,
@@ -242,6 +243,7 @@ public class RecoveryChunkManagerTest {
                 .query(
                     new SearchQuery(
                         MessageUtil.TEST_DATASET_NAME,
+                        true,
                         0,
                         MAX_TIME,
                         10,
@@ -273,6 +275,7 @@ public class RecoveryChunkManagerTest {
                 .query(
                     new SearchQuery(
                         MessageUtil.TEST_DATASET_NAME,
+                        true,
                         0,
                         MAX_TIME,
                         10,
@@ -347,6 +350,7 @@ public class RecoveryChunkManagerTest {
     SearchQuery searchQuery =
         new SearchQuery(
             MessageUtil.TEST_DATASET_NAME,
+            true,
             0,
             TemporaryLogStoreAndSearcherExtension.MAX_TIME,
             10,

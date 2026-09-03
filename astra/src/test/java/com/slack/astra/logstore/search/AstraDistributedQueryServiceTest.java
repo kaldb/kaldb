@@ -1552,7 +1552,7 @@ public class AstraDistributedQueryServiceTest {
 
   private SearchResult<LogMessage> searchLocally(
       AstraSearch.SearchRequest request, List<Trace.Span> spans) throws IOException {
-    SearchQuery searchQuery = SearchResultUtils.fromSearchRequest(request);
+    SearchQuery searchQuery = SearchResultUtils.fromSearchRequest(request, true);
     File tempFolder = Files.createTempDir();
     LuceneIndexStoreConfig indexStoreCfg =
         new LuceneIndexStoreConfig(

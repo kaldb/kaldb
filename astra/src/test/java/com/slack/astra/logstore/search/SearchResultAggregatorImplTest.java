@@ -97,6 +97,7 @@ public class SearchResultAggregatorImplTest {
     SearchQuery searchQuery =
         new SearchQuery(
             MessageUtil.TEST_DATASET_NAME,
+            true,
             0,
             1,
             10,
@@ -160,6 +161,7 @@ public class SearchResultAggregatorImplTest {
     SearchQuery searchQuery =
         new SearchQuery(
             MessageUtil.TEST_DATASET_NAME,
+            true,
             histogramStartMs,
             histogramEndMs,
             howMany,
@@ -234,6 +236,7 @@ public class SearchResultAggregatorImplTest {
     SearchQuery searchQuery =
         new SearchQuery(
             MessageUtil.TEST_DATASET_NAME,
+            true,
             histogramStartMs,
             histogramEndMs,
             howMany,
@@ -314,6 +317,7 @@ public class SearchResultAggregatorImplTest {
     SearchQuery searchQuery =
         new SearchQuery(
             MessageUtil.TEST_DATASET_NAME,
+            true,
             baseTime.toEpochMilli(),
             baseTime.plusSeconds(10).toEpochMilli(),
             3,
@@ -339,6 +343,7 @@ public class SearchResultAggregatorImplTest {
     SearchQuery pagedSearchQuery =
         new SearchQuery(
             MessageUtil.TEST_DATASET_NAME,
+            true,
             baseTime.toEpochMilli(),
             baseTime.plusSeconds(10).toEpochMilli(),
             1,
@@ -430,6 +435,7 @@ public class SearchResultAggregatorImplTest {
     SearchQuery searchQuery =
         new SearchQuery(
             MessageUtil.TEST_DATASET_NAME,
+            true,
             baseTime.toEpochMilli(),
             baseTime.plusSeconds(10).toEpochMilli(),
             3,
@@ -505,6 +511,7 @@ public class SearchResultAggregatorImplTest {
     SearchQuery searchQuery =
         new SearchQuery(
             MessageUtil.TEST_DATASET_NAME,
+            true,
             baseTime.toEpochMilli(),
             baseTime.plusSeconds(10).toEpochMilli(),
             2,
@@ -581,6 +588,7 @@ public class SearchResultAggregatorImplTest {
     SearchQuery searchQuery =
         new SearchQuery(
             MessageUtil.TEST_DATASET_NAME,
+            true,
             baseTime.toEpochMilli(),
             baseTime.plusSeconds(1).toEpochMilli(),
             2,
@@ -655,6 +663,7 @@ public class SearchResultAggregatorImplTest {
     SearchQuery searchQuery =
         new SearchQuery(
             MessageUtil.TEST_DATASET_NAME,
+            true,
             baseTime.toEpochMilli(),
             baseTime.plusSeconds(20).toEpochMilli(),
             2,
@@ -713,6 +722,7 @@ public class SearchResultAggregatorImplTest {
     SearchQuery searchQuery =
         new SearchQuery(
             MessageUtil.TEST_DATASET_NAME,
+            true,
             baseTime.toEpochMilli(),
             baseTime.plusSeconds(1).toEpochMilli(),
             2,
@@ -775,6 +785,7 @@ public class SearchResultAggregatorImplTest {
     SearchQuery searchQuery =
         new SearchQuery(
             MessageUtil.TEST_DATASET_NAME,
+            true,
             baseTime.toEpochMilli(),
             baseTime.plusSeconds(10).toEpochMilli(),
             2,
@@ -834,6 +845,7 @@ public class SearchResultAggregatorImplTest {
     SearchQuery searchQuery =
         new SearchQuery(
             MessageUtil.TEST_DATASET_NAME,
+            true,
             baseTime.toEpochMilli(),
             baseTime.plusSeconds(10).toEpochMilli(),
             2,
@@ -885,6 +897,7 @@ public class SearchResultAggregatorImplTest {
     SearchQuery searchQuery =
         new SearchQuery(
             MessageUtil.TEST_DATASET_NAME,
+            true,
             baseTime.toEpochMilli(),
             baseTime.plusSeconds(10).toEpochMilli(),
             2,
@@ -931,6 +944,7 @@ public class SearchResultAggregatorImplTest {
     SearchQuery searchQuery =
         new SearchQuery(
             MessageUtil.TEST_DATASET_NAME,
+            true,
             baseTime.toEpochMilli(),
             baseTime.plusSeconds(10).toEpochMilli(),
             1,
@@ -1032,6 +1046,7 @@ public class SearchResultAggregatorImplTest {
     SearchQuery searchQuery =
         new SearchQuery(
             MessageUtil.TEST_DATASET_NAME,
+            true,
             histogramStartMs,
             histogramEndMs,
             howMany,
@@ -1234,7 +1249,8 @@ public class SearchResultAggregatorImplTest {
                       }
                     }
                     """)
-                .build());
+                .build(),
+            true);
 
     InternalAggregations shard1Aggregations =
         makeAggregations(searchQuery, searchStartMs, searchEndMs, shard1Rows);
@@ -1406,6 +1422,7 @@ public class SearchResultAggregatorImplTest {
     SearchQuery searchQuery =
         new SearchQuery(
             MessageUtil.TEST_DATASET_NAME,
+            true,
             searchStartMs,
             searchEndMs,
             howMany,
@@ -1485,6 +1502,7 @@ public class SearchResultAggregatorImplTest {
     SearchQuery searchQuery =
         new SearchQuery(
             MessageUtil.TEST_DATASET_NAME,
+            true,
             histogramStartMs,
             histogramEndMs,
             howMany,
@@ -1546,6 +1564,7 @@ public class SearchResultAggregatorImplTest {
     SearchQuery searchQuery =
         new SearchQuery(
             MessageUtil.TEST_DATASET_NAME,
+            true,
             startTimeMs,
             endTimeMs,
             howMany,
@@ -1621,6 +1640,7 @@ public class SearchResultAggregatorImplTest {
     SearchQuery searchQuery =
         new SearchQuery(
             MessageUtil.TEST_DATASET_NAME,
+            true,
             histogramStartMs,
             histogramEndMs,
             howMany,
@@ -1720,6 +1740,7 @@ public class SearchResultAggregatorImplTest {
         logSearcher.search(
             new SearchQuery(
                 "testDataSet",
+                true,
                 histogramStartMs,
                 histogramEndMs,
                 0,
@@ -1797,7 +1818,8 @@ public class SearchResultAggregatorImplTest {
                   }
                 }
                 """)
-            .build());
+            .build(),
+        true);
   }
 
   private SearchQuery buildBucketSelectorAggregationQuery(long searchStartMs, long searchEndMs) {
@@ -1829,7 +1851,8 @@ public class SearchResultAggregatorImplTest {
                   }
                 }
                 """)
-            .build());
+            .build(),
+        true);
   }
 
   private SearchQuery buildSiblingAggregationQuery(
@@ -1866,7 +1889,8 @@ public class SearchResultAggregatorImplTest {
                 }
                 """
                     .formatted(interval, histogramStartMs, histogramEndMs))
-            .build());
+            .build(),
+        true);
   }
 
   private SearchQuery buildNestedAndSiblingAggregationQuery(
@@ -1911,7 +1935,8 @@ public class SearchResultAggregatorImplTest {
                 }
                 """
                     .formatted(interval, histogramStartMs, histogramEndMs))
-            .build());
+            .build(),
+        true);
   }
 
   private InternalAggregations makeAggregations(
@@ -1948,6 +1973,7 @@ public class SearchResultAggregatorImplTest {
         logSearcher.search(
             new SearchQuery(
                 MessageUtil.TEST_DATASET_NAME,
+                true,
                 histogramStartMs,
                 histogramEndMs,
                 0,

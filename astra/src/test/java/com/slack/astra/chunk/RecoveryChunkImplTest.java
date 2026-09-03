@@ -156,6 +156,7 @@ public class RecoveryChunkImplTest {
       chunk.query(
           new SearchQuery(
               MessageUtil.TEST_DATASET_NAME,
+              true,
               0,
               MAX_TIME,
               10,
@@ -168,6 +169,7 @@ public class RecoveryChunkImplTest {
       chunk.query(
           new SearchQuery(
               MessageUtil.TEST_DATASET_NAME,
+              true,
               0,
               MAX_TIME,
               10,
@@ -181,6 +183,7 @@ public class RecoveryChunkImplTest {
           chunk.query(
               new SearchQuery(
                   MessageUtil.TEST_DATASET_NAME,
+                  true,
                   0,
                   MAX_TIME,
                   10,
@@ -308,6 +311,7 @@ public class RecoveryChunkImplTest {
                   .query(
                       new SearchQuery(
                           MessageUtil.TEST_DATASET_NAME,
+                          true,
                           startTimeMs,
                           endTimeMs,
                           10,
@@ -341,6 +345,7 @@ public class RecoveryChunkImplTest {
           chunk.query(
               new SearchQuery(
                   MessageUtil.TEST_DATASET_NAME,
+                  true,
                   0,
                   MAX_TIME,
                   10,
@@ -412,6 +417,7 @@ public class RecoveryChunkImplTest {
           chunk.query(
               new SearchQuery(
                   MessageUtil.TEST_DATASET_NAME,
+                  true,
                   0,
                   MAX_TIME,
                   10,
@@ -429,6 +435,7 @@ public class RecoveryChunkImplTest {
           chunk.query(
               new SearchQuery(
                   MessageUtil.TEST_DATASET_NAME,
+                  true,
                   0,
                   MAX_TIME,
                   10,
@@ -624,6 +631,7 @@ public class RecoveryChunkImplTest {
       SearchQuery searchQuery =
           new SearchQuery(
               MessageUtil.TEST_DATASET_NAME,
+              true,
               0,
               MAX_TIME,
               10,
@@ -675,6 +683,7 @@ public class RecoveryChunkImplTest {
       SearchQuery searchQuery =
           new SearchQuery(
               MessageUtil.TEST_DATASET_NAME,
+              true,
               0,
               MAX_TIME,
               10,

@@ -16,17 +16,31 @@ public class AstraLocalQueryService<T> extends AstraQueryServiceBase {
 
   private final ChunkManager<T> chunkManager;
   private final Duration defaultQueryTimeout;
+  private final boolean applyDatasetFilter;
 
-  public AstraLocalQueryService(ChunkManager<T> chunkManager, Duration defaultQueryTimeout) {
+  /**
+   * Creates a local query service using trusted cluster configuration for dataset isolation.
+   *
+   * @param allPartitionsDedicated true only when every searchable chunk contains data for the
+   *     dataset whose dedicated assignment selects it
+   */
+  public AstraLocalQueryService(
+      ChunkManager<T> chunkManager, Duration defaultQueryTimeout, boolean allPartitionsDedicated) {
     this.chunkManager = chunkManager;
     this.defaultQueryTimeout = defaultQueryTimeout;
+    this.applyDatasetFilter = !allPartitionsDedicated;
+    if (allPartitionsDedicated) {
+      LOG.warn(
+          "Dataset filter elision is enabled; this node trusts that all searchable chunks satisfy "
+              + "the dedicated-only dataset-isolation invariant");
+    }
   }
 
   @Override
   public AstraSearch.SearchResult doSearch(AstraSearch.SearchRequest request) {
     LOG.debug("Received search request: {}", request);
     ScopedSpan span = Tracing.currentTracer().startScopedSpan("AstraLocalQueryService.doSearch");
-    SearchQuery query = SearchResultUtils.fromSearchRequest(request);
+    SearchQuery query = SearchResultUtils.fromSearchRequest(request, applyDatasetFilter);
     // TODO: In the future we will also accept query timeouts from the search request. If provided
     // we'll use that over defaultQueryTimeout
     SearchResult<T> searchResult = chunkManager.query(query, defaultQueryTimeout);

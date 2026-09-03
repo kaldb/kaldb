@@ -669,6 +669,7 @@ Cluster configuration options common to all node type.
 clusterConfig:
   clusterName: astra_local
   env: local
+  allPartitionsDedicated: false
 ```
 
 <deflist>
@@ -679,6 +680,16 @@ instrumentation.
 <def title="env">
 Environment string for this cluster. Should be identical for all node types deployed to a single environment, and is 
 used for metrics instrumentation.
+</def>
+<def title="allPartitionsDedicated">
+When `true`, index and cache nodes omit Astra's automatically injected `service_name` filter from
+concrete-dataset queries. The default is `false`.
+
+Enable this only if every live chunk and every persisted chunk that can still be searched was
+produced under dedicated-only partition routing. Current partition assignments alone do not prove
+this historical invariant. Enabling the option while shared data remains searchable can return
+documents from another dataset. Set it identically on all index and cache nodes. It can be set with
+the `ASTRA_ALL_PARTITIONS_DEDICATED` environment variable in the sample configuration.
 </def>
 </deflist>
 

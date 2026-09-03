@@ -100,6 +100,7 @@ public class LogIndexSearcherImplTest {
     return searcher.search(
         new SearchQuery(
             dataset,
+            true,
             0L,
             MAX_TIME,
             howMany,
@@ -121,6 +122,7 @@ public class LogIndexSearcherImplTest {
     return searcher.search(
         new SearchQuery(
             dataset,
+            true,
             0L,
             MAX_TIME,
             howMany,
@@ -1599,7 +1601,17 @@ public class LogIndexSearcherImplTest {
 
     SearchQuery searchQuery =
         new SearchQuery(
-            TEST_DATASET_NAME, 0L, MAX_TIME, 3, 0, sortFieldSpecs, List.of(), null, null, null);
+            TEST_DATASET_NAME,
+            true,
+            0L,
+            MAX_TIME,
+            3,
+            0,
+            sortFieldSpecs,
+            List.of(),
+            null,
+            null,
+            null);
     SearchResult<LogMessage> firstPartialResult =
         new SearchResult<>(
             List.of(workerResult.hits.get(0), workerResult.hits.get(2)), 10, 0, 1, 1, 0, null);
