@@ -40,7 +40,11 @@ public class AstraLocalQueryService<T> extends AstraQueryServiceBase {
   public AstraSearch.SearchResult doSearch(AstraSearch.SearchRequest request) {
     LOG.debug("Received search request: {}", request);
     ScopedSpan span = Tracing.currentTracer().startScopedSpan("AstraLocalQueryService.doSearch");
-    SearchQuery query = SearchResultUtils.fromSearchRequest(request, applyDatasetFilter);
+    // Filter elision assumes this node only searches chunks the coordinator selected for the
+    // requested dataset. A request without chunk ids falls back to searching every chunk in the
+    // time range, and this node hosts chunks for other datasets, so keep the filter in that case.
+    boolean applyFilter = applyDatasetFilter || request.getChunkIdsCount() == 0;
+    SearchQuery query = SearchResultUtils.fromSearchRequest(request, applyFilter);
     // TODO: In the future we will also accept query timeouts from the search request. If provided
     // we'll use that over defaultQueryTimeout
     SearchResult<T> searchResult = chunkManager.query(query, defaultQueryTimeout);

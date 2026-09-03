@@ -514,12 +514,36 @@ public class AstraLocalQueryServiceTest {
     serviceUnderTest.doSearch(
         AstraSearch.SearchRequest.newBuilder()
             .setDataset(MessageUtil.TEST_DATASET_NAME)
+            .addChunkIds("chunk1")
             .setHowMany(1)
             .build());
 
     ArgumentCaptor<SearchQuery> queryCaptor = ArgumentCaptor.forClass(SearchQuery.class);
     verify(chunkManager).query(queryCaptor.capture(), any());
     assertThat(queryCaptor.getValue().applyDatasetFilter).isFalse();
+  }
+
+  /**
+   * A request without chunk ids searches every chunk in the time range, including chunks this node
+   * hosts for other datasets, so the filter must be retained even in a dedicated-only cluster.
+   */
+  @Test
+  public void shouldRetainDatasetFilterWhenRequestOmitsChunkIds() {
+    @SuppressWarnings("unchecked")
+    ChunkManager<LogMessage> chunkManager = mock(ChunkManager.class);
+    when(chunkManager.query(any(), any())).thenReturn(SearchResult.localSoftFailure());
+    AstraLocalQueryService<LogMessage> serviceUnderTest =
+        new AstraLocalQueryService<>(chunkManager, Duration.ofSeconds(3), true);
+
+    serviceUnderTest.doSearch(
+        AstraSearch.SearchRequest.newBuilder()
+            .setDataset(MessageUtil.TEST_DATASET_NAME)
+            .setHowMany(1)
+            .build());
+
+    ArgumentCaptor<SearchQuery> queryCaptor = ArgumentCaptor.forClass(SearchQuery.class);
+    verify(chunkManager).query(queryCaptor.capture(), any());
+    assertThat(queryCaptor.getValue().applyDatasetFilter).isTrue();
   }
 
   @Test

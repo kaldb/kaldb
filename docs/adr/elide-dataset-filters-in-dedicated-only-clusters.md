@@ -31,9 +31,10 @@ optimization, but do not need the complexity of proving ownership independently 
 
 The optimization is safe only under a historical cluster-wide invariant. Every live chunk and
 every persisted chunk that remains searchable must have been produced under dedicated-only
-routing, without a partition reuse or assignment transition that allowed a chunk to contain data
-from different datasets. Current assignment metadata alone does not establish this property for
-retained data.
+routing, without a partition reuse or assignment transition that allows a searchable chunk to be
+selected for the wrong dataset. A partition may be reassigned to another dataset only after all
+chunks and snapshots produced for its previous dataset are no longer searchable. Current
+assignment metadata alone does not establish this property for retained data.
 
 ## Questions
 
@@ -45,6 +46,17 @@ retained data.
   Answer: No. The invariant must cover all live and persisted chunks that can be selected by a
   query. Enabling the option while older shared or mixed chunks remain searchable is unsafe.
 
+- Question: Can a dedicated partition be reassigned to another dataset?
+  Answer: Yes, but only after every chunk and snapshot produced for its previous dataset is no
+  longer searchable. Reassignment while that historical data remains searchable would allow a
+  query for the new dataset to inspect the old dataset's data after filter elision.
+
+- Question: Is per-chunk purity sufficient to make the injected filter redundant?
+  Answer: No. It is necessary but not sufficient. A search request is served by a node, not by a
+  chunk, and cache nodes host chunks for many datasets regardless of dedicated routing. The
+  request must also be scoped to chunk ids the coordinator selected for the requested dataset.
+  A request without chunk ids retains the filter.
+
 - Question: Does this remove a `service_name` clause explicitly supplied by the user?
   Answer: No. It omits only the dataset-scoping clause injected by Astra. The user's query is
   otherwise unchanged.
@@ -55,7 +67,9 @@ retained data.
 - Question: Should Astra validate the invariant at runtime?
   Answer: No. The deployment-wide option intentionally serves clusters whose operators can
   establish the invariant. Runtime validation against current assignment metadata would not prove
-  the history of retained chunks.
+  the history of retained chunks. The partition-assignment APIs do not enforce the
+  retire-before-reuse rule; operators and assignment workflows must ensure that a partition is not
+  reassigned while its previous dataset's chunks or snapshots remain searchable.
 
 ## Public Interfaces
 
@@ -87,16 +101,29 @@ The flag is an operator assertion about the entire searchable retention horizon.
 enabled merely because `DatasetMetadata.usingDedicatedPartitions` is currently true. Before
 enabling it, operators must establish that no searchable live or persisted chunk can contain data
 for more than the dataset whose assignment selects it. This includes chunks spanning earlier
-assignment changes and partitions reused by another dataset.
+assignment changes. If a partition is reused by another dataset, all chunks and snapshots from
+the previous assignment must have become unsearchable before the reassignment.
 
 ### Local query execution
 
 The distributed query request remains unchanged. Each index or cache node derives an internal
-`applyDatasetFilter` policy from its local trusted configuration:
+`applyDatasetFilter` policy from its local trusted configuration and the scope of the request:
 
 ```text
-applyDatasetFilter = !clusterConfig.allPartitionsDedicated
+applyDatasetFilter = !clusterConfig.allPartitionsDedicated || request.chunkIds.isEmpty()
 ```
+
+Chunk purity alone does not make the filter redundant. A node is not dedicated to a dataset even
+when every one of its chunks is: cache slots are filled by `ReplicaAssignmentService`, which has
+no dataset affinity, so one cache node routinely hosts chunks for many datasets. Isolation in
+dedicated mode is therefore supplied by the coordinator, which resolves the dataset to partitions,
+snapshots, and finally chunk ids before fanning out.
+
+A request that carries no chunk ids does not get that scoping. `ChunkManagerBase.query` falls back
+to searching every chunk in the requested time range, which for a cache node spans other datasets.
+That fallback predates chunk-id routing and remains the behavior for callers that do not target
+chunks, so the filter is retained whenever chunk ids are absent. The coordinator always populates
+them, so correctly routed queries are unaffected.
 
 That policy is carried by the internal `SearchQuery` and consumed immediately before the Lucene
 query is built. For a concrete dataset:
@@ -126,8 +153,9 @@ can read a configuration containing `allPartitionsDedicated`; it continues apply
 The preferred rollout is:
 
 1. Establish the dedicated-only invariant for the full searchable retention horizon. This may
-   require waiting for shared historical chunks to expire and ensuring active chunks cannot span
-   an unsafe assignment transition.
+   require waiting for shared historical chunks to expire, ensuring active chunks cannot span an
+   unsafe assignment transition, and enforcing the rule that a partition is not reassigned until
+   all chunks and snapshots from its previous dataset are no longer searchable.
 2. Deploy the new binary with `allPartitionsDedicated: false`.
 3. Enable the option consistently on index and cache nodes and restart them.
 
@@ -145,6 +173,7 @@ No stored data migration, metadata backfill, or deprecation is required.
 - Verify an explicit user-authored `service_name` filter remains in the Lucene query.
 - Verify `_all`, `*`, and invalid concrete dataset selectors behave as before.
 - Verify index and cache service construction derives the policy from `ClusterConfig`.
+- Verify a dedicated-only node retains the filter for a request that carries no chunk ids.
 - Run the existing local-search and distributed-query suites to detect query-result regressions.
 
 ## Documentation Plan
