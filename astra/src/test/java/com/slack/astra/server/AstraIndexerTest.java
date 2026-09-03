@@ -646,6 +646,7 @@ public class AstraIndexerTest {
         chunkManagerUtil.chunkManager.query(
             new SearchQuery(
                 MessageUtil.TEST_DATASET_NAME,
+                true,
                 chunk1StartTimeMs,
                 chunk1StartTimeMs + (100 * 1000),
                 10,

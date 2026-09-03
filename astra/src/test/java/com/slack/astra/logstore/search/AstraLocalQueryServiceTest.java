@@ -9,6 +9,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.AssertionsForClassTypes.assertThatExceptionOfType;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import brave.Tracing;
@@ -44,6 +45,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
+import org.mockito.ArgumentCaptor;
 import org.opensearch.search.aggregations.InternalAggregations;
 import org.opensearch.search.aggregations.bucket.histogram.InternalDateHistogram;
 import org.opensearch.search.aggregations.bucket.terms.InternalMultiTerms;
@@ -82,7 +84,7 @@ public class AstraLocalQueryServiceTest {
     chunkManagerUtil.chunkManager.startAsync();
     chunkManagerUtil.chunkManager.awaitRunning(DEFAULT_START_STOP_DURATION);
     astraLocalQueryService =
-        new AstraLocalQueryService<>(chunkManagerUtil.chunkManager, Duration.ofSeconds(3));
+        new AstraLocalQueryService<>(chunkManagerUtil.chunkManager, Duration.ofSeconds(3), false);
   }
 
   @AfterEach
@@ -481,7 +483,7 @@ public class AstraLocalQueryServiceTest {
     when(chunkManager.query(any(), any())).thenReturn(SearchResult.localSoftFailure());
 
     AstraLocalQueryService<LogMessage> serviceUnderTest =
-        new AstraLocalQueryService<>(chunkManager, Duration.ofSeconds(3));
+        new AstraLocalQueryService<>(chunkManager, Duration.ofSeconds(3), false);
 
     Instant now = Instant.now();
     AstraSearch.SearchResult response =
@@ -499,6 +501,49 @@ public class AstraLocalQueryServiceTest {
     assertThat(response.getTotalNodes()).isZero();
     assertThat(response.getRequestedSnapshots()).isEqualTo(1);
     assertThat(response.getFulfilledSnapshots()).isZero();
+  }
+
+  @Test
+  public void shouldDisableDatasetFilterForDedicatedOnlyClusters() {
+    @SuppressWarnings("unchecked")
+    ChunkManager<LogMessage> chunkManager = mock(ChunkManager.class);
+    when(chunkManager.query(any(), any())).thenReturn(SearchResult.localSoftFailure());
+    AstraLocalQueryService<LogMessage> serviceUnderTest =
+        new AstraLocalQueryService<>(chunkManager, Duration.ofSeconds(3), true);
+
+    serviceUnderTest.doSearch(
+        AstraSearch.SearchRequest.newBuilder()
+            .setDataset(MessageUtil.TEST_DATASET_NAME)
+            .addChunkIds("chunk1")
+            .setHowMany(1)
+            .build());
+
+    ArgumentCaptor<SearchQuery> queryCaptor = ArgumentCaptor.forClass(SearchQuery.class);
+    verify(chunkManager).query(queryCaptor.capture(), any());
+    assertThat(queryCaptor.getValue().applyDatasetFilter).isFalse();
+  }
+
+  /**
+   * A request without chunk ids searches every chunk in the time range, including chunks this node
+   * hosts for other datasets, so the filter must be retained even in a dedicated-only cluster.
+   */
+  @Test
+  public void shouldRetainDatasetFilterWhenRequestOmitsChunkIds() {
+    @SuppressWarnings("unchecked")
+    ChunkManager<LogMessage> chunkManager = mock(ChunkManager.class);
+    when(chunkManager.query(any(), any())).thenReturn(SearchResult.localSoftFailure());
+    AstraLocalQueryService<LogMessage> serviceUnderTest =
+        new AstraLocalQueryService<>(chunkManager, Duration.ofSeconds(3), true);
+
+    serviceUnderTest.doSearch(
+        AstraSearch.SearchRequest.newBuilder()
+            .setDataset(MessageUtil.TEST_DATASET_NAME)
+            .setHowMany(1)
+            .build());
+
+    ArgumentCaptor<SearchQuery> queryCaptor = ArgumentCaptor.forClass(SearchQuery.class);
+    verify(chunkManager).query(queryCaptor.capture(), any());
+    assertThat(queryCaptor.getValue().applyDatasetFilter).isTrue();
   }
 
   @Test
@@ -523,7 +568,7 @@ public class AstraLocalQueryServiceTest {
     grpcCleanup.register(
         InProcessServerBuilder.forName(serverName)
             .directExecutor()
-            .addService(new AstraLocalQueryService<>(chunkManager, Duration.ofSeconds(3)))
+            .addService(new AstraLocalQueryService<>(chunkManager, Duration.ofSeconds(3), false))
             .build()
             .start());
 
@@ -602,7 +647,7 @@ public class AstraLocalQueryServiceTest {
     grpcCleanup.register(
         InProcessServerBuilder.forName(serverName)
             .directExecutor()
-            .addService(new AstraLocalQueryService<>(chunkManager, Duration.ofSeconds(3)))
+            .addService(new AstraLocalQueryService<>(chunkManager, Duration.ofSeconds(3), false))
             .build()
             .start());
 

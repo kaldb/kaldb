@@ -24,6 +24,17 @@ import org.opensearch.search.aggregations.bucket.terms.MultiTermsAggregationBuil
 import org.opensearch.search.aggregations.bucket.terms.TermsAggregationBuilder;
 
 public class SearchResultUtilsTest {
+
+  @Test
+  public void shouldPropagateDatasetFilterPolicyFromTrustedLocalService() {
+    AstraSearch.SearchRequest searchRequest =
+        AstraSearch.SearchRequest.newBuilder().setHowMany(1).build();
+
+    SearchQuery searchQuery = SearchResultUtils.fromSearchRequest(searchRequest, false);
+
+    assertThat(searchQuery.applyDatasetFilter).isFalse();
+  }
+
   @Test
   public void shouldRejectZeroHitRequestWithoutAggregations() {
     AstraSearch.SearchRequest searchRequest =
@@ -37,7 +48,7 @@ public class SearchResultUtilsTest {
             .build();
 
     assertThatIllegalArgumentException()
-        .isThrownBy(() -> SearchResultUtils.fromSearchRequest(searchRequest))
+        .isThrownBy(() -> SearchResultUtils.fromSearchRequest(searchRequest, true))
         .withMessage("Hits or aggregation should be requested.");
   }
 
@@ -53,7 +64,7 @@ public class SearchResultUtilsTest {
             .build();
 
     assertThatIllegalArgumentException()
-        .isThrownBy(() -> SearchResultUtils.fromSearchRequest(searchRequest))
+        .isThrownBy(() -> SearchResultUtils.fromSearchRequest(searchRequest, true))
         .withMessage("hits requested should not be negative.");
   }
 
@@ -70,7 +81,7 @@ public class SearchResultUtilsTest {
             .build();
 
     assertThatIllegalArgumentException()
-        .isThrownBy(() -> SearchResultUtils.fromSearchRequest(searchRequest))
+        .isThrownBy(() -> SearchResultUtils.fromSearchRequest(searchRequest, true))
         .withMessage("from should not be negative.");
   }
 
@@ -87,7 +98,7 @@ public class SearchResultUtilsTest {
             .build();
 
     assertThatIllegalArgumentException()
-        .isThrownBy(() -> SearchResultUtils.fromSearchRequest(searchRequest))
+        .isThrownBy(() -> SearchResultUtils.fromSearchRequest(searchRequest, true))
         .withMessage("from plus size is too large.");
   }
 
@@ -104,7 +115,7 @@ public class SearchResultUtilsTest {
             .build();
 
     assertThatIllegalArgumentException()
-        .isThrownBy(() -> SearchResultUtils.fromSearchRequest(searchRequest))
+        .isThrownBy(() -> SearchResultUtils.fromSearchRequest(searchRequest, true))
         .withMessage("from plus size must be less than or equal to 10000.");
   }
 
@@ -348,7 +359,7 @@ public class SearchResultUtilsTest {
                 }
               }""")
             .build();
-    SearchQuery output = SearchResultUtils.fromSearchRequest(searchRequest);
+    SearchQuery output = SearchResultUtils.fromSearchRequest(searchRequest, true);
     assertThat(output.aggregatorFactoriesBuilder).isNotNull();
     assertThat(output.aggregatorFactoriesBuilder.getAggregatorFactories()).hasSize(1);
 
@@ -398,7 +409,7 @@ public class SearchResultUtilsTest {
                 }""")
             .build();
 
-    SearchQuery output = SearchResultUtils.fromSearchRequest(searchRequest);
+    SearchQuery output = SearchResultUtils.fromSearchRequest(searchRequest, true);
     assertThat(output.aggregatorFactoriesBuilder).isNotNull();
     assertThat(output.aggregatorFactoriesBuilder.getAggregatorFactories()).hasSize(2);
 
@@ -446,7 +457,7 @@ public class SearchResultUtilsTest {
                 }""")
             .build();
 
-    SearchQuery output = SearchResultUtils.fromSearchRequest(searchRequest);
+    SearchQuery output = SearchResultUtils.fromSearchRequest(searchRequest, true);
     assertThat(output.aggregatorFactoriesBuilder).isNotNull();
     assertThat(output.aggregatorFactoriesBuilder.getAggregatorFactories()).hasSize(1);
 
@@ -476,7 +487,7 @@ public class SearchResultUtilsTest {
               }
             }""")
             .build();
-    SearchQuery output = SearchResultUtils.fromSearchRequest(searchRequest);
+    SearchQuery output = SearchResultUtils.fromSearchRequest(searchRequest, true);
     assertThat(output.queryBuilder).isInstanceOf(BoolQueryBuilder.class);
 
     BoolQueryBuilder boolQueryBuilder = (BoolQueryBuilder) output.queryBuilder;
@@ -510,7 +521,7 @@ public class SearchResultUtilsTest {
               }
             }""")
             .build();
-    SearchQuery output = SearchResultUtils.fromSearchRequest(searchRequest);
+    SearchQuery output = SearchResultUtils.fromSearchRequest(searchRequest, true);
     assertThat(output.queryBuilder).isInstanceOf(BoolQueryBuilder.class);
 
     BoolQueryBuilder boolQueryBuilder = (BoolQueryBuilder) output.queryBuilder;
@@ -538,7 +549,7 @@ public class SearchResultUtilsTest {
               }
             }""")
             .build();
-    SearchQuery output = SearchResultUtils.fromSearchRequest(searchRequest);
+    SearchQuery output = SearchResultUtils.fromSearchRequest(searchRequest, true);
     assertThat(output.queryBuilder).isInstanceOf(BoolQueryBuilder.class);
 
     BoolQueryBuilder boolQueryBuilder = (BoolQueryBuilder) output.queryBuilder;
@@ -572,7 +583,7 @@ public class SearchResultUtilsTest {
               }
             }""")
             .build();
-    SearchQuery output = SearchResultUtils.fromSearchRequest(searchRequest);
+    SearchQuery output = SearchResultUtils.fromSearchRequest(searchRequest, true);
     assertThat(output.queryBuilder).isInstanceOf(BoolQueryBuilder.class);
 
     BoolQueryBuilder boolQueryBuilder = (BoolQueryBuilder) output.queryBuilder;
@@ -600,7 +611,7 @@ public class SearchResultUtilsTest {
               }
             }""")
             .build();
-    SearchQuery output = SearchResultUtils.fromSearchRequest(searchRequest);
+    SearchQuery output = SearchResultUtils.fromSearchRequest(searchRequest, true);
     assertThat(output.queryBuilder).isInstanceOf(BoolQueryBuilder.class);
 
     BoolQueryBuilder boolQueryBuilder = (BoolQueryBuilder) output.queryBuilder;
@@ -634,7 +645,7 @@ public class SearchResultUtilsTest {
               }
             }""")
             .build();
-    SearchQuery output = SearchResultUtils.fromSearchRequest(searchRequest);
+    SearchQuery output = SearchResultUtils.fromSearchRequest(searchRequest, true);
     assertThat(output.queryBuilder).isInstanceOf(BoolQueryBuilder.class);
 
     BoolQueryBuilder boolQueryBuilder = (BoolQueryBuilder) output.queryBuilder;
@@ -662,7 +673,7 @@ public class SearchResultUtilsTest {
               }
             }""")
             .build();
-    SearchQuery output = SearchResultUtils.fromSearchRequest(searchRequest);
+    SearchQuery output = SearchResultUtils.fromSearchRequest(searchRequest, true);
     assertThat(output.queryBuilder).isInstanceOf(BoolQueryBuilder.class);
 
     BoolQueryBuilder boolQueryBuilder = (BoolQueryBuilder) output.queryBuilder;
@@ -696,7 +707,7 @@ public class SearchResultUtilsTest {
               }
             }""")
             .build();
-    SearchQuery output = SearchResultUtils.fromSearchRequest(searchRequest);
+    SearchQuery output = SearchResultUtils.fromSearchRequest(searchRequest, true);
     assertThat(output.queryBuilder).isInstanceOf(BoolQueryBuilder.class);
 
     BoolQueryBuilder boolQueryBuilder = (BoolQueryBuilder) output.queryBuilder;
@@ -741,7 +752,7 @@ public class SearchResultUtilsTest {
               }
             }""")
             .build();
-    SearchQuery output = SearchResultUtils.fromSearchRequest(searchRequest);
+    SearchQuery output = SearchResultUtils.fromSearchRequest(searchRequest, true);
     assertThat(output.queryBuilder).isInstanceOf(IntervalQueryBuilder.class);
 
     IntervalQueryBuilder intervalQueryBuilder = (IntervalQueryBuilder) output.queryBuilder;

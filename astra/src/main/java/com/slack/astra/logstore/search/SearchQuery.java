@@ -72,6 +72,9 @@ public class SearchQuery {
   // TODO: Remove the dataset field from this class since it is not a lucene level concept.
   @Deprecated public final String dataset;
 
+  /** Whether local Lucene execution should add Astra's dataset-isolation filter. */
+  public final boolean applyDatasetFilter;
+
   public final AggregatorFactories.Builder aggregatorFactoriesBuilder;
   public final QueryBuilder queryBuilder;
   public final int howMany;
@@ -83,9 +86,15 @@ public class SearchQuery {
   public final long startTimeEpochMs;
   public final long endTimeEpochMs;
 
-  /** Creates a search query that uses KalDB's default hit ordering. */
+  /**
+   * Creates a search query that uses KalDB's default hit ordering.
+   *
+   * @param applyDatasetFilter whether local Lucene execution should add Astra's dataset-isolation
+   *     filter
+   */
   public SearchQuery(
       String dataset,
+      boolean applyDatasetFilter,
       long startTimeEpochMs,
       long endTimeEpochMs,
       int howMany,
@@ -96,6 +105,7 @@ public class SearchQuery {
       AggregatorFactories.Builder aggregatorFactoriesBuilder) {
     this(
         dataset,
+        applyDatasetFilter,
         startTimeEpochMs,
         endTimeEpochMs,
         howMany,
@@ -109,6 +119,7 @@ public class SearchQuery {
 
   SearchQuery(
       String dataset,
+      boolean applyDatasetFilter,
       long startTimeEpochMs,
       long endTimeEpochMs,
       int howMany,
@@ -119,6 +130,7 @@ public class SearchQuery {
       SourceFieldFilter sourceFieldFilter,
       AggregatorFactories.Builder aggregatorFactoriesBuilder) {
     this.dataset = dataset;
+    this.applyDatasetFilter = applyDatasetFilter;
     this.howMany = howMany;
     this.startFrom = startFrom;
     this.hitSortPlan = HitSortPlan.fromRequested(requestedSortFieldSpecs);
@@ -156,6 +168,8 @@ public class SearchQuery {
         + "dataset='"
         + dataset
         + '\''
+        + ", applyDatasetFilter="
+        + applyDatasetFilter
         + ", howMany="
         + howMany
         + ", startFrom="
