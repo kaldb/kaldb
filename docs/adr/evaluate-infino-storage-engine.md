@@ -1,10 +1,10 @@
-# ADR 0009: Evaluate Replacing Lucene with Infino
+# ADR 0009: Replace Lucene Readers and Writers with Infino through Java FFM
 
 ## Status
 
 Current state: `Draft`
 
-Date: 2026-11-04
+Date: 2026-11-05
 
 Discussion thread: `n/a`
 
@@ -16,468 +16,533 @@ Supersedes: `n/a`
 
 Superseded by: `n/a`
 
-**Proposed decision:** Evaluate Infino as KalDB's indexing and query execution
-engine through a bounded prototype and a reproducible benchmark. Replace Lucene
-only if correctness, reliability, performance, and operating cost meet the gates
-below. Lucene remains the production engine while this decision is evaluated.
-There are no benchmark results yet; this ADR does not establish that Infino is
-better or approve a production migration.
-
-This ADR uses KalDB for the project name; repository packages and documentation
-still use Astra. Code references describe checkout
-`5f59ddfa8fda09c6467da3ae76c1ba981e7b068c`.
-
 ## Motivation
 
-KalDB uses Lucene for indexing, text and scalar filtering, sorting, and the
-document iteration used by OpenSearch aggregations. We want to determine whether
-Infino can reduce ingestion cost, query latency, or storage and cache footprint
-while retaining KalDB's log and trace search behavior.
+Replace KalDB's Lucene index writer and index reader with Infino, embedded in the
+JVM process through a Rust C ABI shim and Java's Foreign Function and Memory
+(FFM) API. Upgrade the build and runtime from Java 21 to **Java 25 LTS** as
+part of the same work. Preserve KalDB's existing search and ingestion behavior.
 
-Infino combines indexed text retrieval and SQL over Parquet. That could improve
-filtered analytical queries and make stored data accessible to Parquet tooling.
-These are hypotheses to test against KalDB's workload. KalDB already separates
-compute from object storage and supports Lucene S3 streaming through
-`AstraSearcherManager` and `S3RemoteDirectory`; object storage alone is not a new
-benefit of switching engines.
+The engineering question is **how much adapter and compatibility code we need
+to build**. Infino already supplies storage, indexes, SQL execution, and caching.
+FFM supplies the native call mechanism. Neither supplies KalDB's OpenSearch
+semantics or its distributed aggregation result representation.
 
-### What Infino provides, and what remains unproven
+The proposed boundary is KalDB's `LogStore` and `LogIndexSearcher`, rather than
+Lucene's `IndexWriter`/`IndexReader` classes. Keep Kafka ingestion, chunks,
+ZooKeeper coordination, query routing, HTTP/gRPC APIs, and coordinator reduction.
+There is no separate engine service in this design.
 
-The candidate is [infino-ai/infino](https://github.com/infino-ai/infino), not an
-assumed Elasticsearch-compatible service. Research is pinned to commit
-[`99d0c2d4ba1c3c1bf03174819db878f6311988b2`](https://github.com/infino-ai/infino/tree/99d0c2d4ba1c3c1bf03174819db878f6311988b2),
-whose [Cargo manifest](https://github.com/infino-ai/infino/blob/99d0c2d4ba1c3c1bf03174819db878f6311988b2/Cargo.toml)
-declares engine version `0.11.24`, Apache-2.0 licensing, and Rust `1.95`.
-Revalidate the pin before implementing; do not benchmark a moving branch.
-
-| Area | Evidence at the reviewed revision | Implication for KalDB |
-| --- | --- | --- |
-| Integration | Embedded Rust engine; published Rust, Python, and Node surfaces; no Java binding identified in the reviewed public API. A hosted remote client path also exists. | A Java integration must be built and measured. A hosted client is not evidence of a supplied self-hosted KalDB sidecar. |
-| Storage | Parquet superfiles contain data and per-file indexes. Tables also depend on catalogs, manifests, summaries, term-index objects, and potentially tombstones. | A snapshot cannot consist of Parquet files alone. |
-| Retrieval | BM25, unranked token matching, exact-value matching, scalar SQL, and vector/hybrid retrieval. Phrase matching requires positions enabled per column. | There are useful primitives, but OpenSearch DSL and analyzer equivalence must be implemented and tested. |
-| Consistency | Immutable manifests, atomic publication, snapshot readers, and configurable read consistency. | Map this to live visibility, durable Kafka offsets, and sealed chunk snapshots. |
-| Cache | Remote range reads and a bounded local disk cache; background full-file fetching is possible. | Compare both foreground latency and all background bytes, memory, and I/O. |
-| Maturity | Pre-1.0 API and versioned storage formats. Some format upgrades prevent older engines reading newly committed tables. | Pin binaries and formats; test upgrades and rollback rather than assuming either is safe. |
-
-Sources: pinned [architecture overview](https://github.com/infino-ai/infino/blob/99d0c2d4ba1c3c1bf03174819db878f6311988b2/docs/architecture/overview.md),
-[superfile format](https://github.com/infino-ai/infino/blob/99d0c2d4ba1c3c1bf03174819db878f6311988b2/docs/architecture/superfile.md),
-[supertable design](https://github.com/infino-ai/infino/blob/99d0c2d4ba1c3c1bf03174819db878f6311988b2/docs/architecture/supertable.md),
-[physical layout](https://github.com/infino-ai/infino/blob/99d0c2d4ba1c3c1bf03174819db878f6311988b2/docs/architecture/on-disk-layout.md),
-[public API](https://github.com/infino-ai/infino/blob/99d0c2d4ba1c3c1bf03174819db878f6311988b2/public-api.txt),
-[table API](https://github.com/infino-ai/infino/blob/99d0c2d4ba1c3c1bf03174819db878f6311988b2/src/catalog/table.rs),
-[connection options](https://github.com/infino-ai/infino/blob/99d0c2d4ba1c3c1bf03174819db878f6311988b2/src/catalog/options.rs),
-and [release policy](https://github.com/infino-ai/infino/blob/99d0c2d4ba1c3c1bf03174819db878f6311988b2/docs/versioning.md).
-
-The README describes a single writer slot, while the detailed table design
-describes parallel append builds with serialized publication and exclusive
-mutations/schema changes. Treat write concurrency and late/out-of-order event
-handling as prototype checks. KalDB will retain one owner per partition/chunk;
-this proposal does not rely on concurrent writers to one shared dataset table.
-
-### Current Lucene coupling
-
-Replacing only `LuceneIndexStoreImpl` is insufficient:
-
-| Existing area | Coupling and required change |
-| --- | --- |
-| `logstore/LogStore.java`, `logstore/LuceneIndexStoreImpl.java` | The interface exposes `FSDirectory`, `IndexCommit`, `AstraSearcherManager`, and `LuceneFieldDef`. Introduce engine-neutral write, search, schema, and snapshot operations. |
-| `logstore/DocumentBuilder.java`, `logstore/schema/SchemaAwareLogDocumentBuilderImpl.java`, `metadata/schema/` | Documents and field definitions contain Lucene concepts. Separate KalDB's document/type rules from each engine's physical encoding. |
-| `chunk/ReadWriteChunk.java` | Casts its store to Lucene, constructs a Lucene searcher, and snapshots an index commit plus `schema.json`. Obtain identity, searcher, and a stable snapshot through the engine boundary. |
-| `chunkManager/IndexingChunkManager.java`, `chunk/RecoveryChunkFactoryImpl.java` | Construct Lucene stores directly. Select the experimental engine consistently for indexing and recovery. |
-| `chunk/ReadOnlyChunkImpl.java`, `logstore/search/AstraSearcherManager.java` | Open local or S3-backed Lucene readers. Add opening and closing of Infino chunk roots without downloading an unnecessary second copy. |
-| `logstore/opensearch/OpenSearchAdapter.java`, `logstore/opensearch/AstraSearchContext.java`, `logstore/search/LogIndexSearcherImpl.java` | OpenSearch builders become Lucene queries and collectors. Implement an Infino execution path; existing collectors cannot execute over Arrow batches directly. |
-| `logstore/search/SearchQuery.java`, `logstore/search/SearchResult.java`, `logstore/search/SearchResultAggregatorImpl.java`, `logstore/opensearch/OpenSearchInternalAggregation.java` | Queries carry OpenSearch builders and results carry `InternalAggregations`. Define translation and distributed reduction explicitly. These interfaces are not currently engine-neutral. |
-| `logstore/search/fieldRedaction/` | Redaction wraps Lucene readers. Apply the same policy to Infino-returned data and test every retrieval path. |
-| `blobfs/`, `metadata/snapshot/`, `clusterManager/SnapshotDeletionService.java` | Snapshot transport and deletion assume chunk prefixes and their files. Account for complete Infino roots, reference lifetimes, and garbage collection. |
-
-Paths in this table are relative to
-`astra/src/main/java/com/slack/astra/`.
+Code was reviewed at KalDB commit `9983fff8a53729d287d2d2a54e1860717bda3c92`
+and Infino commit
+[`44dceb2fc7e6f5e414a108ee5dbc19746ca0067d`](https://github.com/infino-ai/infino/tree/44dceb2fc7e6f5e414a108ee5dbc19746ca0067d)
+(engine `0.11.24`). API findings below describe that pin; proposed shim symbols
+and Java classes are ours to build.
 
 ## Questions
 
-- **Is Infino a good fit?** Potentially for immutable chunks, indexed filters,
-  and columnar aggregations. Java integration, query parity, freshness, recovery,
-  and actual cost remain unproven. The benchmark and correctness suite decide.
-- **What is being replaced?** Lucene's storage, indexing, and local execution.
-  KalDB retains ingestion, Kafka partition ownership, coordination, API routing,
-  and distributed coverage accounting in the first evaluation.
-- **What is the initial integration?** A small local Rust worker embedding
-  Infino, called by Java over a private RPC boundary. This is a proposed
-  engineering choice, not an existing Infino component or an approved final
-  deployment architecture. Evaluate JNI only if measured RPC overhead warrants it.
-- **What workload defines success?** Existing log/trace searches and dashboards.
-  Vector search and embeddings are optional future capabilities and cannot
-  compensate for regressions in required existing queries.
-- **Which production queries and SLOs are mandatory?** Before measured runs,
-  freeze a representative query corpus, its required features, numeric/approximate
-  tolerances, and absolute latency, freshness, availability, and recovery targets.
-  Proposed relative thresholds below are review inputs, not existing KalDB SLOs.
-- **How much compatibility should migration retain?** Decide before product
-  implementation: reindex into a separate Infino deployment, or explicitly
-  approve temporary mixed-format reads. The default proposal is an isolated
-  evaluation; this ADR does not assume permanent dual-engine support.
+- **Can this be just two replacement classes?** The two main implementations
+  can be `InfinoIndexStore` and `InfinoIndexSearcher`, but their dependencies
+  also need adapting: document encoding, query translation, aggregation states,
+  snapshot files, native binding, and lifecycle management.
+- **Can we keep existing APIs?** Keep `addMessage(Trace.Span)` and
+  `search(SearchQuery) -> SearchResult<LogMessage>`, including the current
+  request/result proto shapes. Change the internal methods that expose Lucene
+  readers, directories, and commits. External conformance does not require
+  implementing Lucene's reader internals.
+- **Does Infino need modifications?** Basic writes, scalar/text queries, sorting,
+  and simple aggregates can use its public API. Exact analyzer/query-language
+  parity, mergeable sketch state, and exportable read snapshots are potential
+  upstream extensions. They are identified below rather than assumed to exist.
+- **Where is most of the build?** OpenSearch query translation and aggregation
+  compatibility. The native binding is bounded glue; it does not remove that work.
 
 ## Public Interfaces
 
-Authoring this ADR changes no API, config, proto, or persisted state. A production
-implementation would affect the following interfaces and needs separate review:
+Keep OpenSearch/Zipkin request and response shapes, field discovery, source
+filtering/redaction, sort values, pagination, errors, and logical shard coverage.
+Keep `SearchQuery`, `SearchResult`, `astra_search.proto`, and existing
+`InternalAggregations` transport unless a specific unsupported aggregation
+forces a separately reviewed change.
 
-- Preserve the externally supported OpenSearch and Zipkin request/response
-  behavior, including field capabilities, sorting, source projection, errors,
-  time boundaries, and `_shards` coverage. Unsupported prototype features must
-  fail explicitly; they must not silently change query meaning.
-- Introduce a versioned snapshot descriptor containing engine and format version,
-  chunk/generation identity, immutable storage root or manifest identity, schema
-  version, Kafka partition and covered offset interval, time bounds, and checksums.
-- Update relevant configuration in `astra_configs.proto` for engine selection,
-  worker connection/lifecycle, append batch size and maximum wait, worker memory
-  and cache budgets, and query/build concurrency. Defaults remain Lucene during
-  evaluation. Exact names and defaults are implementation decisions after the spike.
-- Update `metadata.proto`, `schema.proto`, or `astra_search.proto` only where the
-  chosen descriptor, field metadata, or aggregation transport requires it. Request
-  JSON can initially remain on the internal query wire; there is no assumed need
-  to replace every RPC with a new query-plan format.
-- Report append publication/visibility latency, bytes per document, native RSS,
-  cache usage, object requests/bytes, worker restarts, and recovery progress.
-  Preserve understandable meanings for existing operational metrics.
+The implementation adds a native library artifact and loader settings, and
+raises the compiler, bytecode, and runtime baseline to Java 25, the latest LTS
+as of this ADR's date. Pin a maintained Corretto 25 patch/build for CI and
+production. See the [Java support roadmap](https://www.oracle.com/java/technologies/java-se-support-roadmap.html)
+and [Corretto 25 container documentation](https://docs.aws.amazon.com/corretto/latest/corretto-25-ug/docker-install.html).
 
-Any proto changes must include comments for every field, config reference updates,
-and corresponding sample YAML/environment examples in the same change.
+Use Java 25's permanent `java.lang.foreign` API for the shim. FFM itself no
+longer needs preview flags, but retain `--enable-preview` while KalDB uses
+Java 25's preview structured-concurrency API. For the current classpath
+deployment, also pass `--enable-native-access=ALL-UNNAMED` to application,
+FFM tests, and benchmark launches. See the
+[Java 25 FFM documentation](https://docs.oracle.com/en/java/javase/25/core/foreign-function-and-memory-api.html)
+and [native-access requirements](https://docs.oracle.com/en/java/javase/25/core/restricted-methods.html).
+
+New engine/batching/cache settings belong in `astra_configs.proto` with field
+comments, config reference updates, and sample config changes. The ADR itself
+changes no product code or proto.
 
 ## Proposed Changes
 
-### 1. Preserve chunk ownership while evaluating the engine
+### Java 25 LTS prerequisite
 
-Use one Infino table in a self-contained database root per KalDB chunk generation.
-This keeps snapshot ownership, retention, replay boundaries, and assignment
-comparable to the current design. It may create many small catalogs/manifests;
-measure their overhead rather than assuming a shared-table result applies.
+Complete and validate the Java upgrade with Lucene still in place before wiring
+Infino into the reader/writer path. This keeps runtime migration failures
+separate from engine-adapter failures; both changes remain in this ADR's scope.
 
-```mermaid
-flowchart LR
-  Kafka --> Indexer[KalDB indexer and chunk owner]
-  Indexer --> Writer[Local Rust worker embedding Infino]
-  Writer --> Active[Active chunk root]
-  Active --> Seal[Seal and verify complete root]
-  Seal --> S3[Immutable chunk generation on S3]
-  S3 --> Reader[Infino reader and bounded cache]
-  API[KalDB OpenSearch and Zipkin APIs] --> Query[KalDB routing and reduction]
-  Query --> Writer
-  Query --> Reader
+| Existing area | Required upgrade work |
+| --- | --- |
+| Root, `astra/`, `benchmarks/`, and `tools/loadgen/` POMs | Set the Java compiler/release target to 25 consistently; verify inherited settings for `contrib/dashboards-gateway/`. Compile all modules with JDK 25. |
+| `Dockerfile`, `tools/loadgen/Dockerfile`, `contrib/dashboards-gateway.Dockerfile` | Use a Maven builder running Corretto 25 and a matching Corretto 25 runtime; pin supported image versions/digests when implementing. |
+| `.github/workflows/maven.yml`, `.github/workflows/benchmark.yml`, development and launch scripts | Use JDK 25 for builds/tests/JMH; update local setup instructions and native-access/preview launch flags. |
+| `logstore/search/AstraDistributedQueryService.java` | Migrate Java 21 scope constructors, single-parameter scope types, `joinUntil`, and `shutdown` usage to Java 25's `StructuredTaskScope.open`, joiner, and timeout configuration APIs. |
+| Compiler/test/instrumentation dependencies | Verify Java 25 support in Maven compiler/Surefire, Error Prone, formatting tools, Mockito/Byte Buddy, agents, and the selected Arrow Java version; upgrade only what compatibility checks require. |
+
+The scope migration is real source work: current search and schema fan-out
+construct scopes directly, and distributed search collects successful subtasks
+while recording failed/timed-out coverage. Java 25's default `open()` policy
+fails the scope when a subtask fails; do not adopt it blindly. Choose an explicit
+collect-all/join policy and preserve deadlines, cancellation, successful partial
+results, trace propagation, and `_shards` accounting. Validate schema fan-out
+behavior too. The source path above is relative to
+`astra/src/main/java/com/slack/astra/`; the target API is documented in
+[Java 25 StructuredTaskScope](https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/util/concurrent/StructuredTaskScope.html).
+
+Keep preview flags only for features that still require them. Do not remove
+`--enable-preview` merely because FFM is permanent. Track JVM heap, native
+allocations, and mapped pages under the Java 25 runtime used for both engines.
+
+### 1. Integration boundary
+
+```text
+Existing Kafka / chunks / search routing
+                |
+      +---------+----------+
+      |                    |
+InfinoIndexStore     InfinoIndexSearcher
+      |                    |
+normalize -> batch    SearchQuery -> SQL / search predicates
+      |                    |
+      +------ Java FFM -----+
+                |
+       libkaldb_infino (Rust cdylib, C ABI)
+                |
+       Infino Connection / Supertable
+                |
+       local chunk root or S3 + cache
 ```
 
-The first prototype builds local roots and publishes sealed generations to S3,
-matching KalDB's existing lifecycle. Test direct remote append separately if the
-local-root model passes; do not mix a durability/topology redesign into the first
-engine comparison. Keep ZooKeeper and Kafka as KalDB's coordination and replay
-mechanisms.
+Keep one Infino table in a self-contained database root per KalDB chunk initially.
+This preserves current ownership, rollover, retention, and recovery boundaries.
+There is no need to redesign KalDB around shared dataset tables.
 
-### 2. Establish a small engine boundary and Java integration
+Relevant current interfaces:
+[LogStore](../../astra/src/main/java/com/slack/astra/logstore/LogStore.java),
+[LogIndexSearcher](../../astra/src/main/java/com/slack/astra/logstore/search/LogIndexSearcher.java),
+[SearchQuery](../../astra/src/main/java/com/slack/astra/logstore/search/SearchQuery.java),
+and [SearchResult](../../astra/src/main/java/com/slack/astra/logstore/search/SearchResult.java).
 
-Replace Lucene types at the chunk boundary with operations to append batches,
-execute a search, expose logical schema, seal/export a durable snapshot, open a
-read-only snapshot, and close resources. Refactor existing interfaces rather
-than adding a general plugin framework. Existing commit/refresh/final-merge
-methods need behavioral definitions, not no-op implementations that hide lost
-durability or stale reads.
+### 2. Infino APIs we can use directly
 
-The proposed Rust worker uses the supported public `Connection`/`Supertable`
-surface. Internal reader/writer APIs and `test-helpers` are not a production
-integration contract. Batch messages across the Java/Rust boundary; measure
-serialization, copies, transport, and full worker RSS. Do not issue one RPC or
-one Parquet-producing append per log event. Choose a batch byte/row cap and
-maximum delay from the freshness budget.
+These are existing Rust APIs, not proposed functions:
 
-Specify startup/version checks, bounded queues, backpressure, deadlines,
-cancellation, crash/restart behavior, and resource ownership. Query fan-out must
-fit a node-wide CPU/memory budget rather than assigning a full worker pool per
-chunk. Keep the worker private, pass only authorized storage roots and translated
-queries, and obtain rotating storage credentials from KalDB's credential provider.
-Do not expose raw unrestricted SQL or object-store credentials to API callers.
-
-### 3. Preserve document and schema semantics
-
-Map KalDB's logical field types to Arrow/Parquet and Infino indexes. Preserve
-stored source, `_index`, event timestamp, logical document identity, and `_all`
-behavior. Infino also uses `_id`; explicitly map its physical row identity to
-KalDB's existing `_id` rather than substituting it in responses or sort ties.
-
-Keep current coercion/conflict policies, dynamic field limits, nesting rules,
-list handling, numeric precision, timestamp normalization, and indexed/stored
-field flags. Do not inherit different defaults from Infino's JSON ingestion API.
-Test null, absent, empty string, Unicode, IP fields, large integers, schema changes,
-and incompatible types across chunks. Preserve field discovery for dashboards.
-
-### 4. Translate query execution and distributed aggregations
-
-Keep OpenSearch parsing and response shaping where practical. Translate the
-supported builder tree into validated Infino operations or SQL with correctly
-escaped identifiers and values. Parsing OpenSearch JSON does not make its
-Lucene execution machinery reusable.
-
-| Query area | Required behavior and evaluation |
+| Infino public API | What it supplies for KalDB |
 | --- | --- |
-| Boolean, term, terms, exists, scalar/time range | Preserve analyzed text versus keyword equality, inclusive bounds, null/absent behavior, negation, and `minimum_should_match`. |
-| `query_string`, text and phrase search | Inventory the grammar actually accepted today. Compare tokenization, punctuation, Unicode, analyzer behavior, field expansion, prefixes/wildcards, escaping, phrases and slop where used. Enable positions where needed; bag-of-words is not phrase parity. |
-| Hits, sort, pagination | Match current effective sorting: default event time descending then KalDB `_id` ascending; explicit sorts retain stable tie-breakers. Preserve missing values, returned sort values, the 10,000-result window, and global offset application. |
-| Metrics and buckets | Implement sums/min/max, average from sum and count, histograms/date histograms, terms/multi-terms, sibling/nested aggregations, and any other required corpus features. Include timezone/DST, empty buckets, missing values, bounds, and bucket ordering. |
-| Approximate/pipeline operations | Preserve or explicitly approve error bounds for cardinality and percentiles. Merge compatible sketches, not finalized estimates. Apply pipeline aggregations after global bucket reduction. Inventory scripts separately; DataFusion SQL does not supply Painless compatibility. |
-| Failure and projection | Preserve source filters, redaction, deadlines, partial results, and requested/fulfilled logical snapshot accounting. An unavailable worker or missing snapshot is failed coverage, not an empty successful shard. |
+| `connect_with(uri, ConnectOptions)` | Open a local/S3 database; configure credentials, read consistency, disk cache, and connection memory budget. |
+| `Connection::create_table(name, SchemaRef, IndexSpec)` / `open_table(name)` | Create/open the chunk's table. |
+| `IndexSpec::fts(FtsField)`, `IndexSpec::range(column)` | Declare text and numeric/date range indexes. |
+| `FtsField::positions(true)`, `stored(bool)` | Enable exact phrase positions and choose whether raw indexed text is stored. |
+| `Supertable::append(&RecordBatch)` | Append a typed batch; the public append operation commits it. No per-document writer API is needed. |
+| `Supertable::append_rows(&[serde_json::Value])` | Alternative JSON ingestion with Infino's own flattening/type rules; not a replacement for KalDB normalization. |
+| `Connection::apply_schema(table, &SchemaPatch, expected_schema_id)` | Add/change logical columns and indexes, with optional schema-version checking. |
+| `Connection::query_sql(&str)` | Execute filters, projections, ordering, limits, grouping, and SQL aggregates; returns `Vec<RecordBatch>`. |
+| `query_sql_cancellable(&str, &QueryCancel)` | Run a query with an independently signalled cancellation token. |
+| `Supertable::token_match(column, query, BoolMode, projection)` | Unranked matching over all matches. The implementation handles quoted exact phrases and clause sigils as well as plain tokens. |
+| `Supertable::exact_match(column, value, projection)` | Raw string equality with candidate pruning and verification. |
+| `Supertable::bm25_search(column, query, k, options, projection)` | Ranked retrieval, available when ranking is actually requested; not KalDB's default time-ordered search. |
+| `schema()`, `Connection::schema(table)` | Physical Arrow schema and richer logical field/index metadata respectively. |
+| `optimize(&OptimizeOptions)`, `gc(Duration)` | Maintenance and garbage collection, not Lucene commit/refresh equivalents. |
+| `Connection::update_storage_credentials(...)` | Rotate credentials used by native storage access. |
 
-Run aggregations over **all matching rows**, never only a BM25 top-k. KalDB's
-default hits are sorted by time, so a small BM25 candidate set followed by a time
-sort is also incorrect. Evaluate selective queries and broad scans separately.
+Sources: pinned
+[public API](https://github.com/infino-ai/infino/blob/44dceb2fc7e6f5e414a108ee5dbc19746ca0067d/public-api.txt),
+[table methods](https://github.com/infino-ai/infino/blob/44dceb2fc7e6f5e414a108ee5dbc19746ca0067d/src/catalog/table.rs),
+[index specification](https://github.com/infino-ai/infino/blob/44dceb2fc7e6f5e414a108ee5dbc19746ca0067d/src/catalog/index_spec.rs),
+[SQL search functions](https://github.com/infino-ai/infino/blob/44dceb2fc7e6f5e414a108ee5dbc19746ca0067d/src/catalog/search_tvf.rs),
+[unranked matching implementation](https://github.com/infino-ai/infino/blob/44dceb2fc7e6f5e414a108ee5dbc19746ca0067d/src/supertable/query/fts.rs),
+and [connection options](https://github.com/infino-ai/infino/blob/44dceb2fc7e6f5e414a108ee5dbc19746ca0067d/src/catalog/options.rs).
 
-For the first required aggregation subset, prefer converting Infino partial
-states into the existing OpenSearch `InternalAggregations` transport/reduction
-where equivalent states can be constructed and tested. Average needs sum/count;
-terms need appropriate shard candidate handling; distributed percentile and
-cardinality estimates need compatible mergeable state. If that is not viable,
-design a versioned engine-neutral partial-state transport before adding that
-feature. Returning final per-chunk JSON and combining it is insufficient.
+Missing from that public surface: a C ABI, Lucene reader/collector interfaces,
+OpenSearch DSL parsing, independent stage/commit/refresh operations, an externally
+retained snapshot/export handle, and OpenSearch-compatible aggregation states.
+The binding must not depend on Infino's `test-helpers` to expose private internals.
 
-Keep output redaction at least equivalent to the current Lucene reader policy,
-including `_source`, projected fields, and trace lookups. Record whether filtering,
-sorting, or aggregation on redacted values is allowed by the current policy;
-do not silently broaden or change those rules during the engine experiment.
+### 3. Writer: map the current contract
 
-### 5. Define publication, recovery, and retention invariants
-
-Separate messages accepted into a Java batch, a successful local Infino append,
-query-visible rows, and a verified durable S3 snapshot. The reviewed public API
-exposes `append`, not a public stage/commit/refresh sequence; demonstrate its
-durability and visibility behavior using that API. Infino's mutation WAL is not
-evidence of durable, exactly-once Kafka ingestion.
-
-Maintain Kafka offset order for ownership/replay while allowing event timestamps
-to arrive late. A durable snapshot's offset checkpoint must describe exactly the
-contiguous input interval represented by its data under KalDB's validation/drop
-policy. Do not advance the recoverable checkpoint on worker acceptance alone.
-
-On an ambiguous append outcome, do not blindly retry into the same table and
-assume `_id` uniqueness deduplicates it. Prove an idempotent mechanism or rebuild
-the affected chunk into a fresh generation from its safe Kafka boundary before
-making that replacement searchable. Test missing acknowledgements and crashes
-after a successful commit. Preserve the prior verified generation until the new
-generation is complete and published; recovery must not query both as separate
-logical snapshots. Kafka retention must cover the recovery window.
-
-To seal a local generation, stop writes and maintenance, complete pending appends,
-verify reopening, and export every referenced object plus the catalog/schema
-needed to open it. Verify root relocation works without dangling local absolute
-URIs. Upload to a new prefix and publish KalDB snapshot metadata only after
-checksums, referenced-object completeness, and an independent reopen succeed.
-Do not equate `optimize()` with the durability barrier or require it for every
-seal without measuring the cost.
-
-For a sealed generation, immutable ownership makes whole-prefix retention
-possible. Do not share objects across chunk prefixes in the first experiment.
-If direct remote writes or shared tables are introduced later, require an explicit
-manifest pin and GC protocol first. Coordinate any Infino GC with KalDB retention
-and in-flight reads; a time-based grace period alone is not proof that a referenced
-manifest remains usable. Benchmark object counts and manifest/term-index overhead
-as well as Parquet bytes.
-
-### 6. Execute in stages with explicit exit criteria
-
-| Stage | Deliverable | Exit criterion |
+| Current KalDB operation | Infino mapping | What we build/change |
 | --- | --- | --- |
-| 0: Contract inventory | Frozen required query corpus, correctness oracle, SLOs, dataset manifest, pinned engine builds, and compatibility gaps. | Owners agree what must pass and on the adoption thresholds before measured runs. |
-| 1: Feasibility spike | Public-API Rust worker; batch ingest; text/exact/range queries; time-sorted hits; histogram and sum/count/average; seal/reopen/replay. | Representative semantics, snapshot portability, freshness, and failure recovery work. Any required unsupported feature has an explicit resolution. |
-| 2: Comparative benchmark | Engine-level and KalDB end-to-end results with the deployed integration cost. | Correctness gates pass and repeatable measurements meet the criteria below. |
-| 3: Isolated shadow/canary | Separate Kafka consumer group and S3 namespace, mirrored queries, mismatch and resource reports. | Production-shaped load meets correctness/SLOs and recovery drills; migration approach is separately approved. |
-| 4: Adoption decision | Update this ADR with results and accept or reject replacement; write the detailed migration plan if accepted. | Explicit decision based on the recorded evidence. Only then schedule production replacement and Lucene removal. |
+| `addMessage(Trace.Span)` | Normalize to typed columns; accumulate; `append(RecordBatch)` on flush. | Batch encoder, row/byte cap, maximum wait, admission/backpressure, and equivalent invalid-document accounting. Avoid one append/FFM call per event. |
+| `commit()` | Drain pending batches and wait for successful append publication. | Serialize flushes, propagate failures, and advance durable local progress only after success. |
+| `refresh()` | Flush pending rows and make the published generation available to searches. | Infino has no public NRT refresh of uncommitted data. Refresh also commits; document this stronger durability/cost behavior. |
+| `finalMerge()` | Optional `optimize` compaction after flushing. | Remove dependence on a Lucene single-segment result; snapshot correctness must not require optimization. |
+| `getAstraSearcherManager()` | Return/open the Infino-backed `LogIndexSearcher`. | Replace the Lucene-specific method with `openSearcher()`; construct no Lucene manager. |
+| `getDirectory()` | Chunk database root path. | Change `FSDirectory` to `Path` at this internal boundary. |
+| `getIndexCommit()` / `releaseIndexCommit(...)` | A stable sealed chunk export. | Replace with a snapshot resource describing the frozen root and its recursive files; see below. |
+| `getSchema()` | Existing logical field definitions plus a native schema mapping. | Keep existing field capabilities and policies; do not derive them solely from Parquet storage. |
+| `close()` / `cleanup()` | Release table/connection handles; remove owned local root after readers finish. | Stop timers, drain in-flight calls, explicit flush/discard behavior, and deterministic native release. |
 
-These are proposed work stages, not work completed by this document.
+KalDB currently allows `refresh()` without `commit()`; Infino couples visibility
+to append publication. Proposed adapter behavior is to flush on either call,
+with the batch timer meeting the configured refresh bound. The commit timer can
+flush earlier, so data may become visible earlier too. Reopening a separate reader
+can verify visibility but cannot create independent NRT semantics. If exact
+separation of uncommitted visibility and durability is a requirement, public
+Infino is insufficient: it needs a staged-write/NRT extension. Do not present
+a no-op refresh as equivalent.
+
+Reuse the normalization rules in
+[SchemaAwareLogDocumentBuilderImpl](../../astra/src/main/java/com/slack/astra/logstore/schema/SchemaAwareLogDocumentBuilderImpl.java)
+and conversion policies in
+[FieldType](../../astra/src/main/java/com/slack/astra/metadata/schema/FieldType.java).
+Extract the Lucene `Document` emission into a replaceable sink; do not duplicate
+hundreds of lines of validation or build a Lucene document just to read it back.
+
+| Logical data | Proposed physical mapping / compatibility work |
+| --- | --- |
+| Stored `_source` | Preserve the existing serialized `LogWireMessage` envelope so hit reconstruction can stay in Java. |
+| KalDB `_id` | Separate physical name, e.g. `kaldb_id`, because Infino owns a numeric `_id`. Store original ID plus an ordering key produced by existing `Uid.encodeId`; lexical ID-string sorting is not equivalent. |
+| Dates and event time | Epoch-millisecond integer columns for current comparisons; preserve source timestamp representation and normalization. |
+| Integer/long/float/double/boolean | Corresponding Arrow types; preserve conversion and rounding rules, including half-float/scaled-long behavior where used. |
+| Keyword/string | Case-sensitive stored scalar; SQL equality/IN for whole-value matching. Do not replace keyword semantics with analyzed token matching. |
+| Text and `_all` | FTS columns, exact-phrase positions where required. Build `_all` from the same fields/stringified values and honor disabled full-text search. |
+| IP | Preserve original source plus a comparable encoded key for sort/equality/range/CIDR lowering. A string comparison is insufficient. |
+| Dynamic fields | Apply explicit schema patches before affected appends; preserve depth/field limits, conflict conversion/duplicate fields, list handling, and index flags. |
+
+Infino's `standard` analyzer is its own Unicode implementation; the public
+`FtsField::analyzer` currently accepts only that analyzer name. Identical names
+do not establish equivalence with Lucene `StandardAnalyzer`. Compare actual
+token streams. Fix incompatible cases through an upstream analyzer extension
+or explicitly approved behavior changes; the C shim cannot repair incompatible
+postings after indexing.
+
+### 4. Reader: conform to SearchQuery and SearchResult
+
+Implement `InfinoIndexSearcher.search(SearchQuery)` and return the current
+`SearchResult<LogMessage>`, including typed `HitSortValue` values and coverage.
+The [existing searcher](../../astra/src/main/java/com/slack/astra/logstore/search/LogIndexSearcherImpl.java)
+currently creates Lucene queries and collectors, then reads `_source`.
+Replace that local execution; retain Java hit reconstruction, source filtering,
+and the coordinator's merge.
+
+Build one Java query translator over OpenSearch builders:
+
+| Existing behavior | Infino execution | Adapter work / remaining gap |
+| --- | --- | --- |
+| Dataset scoping | Scalar equality on `service_name`. | Preserve `OpenSearchAdapter.buildQuery`'s existing logical-index restriction and selector validation; chunks can contain several indices. |
+| Match all/none, term(s), range, exists | SQL predicates, IN, comparisons, null handling. | Consult logical schema; preserve indexed/doc-value presence rules rather than treating every source field as searchable. Preserve unmapped-field and empty-string behavior. |
+| Boolean must/filter/should/must_not | SQL boolean expressions and membership subqueries. | Translate nested trees and `minimum_should_match`; use explicit two-valued predicates where SQL NULL would change negation. |
+| Text / exact phrase | `token_match('table', 'column', 'query', 'and/or')` as a SQL table function; compose its physical IDs with scalar filters. | Quote literal text for Infino's clause parser; enable positions. Exact phrases are available; arbitrary slop/proximity equivalence is not established. |
+| Query-string syntax | Parse existing field qualifiers, grouping, ranges, operators, escapes, and wildcard forms, then lower to predicates. | Infino's parser handles tokens, quoted phrases, and leading `+`/`-`; it is not OpenSearch's parser. Reuse Java parser components where they can run without a Lucene reader; do not pass the input string through unchanged. |
+| Prefix/wildcard/regex/fuzzy | SQL/scalar matching or an explicit search extension, depending on field semantics. | SQL LIKE matches raw values, whereas a text wildcard matches indexed terms. Ranked `bm25_search_prefix` is not an unlimited unranked prefix predicate. Correct term expansion/unranked prefix and fuzzy/slop support may require upstream work. |
+| Default and explicit sort | SQL ORDER BY over effective sort fields, LIMIT `from + size`. | Time descending plus encoded KalDB ID ascending by default; missing values, numeric sentinels, UTF-8 byte ordering, and IP keys must match current worker/coordinator behavior. Apply offset only at the global merge. |
+| Returned hits | Project source and sort columns; decode into existing Java hits. | Preserve sort-value types/encodings, user-visible sort fields, 10,000-result limit, and source filters. |
+| Redaction / failures | Java result handling after native execution. | Apply existing timestamp-based source redaction before projection/return; preserve its current effect on aggregations. Map native errors and missing chunks to current failures, not successful empty results. |
+
+The catalog-level SQL functions take the table name first; the public Rust
+table methods take the column first. These are distinct interfaces.
+
+For example, the adapter could generate this time-sorted text search (physical
+names are illustrative):
+
+```sql
+SELECT "_source", "_timesinceepoch", "kaldb_id_sort"
+FROM token_match('chunk', '_all', 'connection timeout', 'or')
+WHERE service_name = 'payments'
+  AND "_timesinceepoch" >= 1700000000000
+ORDER BY "_timesinceepoch" DESC, "kaldb_id_sort" ASC
+LIMIT 100;
+```
+
+This uses all text matches before time sorting. A BM25 top-100 followed by a
+time sort can return the wrong newest 100. Similarly, aggregation input must be
+all matches rather than the displayed hit subset.
+
+The public SQL API takes a string and materializes `Vec<RecordBatch>`; it does
+not expose a prepared-parameter API or streaming query cursor at this revision.
+Generate SQL only from validated builders, with centralized identifier/literal
+escaping. Bound output and connection memory. Iterating materialized batches
+through FFM is not streaming engine execution.
+
+Hits and aggregations for one request must observe one chunk generation.
+Until Infino exposes a public reusable read-snapshot handle, hold a per-chunk
+shared read gate across those calls, excluding adapter append/schema/maintenance
+publication. Concurrent searches may share the gate; flush waits for them.
+No other process may write that chunk root. This is extra adapter work and a
+potential ingestion-latency cost. A public pinned-session API would remove that
+restriction; FFM alone does not create one.
+
+### 5. Aggregations: reuse execution primitives, build compatible states
+
+[OpenSearchAdapter](../../astra/src/main/java/com/slack/astra/logstore/opensearch/OpenSearchAdapter.java)
+currently registers the following local aggregation families. Their collectors
+depend on Lucene document IDs and doc values. They cannot collect Arrow batches
+without a substantial Lucene reader emulation layer.
+
+Instead, translate local aggregation work to SQL, then construct the existing
+OpenSearch `InternalAggregation` objects from partial states:
+
+| Current aggregation | What Infino/DataFusion can compute | What KalDB must build |
+| --- | --- | --- |
+| sum, min, max | SQL SUM/MIN/MAX | Result objects with existing names, metadata, formats, empty/missing rules. |
+| avg | SUM + COUNT | `InternalAvg` with sum/count, never an average of chunk averages. |
+| value_count | COUNT of contributing values | Preserve missing-value substitution and current field/list semantics. |
+| extended_stats | Count, sum, min/max, squared sums or equivalent state | Compatible partial-state encoding, variance/sigma/empty semantics and numeric validation. |
+| histogram / date_histogram | Group by computed numeric/time bucket | OpenSearch rounding, offsets, timezones/DST, calendar intervals, bounds, empty buckets, ordering, and nested results. |
+| auto_date_histogram | Counts and candidate resolutions | Compatible interval-selection and reduction metadata; not just DATE_TRUNC. |
+| terms / multi_terms | GROUP BY one/multiple keys and metrics | Shard candidate sizing/order, missing keys, bucket counts/error metadata, and compatible bucket objects. Do not truncate each shard to final size and assume a correct global top-k. |
+| filters | Conditional/grouped aggregation over translated predicates | Named/other buckets and nested states. |
+| cardinality | Distinct counting is possible | OpenSearch-compatible mergeable HLL++ state is not exposed by Infino. Build it from contributing values in Java or add compatible native state support; scalar per-chunk estimates cannot be merged. |
+| percentiles | SQL percentile computation is a different result contract | Reuse OpenSearch's configured sketch implementation over returned values, or implement a compatible native sketch/state export. Final per-chunk percentiles are insufficient. |
+| siblings and sub-aggregations | Multiple expressions and grouping plans | Traverse the complete builder tree, share filters/work where possible, and reconstruct the complete named result tree. |
+
+Keep `SearchResultAggregatorImpl` and `OpenSearchInternalAggregation` transport
+for compatible local states. Existing final pipeline reduction can then stay in
+Java. Test the actual constructors/reducer invariants for each result type;
+an object with the correct final JSON shape is not necessarily reducible.
+
+Aggregation scripts are existing behavior, not hypothetical scope:
+`LogIndexSearcherImplTest.testAggregationWithScripting` expects Painless
+`return 9;` to affect an average. Infino has no Painless execution API.
+Reuse the Java script engine where possible and provide the required value/doc
+lookup context; scripts bound to Lucene fielddata need a new context or
+execution adapter. SQL is not a general substitute. Returning matched values
+to Java is a viable compatibility path for sketches/scripts, but requires
+batch processing, memory limits, and measured transfer cost.
+
+This is the largest implementation area. Infino supplies the local SQL work;
+we still own OpenSearch bucket rules, partial-state construction, scripts, and
+cross-chunk correctness.
+
+### 6. FFM shim: bounded native glue
+
+Build a Rust `cdylib` depending on the pinned Infino crate and export a small,
+versioned C ABI. No C API or Java binding was identified in the reviewed repo.
+Use opaque handles and C-compatible values; never pass Rust `String`, `Vec`,
+`Result`, trait objects, or Arrow Rust struct layouts to Java.
+
+Expect approximately **15–20 C exports**, grouped as follows. These names are
+proposed wrapper operations, not existing Infino APIs:
+
+| Shim group | Responsibility |
+| --- | --- |
+| ABI/version and database open/close | Validate version; own a `Connection`; apply storage/cache/memory options. |
+| Table create/open/release and schema patch | Own `Supertable` handles; convert Arrow schema/index specifications. |
+| Batch append | Decode a typed batch and invoke `Supertable::append`. |
+| Query create/run/cancel/release | Own SQL and `QueryCancel`; allow cancellation from another Java thread. |
+| Result batch access/release and native buffer release | Expose materialized result batches with explicit allocator/lifetime ownership. |
+| Credential update | Forward refreshed credentials to the connection. |
+
+Use Arrow IPC bytes for typed input/output initially, carried as pointer/length
+buffers. Rust converts IPC batches to/from `RecordBatch`; Java builds/reads
+batches and converts hits or partial states. This adds encoding/copy work and
+a Java Arrow dependency. Measure it separately. The
+[Arrow C Data Interface](https://arrow.apache.org/docs/format/CDataInterface.html)
+can replace IPC if that overhead matters, but requires schema/buffer ownership
+and release callbacks; it is not provided automatically by FFM.
+
+Every export returns a status and an owned/explicitly released error payload.
+Catch Rust unwinding panics at the boundary; never unwind into Java. Invalid
+handles, close-versus-query races, double release, and cancellation have defined
+outcomes. Fatal native faults still affect the JVM. Keep one owner for every
+allocation and disable Infino's default `mimalloc` feature for the first
+embedded build, following its
+[embedding guidance](https://github.com/infino-ai/infino/blob/44dceb2fc7e6f5e414a108ee5dbc19746ca0067d/src/lib.rs).
+
+Build/package Linux production and macOS development artifacts for supported
+architectures, with native symbols for profiling. Add Rust build/version checks
+to Maven/CI/container packaging. This is library integration work; it adds no
+RPC server, process supervisor, or network protocol.
+
+Allocate connection memory and per-table cache budgets from a node-wide limit;
+one full budget per chunk would multiply memory/disk use by the chunk count.
+Bound native calls with KalDB's query/build admission limits and measure native
+thread growth. These limits are part of the adapter, not supplied by FFM.
+
+### 7. Required Java call-site and snapshot changes
+
+| Existing code | Concrete change |
+| --- | --- |
+| `logstore/LogStore.java` | Preserve write/lifecycle operations; replace searcher-manager, FSDirectory, and IndexCommit return types. Add engine-independent store identity to remove the Lucene cast. |
+| `logstore/DocumentBuilder.java`, `logstore/schema/SchemaAwareLogDocumentBuilderImpl.java`, `metadata/schema/FieldType.java` | Separate normalization/logical type policy from Lucene field emission; feed Arrow batches. |
+| `logstore/search/LogIndexSearcherImpl.java`, `logstore/search/AstraSearcherManager.java` | Supply native-handle reader lifecycle and Infino search execution. |
+| `logstore/opensearch/OpenSearchAdapter.java` | Retain request builders/formatting as useful; replace Lucene query and collector construction with the query/aggregation adapters described above. |
+| `chunk/ReadWriteChunk.java`, `chunkManager/IndexingChunkManager.java`, `chunk/RecoveryChunkFactoryImpl.java` | Construct reader/writer through the new boundary and snapshot a sealed database root. |
+| `chunk/ReadOnlyChunkImpl.java` | Open Infino on a downloaded root or its S3 root with a native cache; stop constructing a Lucene directory reader. |
+| `logstore/search/fieldRedaction/` | Extract existing source-redaction policy from the Lucene visitor and reuse it when decoding native results. |
+
+Paths in this table are relative to `astra/src/main/java/com/slack/astra/`.
+
+For schema/API discovery, the existing `LuceneFieldDef` is only a logical data
+carrier; its name alone does not require replacing the persisted schema format.
+Reuse its field flags where appropriate and add physical-name/type mapping in
+the adapter. Native SQL must honor those flags even when a value physically
+exists in Parquet.
+
+For snapshots, stop writes and maintenance, flush successfully, then freeze the
+whole chunk database root. Copy catalog pointers, manifests, summaries,
+term-index objects, data, and any other referenced files recursively, alongside
+KalDB's `schema.json`. Infino exposes no public `IndexCommit`-like export pin.
+The sealed-root approach avoids needing one for current rollover; a live export
+would require more work.
+
+The reviewed layout uses catalog-relative table locations and table-relative
+manifest/data keys, so the initial implementation should copy the frozen root
+without rewriting Infino metadata. Sources:
+[catalog entries](https://github.com/infino-ai/infino/blob/44dceb2fc7e6f5e414a108ee5dbc19746ca0067d/src/catalog/manifest.rs),
+[manifest keys](https://github.com/infino-ai/infino/blob/44dceb2fc7e6f5e414a108ee5dbc19746ca0067d/src/supertable/manifest/commit.rs),
+and [data keys](https://github.com/infino-ai/infino/blob/44dceb2fc7e6f5e414a108ee5dbc19746ca0067d/src/supertable/manifest/mod.rs).
+Validate reopening at a different local path and S3 root before relying on that
+inference. File counting must handle subdirectories. Keep publication after
+successful upload/file verification, and add an independent reopen check for
+the Infino snapshot. Account for all root bytes in chunk sizing, including
+existing `chunkrollover/` directory-size consumers.
+
+Keep Kafka offsets and recovery ownership in KalDB. A flush failure must not
+publish a snapshot covering unwritten rows. An ambiguous successful append
+cannot be blindly retried: Infino's generated row ID does not deduplicate Kafka
+events. Rebuild the unpublished chunk from its safe replay boundary or add
+verified idempotency. Use immutable per-chunk roots for retention; no shared-file
+GC redesign is required.
+
+### 8. How much we need to build
+
+**Reuse:** Infino storage/index construction, range/text retrieval, SQL
+filter/sort/group execution, S3 access/cache; KalDB ingestion/routing/coordination,
+request/result wire shapes, hit merge, source model, and compatible aggregation
+reducers.
+
+**Build:** two main reader/writer implementations, one native library and FFM
+binding, a typed batch codec/normalization sink, a query translator, an aggregation
+translator/state adapter, source redaction integration, and snapshot/lifecycle
+changes in existing classes. Avoid a general engine plugin framework.
+
+The following are rough **engineer-week** estimates for one engineer familiar
+with Java, Rust, and search internals. They are planning judgments from source
+inspection, not measured delivery commitments:
+
+| Work package | Estimate | Principal uncertainty |
+| --- | --- | --- |
+| Java 21 to Java 25 LTS: toolchain, containers, dependencies, structured concurrency | 1–2 | Preview API source migration and build/instrumentation compatibility. |
+| C ABI + FFM + typed batch transport + packaging | 1–2 | Native lifetimes, IPC cost, platform builds. |
+| Writer normalization/schema/buffering and commit/refresh mapping | 1–2 | Dynamic schema and visibility behavior. |
+| Reader/query translation, hit/sort/source handling | 2–4 | Query-string grammar, ID/IP ordering, analyzer differences. |
+| Aggregation states, bucket rules, scripts/sketch integration | 3–6 | Full existing aggregation surface and OpenSearch execution contexts. |
+| Snapshot/cache/recovery integration | 1–2 | Root portability and ambiguous writes. |
+| Cross-engine contracts, failure tests, benchmark harness | 2–3 | Native concurrency and representative workload coverage. |
+| **Total including Java 25, before additional upstream work** | **11–21** | Analyzer/fuzzy/slop extensions or difficult script contexts can add work beyond this range. |
+
+A narrow benchmark slice is about **4–7 engineer-weeks**, included in that total:
+Java 25 migration, FFM binding, normalized append, exact/range/token queries, stable sorted hits,
+simple histogram/sum/count/average, and a sealed local-root reopen. It is not
+API-complete replacement and does not establish S3 portability.
+
+The first implementation spike must resolve three scope multipliers:
+(1) token/query semantics against current tests, (2) portable snapshot reopen,
+and (3) constructing reducible aggregation states, including one sketch/script
+path. If these need upstream work, revise the estimate before treating the
+remaining tasks as routine binding work.
 
 ## Compatibility, Deprecation, and Migration Plan
 
-Lucene index files cannot be opened as Infino tables. Rebuild historical data
-from retained Kafka or archived source. If those are unavailable, evaluate an
-export from Lucene stored source and confirm fidelity, IDs, schema policies,
-redactions, and completeness before relying on it. Reindexing must preserve
-existing logical IDs; do not regenerate them or expose Infino physical row IDs.
+Java 25 becomes the minimum runtime for newly built artifacts; they will not run
+on Java 21. Upgrade application, gateway, load-generator, and benchmark images
+and developer/CI toolchains together. Validate the Lucene-backed build on Java
+25 first. Keep the previous Java 21 application image available for a runtime
+rollback before any Infino-format cutover; changing the JVM cannot make an
+Infino snapshot readable by the old Lucene application.
 
-The recommended evaluation uses separate deployments and prefixes. After a
-successful benchmark, decide explicitly between a full historical reindex with
-traffic cutover and temporary mixed-engine operation until Lucene retention
-expires. Mixed reads require format-aware routing and equivalent global sorting,
-coverage, and aggregation reduction; they are additional scope, not a free
-consequence of `LogStore` abstraction.
+Preserve external behavior; keep Lucene dependencies needed for OpenSearch
+parsing, ID/IP encoding, scripts, and result reduction. Replacing the storage
+engine does not require immediately eliminating every Lucene class from the
+dependency graph.
 
-Rollback during shadowing routes traffic to the unchanged Lucene deployment.
-After cutover, that rollback is safe only while Lucene is still current through
-independent consumption or can catch up within the recovery target. Otherwise
-replay/rebuild is required. Rolling back Infino binaries is a separate matter:
-verify that the older version reads every format written since upgrade, including
-maintenance writes. Retaining old binaries alone does not ensure rollback.
+Infino cannot read Lucene index files. Reindex retained Kafka/archive data into
+Infino roots for the benchmark and eventual cutover. Do not silently introduce
+mixed-format query routing or permanent dual-engine support. The historical
+migration and rollback policy is a separate deployment decision after the
+reader/writer implementation is validated.
 
-Do not remove Lucene snapshots, config, or dependencies until the adopted
-migration's retention and rollback window closes. Removing Lucene as the storage
-engine also does not automatically remove its transitive dependencies through
-OpenSearch parsers, response classes, or aggregation reducers.
+The known internal behavior difference is that refresh publishes durable
+Infino appends. Keep that explicit in config/docs and validate its cost.
+All other required semantic gaps remain replacement work, not features to drop.
 
 ## Test Plan
 
-### Correctness and reliability gates
+First build and test all modules on Java 25 with the existing Lucene engine.
+Exercise distributed-query and schema fan-out success, mixed failures, timeout,
+interruption, partial coverage, and cleanup after the structured-concurrency
+migration. Smoke-test all updated containers and verify their runtime version
+and launch flags. Include native-load/FFM tests on the supported Java 25
+production/development platforms once the shim exists.
 
-Extend relevant existing tests such as `OpenSearchAdapterTest`,
-`LogIndexSearcherImplTest`, `SearchResultAggregatorImplTest`, and `AstraTest`, and
-run the same contract fixtures against both engines. Add native/transport tests
-where required by the worker boundary. Check exact hits, logical IDs, source
-content, ordering, projection/redaction, bucket keys/counts, coverage, and errors.
-Use hand-checked fixtures or an independent oracle as well as Lucene comparisons
-so shared bugs do not become the expected behavior.
+Extend existing store, searcher, OpenSearch adapter, aggregation reducer,
+redaction, and `AstraTest` fixtures to execute the same inputs through Infino.
+Compare normalized fields, token streams, exact hits, source, sort encodings,
+unmapped/empty/null behavior, dataset scoping, and every supported aggregation.
+Include the existing scripted-average and multi-chunk reduction cases.
 
-Required exact operations must have no unexplained mismatches. Fix floating-point
-tolerances before running; for approximate results validate the agreed error
-bound against an exact reference. Unsupported required queries fail the gate;
-they cannot be omitted from the headline benchmark or recorded as fast successes.
+Test FFM lifetime/error/cancellation races, close during reads, native memory
+bounds, batch append failures, recovery duplicates, recursive snapshot export,
+and reopen at a different path/S3 root. Prove required semantics before claiming
+performance parity.
 
-Exercise active-to-sealed-to-cache handoff, partial snapshot upload, corrupt or
-missing objects, worker death, lost commit acknowledgement, disk full, memory
-pressure, expired/rotated credentials, transient S3 errors, manifest contention,
-query cancellation, schema changes, late events, eviction during reads, retention,
-and recovery after node loss. Prove no loss of acknowledged durable coverage and
-no duplicate generation coverage after replay.
+Use **Lucene on Java 25 versus Infino/FFM on Java 25** as the engine comparison.
+Also retain a Lucene/Java 21 baseline to quantify the JVM upgrade separately;
+do not attribute its gains or regressions to Infino. Pin the same Java 25 build
+and JVM settings in the two engine runs.
 
-### Benchmark design
-
-Run two experiments and label them separately:
-
-1. **Engine comparison:** Same normalized documents, required indexes/positions,
-   queries, resource limits, and local/remote storage conditions. Measure native
-   engine work and Java/worker overhead separately. This diagnoses differences;
-   it does not by itself justify adoption.
-2. **KalDB comparison:** Existing Lucene KalDB versus the Infino prototype through
-   the same external API, Kafka pipeline, chunk sizes, logical replication, query
-   fan-out, projections, and durability/freshness targets. Include routing,
-   serialization, merge/reduction, worker lifecycle, and cache costs. This is the
-   adoption comparison.
-
-Use the current checkout's Lucene `9.7.0` and OpenSearch `2.11.1` as the documented
-starting baseline, then record exact versions/commits for the actual runs. A
-production Lucene upgrade can be an additional arm, not an unrecorded baseline
-change. The repository has JMH scaffolding in `benchmarks/`; verify which targets
-exist before reuse and add the required harness. No Infino benchmark runner or
-result is supplied by this ADR.
-
-| Dimension | Required cases |
-| --- | --- |
-| Data | Sanitized representative logs and traces with IDs, timestamps, structured fields, source text, skew, high-cardinality fields, sparse fields, and late events. Add public/synthetic data for reproducibility, not as a substitute for representative queries. |
-| Scale | Small case around 1M documents; medium case around 10M; a large case whose indexed working set exceeds the aggregate RAM/cache budget. Record raw bytes, indexed bytes, field counts, chunk counts, and distribution; row count alone does not define scale. |
-| Queries | Selective and common terms; AND/OR/NOT; exact IDs; time/numeric ranges; phrase/prefix/wildcard where required; newest-first and explicit sorts; pagination; selective and broad aggregations; nested/sibling/terms/multi-terms and required pipeline queries. Use a frozen production-weighted mix and per-family reports. |
-| Concurrency | Single request; 8/32 concurrent requests as initial sweep points; an open-loop arrival-rate sweep through saturation. Record client queueing and timeouts so slow responses are not hidden by coordinated omission. |
-| Cache | Cold engine cache and cold OS pages on dedicated test nodes; warm disk cache with cold pages; hot working set; constrained/evicting cache. Repeat across local and real same-region S3. Compare Infino remote reads with KalDB's existing Lucene S3 streaming as well as its downloaded-chunk path. |
-| Ingestion | Sustained input at equal freshness/durability, burst and backpressure, schema churn, and simultaneous queries. Vary batching under the same freshness target; record small-file proliferation. |
-| Lifecycle | Initial build, unoptimized steady state, post-maintenance state, seal/upload, cold assignment, recovery/replay, and retention cleanup. Include maintenance CPU, I/O, pauses, and temporary bytes. |
-
-Use identical hardware/CPU architecture, container limits, region, object-store
-endpoint, dataset, and client for paired runs. Budget total Java plus Rust RSS,
-mapped pages/page cache, disk, and threads; equal JVM heap is not equal memory.
-Keep semantic/index obligations identical, but allow engine-specific tuning
-within an equal documented tuning budget. Record resolved settings and explain
-any unavoidable difference. S3Mock is useful for functional tests, not final
-cloud latency or request-cost conclusions.
-
-For each cache/workload cell, run at least five independent repetitions, alternate
-engine order, record warm-up separately, and capture at least 10,000 measured
-requests per query family for tail-latency reporting. Use longer runs when the
-tail is unstable. Recreate the intended cold state before each cold trial and
-state what caches the operator can actually clear. Record foreground and
-background object traffic until work settles; prefetch is part of the cost.
-Report confidence intervals across independent runs and retain failures/outliers
-with explanations rather than silently discarding them.
-
-Capture:
-
-- Client-observed p50/p95/p99 latency, throughput at the target SLO, timeout/error
-  rate, and partial coverage, by query family and cache condition.
-- Sustainable documents/sec and raw MiB/sec, CPU-seconds per million documents,
-  lag/backpressure, time until query-visible, and time until durable remote coverage.
-- Persistent bytes per raw input byte, local disk/cache footprint, total memory,
-  peak build/compaction memory, and temporary/upload bytes.
-- S3 request counts by operation, foreground/background bytes, retries, network
-  traffic, and recovery/assignment time.
-- Compute, attached storage, object storage, object requests, and transfer cost
-  for the **same retention, ingestion rate, query mix/rate, replication, and SLOs**.
-  Include workers, maintenance, standby capacity, and reindex/dual-run cost
-  separately. Date and record regional price assumptions; report engineering
-  effort separately from infrastructure savings.
-
-Keep a machine-readable run manifest with engine/adapter SHAs, toolchains,
-hardware, settings, dataset and query checksums, seeds, execution order, warm-up,
-cache-reset method, and raw histograms/measurements. Publish per-query results,
-correctness mismatches, unsupported features, profiles, and scripts needed to
-repeat the comparison. Upstream benchmark claims are not KalDB measurements.
-
-### Proposed adoption gates
-
-Confirm these thresholds with workload owners in stage 0 before measured runs:
-
-| Gate | Proposed requirement |
-| --- | --- |
-| Correctness and security | All required contract cases pass; exact operations have no unexplained differences; approximate operations meet their registered bounds; projection/redaction and logical coverage are correct. |
-| Reliability | Crash/replay, snapshot handoff, retention, and rollback drills pass within the agreed absolute recovery/availability targets. |
-| Freshness and ingestion | Meet absolute visibility/durability/lag targets; sustain at least 95% of Lucene's ingestion throughput at the same resource budget and query load, with no unbounded lag. |
-| Query regression budget | Meet every required absolute SLO; no critical query family's p95 or p99 regresses by more than 10% in its required cache/load conditions. Report individual regressions even when the mix improves. |
-| Material benefit | Either at least 25% lower steady-state infrastructure cost at equal workload/SLOs, or at least 20% lower production-weighted p95 latency at the target arrival rate with no infrastructure cost increase. Both routes must satisfy every preceding gate. |
-| Repeatability and ownership | Benefit repeats across independent runs, its confidence interval excludes no improvement, and deployment/upgrade/support ownership and migration effort are accepted. |
-
-Compare latency ratios using the frozen query weights, and publish the underlying
-per-family measurements. Do not use an average of percentiles as a claim about
-the combined request distribution's p95; report that distribution separately.
-An attractive microbenchmark result cannot override a failed correctness or
-end-to-end gate. If the result is inconclusive, keep Lucene and record what
-additional evidence would resolve it.
+Benchmark the existing Lucene reader/writer against the FFM-backed path using
+identical normalized data, indexes, query mix, total process memory, CPU, and
+freshness/durability targets. Measure ingestion, p50/p95/p99 queries, storage,
+native RSS, IPC overhead, and snapshot/reopen time. Include local, cold/warm S3,
+Lucene's existing S3 streaming, simultaneous ingestion/query, and aggregation
+transfer cost. Record unsupported cases rather than excluding them from results.
+No performance result or completed prototype is implied by this ADR.
 
 ## Documentation Plan
 
-If implemented, update `README.md`, `config/README.md`, config samples and
-`docs/topics/Config-options.md`; explain worker packaging/startup and credentials.
-Update `Architecture.md`, `Indexer.md`, `Cache.md`, `Recovery.md`, `Schema.md`,
-`Aggregations.md`, `API-opensearch.md`, `API-zipkin.md`, and `Migrating.md` under
-`docs/topics/` for actual behavior and limitations. Add operational guidance for
-batching/freshness, cache and native memory budgets, failed appends, snapshot
-publication, GC, upgrades, replay, rollback, and credential rotation. Extend
-`benchmarks/README.md` with the implemented commands and retained run artifacts.
-Update this ADR with measured results, remaining gaps, and the final decision.
+Document the Java 25 minimum version, developer/CI/container upgrade steps,
+structured-concurrency migration, native-access and remaining preview flags.
+Document native artifacts/toolchain, FFM flags, batching/refresh semantics,
+supported query translations, known upstream gaps, snapshot format, and benchmark
+commands. Update config proto comments, sample configs, and config reference
+together with actual config changes. Keep this ADR's API mapping and work estimate
+current as the spike resolves gaps.
 
 ## Rejected Alternatives
 
-- **Immediately replace Lucene everywhere.** Rejected at this stage because
-  production compatibility and workload benefits are unproven. The cost includes
-  query execution and recovery changes, not only a new storage class.
-- **Use one shared Infino table per dataset and retire KalDB chunk coordination.**
-  Deferred because it changes partition ownership, retention, recovery, fan-out,
-  and assignment simultaneously. It may be worth a later ADR if the chunk-based
-  experiment exposes a material limitation or demonstrates value.
-- **Keep Lucene indefinitely without evaluation.** Remains the fallback, but
-  does not answer whether Infino improves this workload. A bounded experiment
-  gives evidence before a larger migration investment.
-- **Implement JNI first or require a fork of Infino's private internals.**
-  Deferred because binding safety, native crashes, ABI/allocator/toolchain work,
-  and upstream drift add cost before semantic feasibility is known. JNI can be
-  reconsidered if integration overhead is the measured barrier; correctness and
-  lifecycle requirements still apply.
-- **Add Infino only for analytical queries while keeping Lucene for search.**
-  Deferred because permanent dual writes, schemas, snapshots, and failure paths
-  add operational cost and do not evaluate full replacement. Consider it only
-  through an explicit decision if results justify that narrower role.
+- **Implement Infino beneath Lucene IndexReader and keep all collectors.**
+  That entails implementing terms/postings, live docs, stored fields, doc values,
+  points, reader caches, and rewrite behavior. Infino's public API returns rows
+  and SQL results, not those interfaces. This is a much larger compatibility
+  layer than replacing KalDB's local reader/writer implementations.
+- **Expose Infino through a separate worker service.** The chosen integration
+  is in-process FFM; no network boundary is needed for this replacement.
+- **Use BM25 top-k as the input to time sorting or aggregations.**
+  It changes the result set and fails existing API semantics.
+- **Rewrite coordinator/result protocols up front.** Existing partial-state
+  transport/reduction can be retained where we construct equivalent states;
+  change it only if a demonstrated gap warrants the additional work.
 
 ## Consequences
 
-Potential benefits are lower ingestion/query cost, efficient indexed columnar
-analytics, smaller cold-data/cache footprints, and Parquet interoperability.
-They are conditional on measurements. Vector/hybrid retrieval would be a separate
-product decision.
+The reader/writer swap is feasible for a useful subset using Infino's current
+public API and a small native binding. Most effort lies in preserving KalDB's
+query and aggregation behavior, not in implementing storage or native calls.
+Full replacement is a multi-component adapter project, with explicit upstream
+risks around analysis/query features and portable snapshots.
 
-Costs include a maintained Java/Rust integration, native resource management,
-OpenSearch semantic translation and aggregation work, new snapshot/recovery
-contracts, historical reindexing, and a less mature dependency. Small per-chunk
-tables, schema churn, mandatory positions/source storage, and cold-object request
-amplification may erase expected gains.
-
-The immediate outcome is a reviewable evaluation proposal and a defined decision
-test. Production replacement proceeds only after the benchmark and operational
-evidence support it.
+The benchmark will establish whether that build produces better performance.
+It follows a concrete reader/writer integration rather than substituting for
+the API conformance work.
