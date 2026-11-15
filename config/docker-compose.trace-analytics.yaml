@@ -1,0 +1,5 @@
+# Use with docker-compose.yml and the running OpenTelemetry demo's overrides.
+services:
+  astra_dashboards_gateway:
+    environment:
+      TRACE_ANALYTICS_DATASET: otel-demo-traces
