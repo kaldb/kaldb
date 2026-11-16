@@ -45,13 +45,19 @@ final class DashboardsGatewayService implements HttpService {
 
   private final GatewayConfig config;
   private final Map<Upstream, WebClient> upstreamClients;
+  private final GatewayAuthorization authorization;
 
   DashboardsGatewayService(GatewayConfig config) {
     this.config = config;
+    this.authorization = config.security() == null ? null : new GatewayAuthorization(config);
     this.upstreamClients =
         Map.of(
-            Upstream.ASTRA, newWebClient(config.astraUri(), config.requestTimeout()),
-            Upstream.OPENSEARCH, newWebClient(config.openSearchUri(), config.requestTimeout()));
+            Upstream.ASTRA,
+            newWebClient(config.astraUri(), config.requestTimeout()),
+            Upstream.OPENSEARCH,
+            authorization == null
+                ? newWebClient(config.openSearchUri(), config.requestTimeout())
+                : authorization.nativeClient);
   }
 
   @Override
@@ -59,8 +65,9 @@ final class DashboardsGatewayService implements HttpService {
     String routingPath = ctx.path();
     String forwardPath = req.path();
 
-    return ROUTING
-        .syntheticResponse(routingPath)
+    return (authorization == null || routingPath.equals(DashboardsGatewayRouting.HEALTH_PATH)
+            ? ROUTING.syntheticResponse(routingPath)
+            : java.util.Optional.<HttpResponse>empty())
         .orElseGet(
             () -> {
               HttpRequestDuplicator duplicator =
@@ -81,14 +88,63 @@ final class DashboardsGatewayService implements HttpService {
 
   private CompletableFuture<HttpResponse> forward(
       AggregatedHttpRequest request, String routingPath, String forwardPath) {
+    if (authorization != null) return forwardSecured(request, routingPath, forwardPath);
     Upstream upstream = ROUTING.selectUpstream(routingPath);
+    return proxy(request, upstream, forwardPath);
+  }
+
+  private CompletableFuture<HttpResponse> forwardSecured(
+      AggregatedHttpRequest request, String path, String forwardPath) {
+    try {
+      boolean search = path.endsWith("/_search") || path.endsWith("/_msearch");
+      Set<String> datasets = Set.of();
+      if (search) {
+        if (!path.matches("/[a-z0-9][a-z0-9_-]{0,127}/_search") || forwardPath.contains("%")) {
+          throw new GatewayAuthorization.Rejected(
+              HttpStatus.BAD_REQUEST, "unsupported search resource");
+        }
+        datasets = Set.of(path.split("/")[1]);
+      }
+      boolean dataRequest = search;
+      return authorization
+          .authorize(request, datasets)
+          .thenCompose(
+              decision ->
+                  proxy(request, dataRequest ? Upstream.ASTRA : Upstream.OPENSEARCH, forwardPath))
+          .exceptionally(DashboardsGatewayService::authorizationFailure);
+    } catch (Exception e) {
+      return CompletableFuture.completedFuture(authorizationFailure(e));
+    }
+  }
+
+  private static HttpResponse authorizationFailure(Throwable failure) {
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (cause instanceof GatewayAuthorization.Rejected rejection) {
+        return HttpResponse.of(
+            rejection.status,
+            MediaType.JSON_UTF_8,
+            "{\"error\":\"" + rejection.getMessage() + "\"}");
+      }
+    }
+    return HttpResponse.of(
+        HttpStatus.SERVICE_UNAVAILABLE,
+        MediaType.JSON_UTF_8,
+        "{\"error\":\"native authorization unavailable\"}");
+  }
+
+  private CompletableFuture<HttpResponse> proxy(
+      AggregatedHttpRequest request, Upstream upstream, String forwardPath) {
     URI upstreamUri = config.uriFor(upstream).resolve(forwardPath);
 
     try {
       byte[] requestBody = request.content().array();
       RequestHeadersBuilder requestHeadersBuilder =
           RequestHeaders.builder(request.method(), forwardPath);
-      copyRequestHeaders(request.headers(), requestHeadersBuilder);
+      copyRequestHeaders(
+          request.headers(),
+          requestHeadersBuilder,
+          authorization != null,
+          upstream == Upstream.ASTRA);
       HttpRequest upstreamRequest =
           requestBody.length == 0
               ? HttpRequest.of(requestHeadersBuilder.build())
@@ -116,7 +172,10 @@ final class DashboardsGatewayService implements HttpService {
   }
 
   private static void copyRequestHeaders(
-      RequestHeaders requestHeaders, RequestHeadersBuilder requestHeadersBuilder) {
+      RequestHeaders requestHeaders,
+      RequestHeadersBuilder requestHeadersBuilder,
+      boolean secured,
+      boolean toKaldb) {
     requestHeaders.forEach(
         header -> {
           String name = header.getKey().toString();
@@ -124,6 +183,15 @@ final class DashboardsGatewayService implements HttpService {
           if (name.startsWith(":") || HOP_BY_HOP_HEADERS.contains(lowerCaseName)) {
             return;
           }
+          if (secured
+              && (lowerCaseName.startsWith("x-proxy-")
+                  || lowerCaseName.startsWith("x-forwarded-")
+                  || lowerCaseName.contains("opendistro")
+                  || lowerCaseName.contains("opensearch")
+                  || Set.of("x-user", "x-roles", "remote-user").contains(lowerCaseName)
+                  || (toKaldb
+                      && Set.of("authorization", "cookie", "securitytenant")
+                          .contains(lowerCaseName)))) return;
           requestHeadersBuilder.add(name, header.getValue());
         });
   }
