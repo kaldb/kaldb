@@ -162,7 +162,7 @@ acceptance test for Dashboards on this branch.
 
 The paired OTel demo on `codex/security-demo-2.11-review` contains a two-user,
 two-tenant security showcase at `local/kaldb/permissions/README.md`:
-https://github.com/kaldb/opentelemetry-demo/tree/codex/security-demo-2.11-review/local/kaldb/permissions
+https://github.com/mansu/opentelemetry-demo/tree/codex/security-demo-2.11-review/local/kaldb/permissions
 
 Build this checkout's gateway with `mvn -f contrib/dashboards-gateway/pom.xml package`.
 Its optional secured mode uses these environment variables:
