@@ -157,3 +157,41 @@ What that script does:
 
 This flow is exact-match only. It is the closest thing in the repo to a committed customer-path
 acceptance test for Dashboards on this branch.
+
+## Native Security demo (OpenSearch 2.11.1)
+
+The paired OTel demo on `codex/security-demo-2.11-review` contains a two-user,
+two-tenant security showcase at `local/kaldb/permissions/README.md`:
+https://github.com/kaldb/opentelemetry-demo/tree/codex/security-demo-2.11-review/local/kaldb/permissions
+
+Build this checkout's gateway with `mvn -f contrib/dashboards-gateway/pom.xml package`.
+Its optional secured mode uses these environment variables:
+
+| Variable | Meaning |
+| --- | --- |
+| `SECURED_MODE=true` | Authenticate and authorize data requests using native Security. |
+| `OPENSEARCH_URL` | Private HTTPS native OpenSearch authority, with Basic authentication enabled. |
+| `OPENSEARCH_CA_FILE` | PEM CA file used to verify that authority. |
+| `POLICY_READER_CREDENTIALS_FILE` | Private JSON file with `username` and `password`; never expose it to Dashboards users. |
+| `REGISTERED_DATASETS` | Comma-separated concrete KalDB dataset names, each mirrored by an empty native schema index (maximum 32). |
+| `ASTRA_URL` | Private KalDB query endpoint. It must not be reachable by user-facing clients. |
+
+The policy reader can GET native roles and complete mappings for registered
+schema indexes. It cannot search telemetry, change roles, or access other Security
+administration endpoints. Native user probes establish index/field access on
+each request; there is no authorization cache. Real native Security also governs
+saved-object tenants. Saved-object scroll and tenant-template bootstrap require
+the authenticated native `kibana_server` role and remain on OpenSearch.
+
+The bounded query grammar supports search/multi-search, selected aggregations,
+and filtered mapping/field-capability/index discovery. It rejects whole indexes
+with multi-fields or aliases; FLS must contain literal negative leaf exclusions.
+DLS, masking, parent/include/wildcard/regex FLS, scripts, runtime fields, data
+scroll/PIT, SQL/PPL, and other unsupported operations fail closed. Only the empty
+`script_fields` placeholder emitted by Dashboards is accepted and removed.
+Metadata and returned documents are projected to visible leaves. The supplied
+demo verifies real KalDB fixtures and zero upstream calls for denied requests.
+
+The default mode remains the existing routing demo. Use `SECURED_MODE=true` and
+the private network layout for permission enforcement; the legacy demo's
+synthetic account responses are not an authorization mechanism.

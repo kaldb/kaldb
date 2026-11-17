@@ -69,6 +69,74 @@ class DashboardsGatewayServiceTest {
   }
 
   @Test
+  void onlyNativeDashboardsServiceCanUseSavedObjectScroll() throws Exception {
+    try (SecureHarness h = new SecureHarness(temporaryDirectory)) {
+      assertEquals(403, h.request("/_search/scroll/context", "{}").status().code());
+      h.serviceIdentity = true;
+      var response = h.request("/_search/scroll/context", "{}");
+      assertEquals(200, response.status().code());
+      org.junit.jupiter.api.Assertions.assertTrue(response.contentUtf8().contains("native_scroll"));
+      assertEquals(0, h.calls.get());
+    }
+  }
+
+  @Test
+  void routesOnlySavedObjectMultiGetToNative() {
+    var request =
+        AggregatedHttpRequest.of(
+            HttpMethod.POST,
+            "/_mget",
+            MediaType.JSON_UTF_8,
+            "{\"docs\":[{\"_index\":\".kibana\",\"_id\":\"index-pattern:demo\"}]}");
+    assertEquals(
+        AuthorizedSearch.Kind.NATIVE, AuthorizedSearch.inspect(request, Set.of("public")).kind());
+    var mixed =
+        AggregatedHttpRequest.of(
+            HttpMethod.POST,
+            "/_mget",
+            MediaType.JSON_UTF_8,
+            "{\"docs\":[{\"_index\":\".kibana\",\"_id\":\"demo\"},{\"_index\":\"public\",\"_id\":\"1\"}]}");
+    org.junit.jupiter.api.Assertions.assertThrows(
+        GatewayAuthorization.Rejected.class,
+        () -> AuthorizedSearch.inspect(mixed, Set.of("public")));
+  }
+
+  @Test
+  void acceptsDashboardsEmptyScriptFieldsWithoutEnablingScripts() throws Exception {
+    try (SecureHarness h = new SecureHarness(temporaryDirectory)) {
+      assertEquals(
+          200,
+          h.request(
+                  "/public/_search",
+                  "{\"script_fields\":{},\"stored_fields\":[\"*\"],\"_source\":{\"excludes\":[]},\"aggs\":{}}")
+              .status()
+              .code());
+      assertFalse(h.lastAstra.contentUtf8().contains("script_fields"));
+      int before = h.calls.get();
+      assertEquals(
+          400,
+          h.request("/public/_search", "{\"script_fields\":{\"x\":{\"script\":\"1\"}}}")
+              .status()
+              .code());
+      assertEquals(before, h.calls.get());
+    }
+  }
+
+  @Test
+  void acceptsDashboardsSearchTransportParameters() {
+    assertEquals(
+        AuthorizedSearch.Kind.SEARCH,
+        AuthorizedSearch.inspect(
+                AggregatedHttpRequest.of(
+                    HttpMethod.POST,
+                    "/public/_search?ignore_unavailable=true&track_total_hits=true&timeout=30000ms&preference=123&pretty=true",
+                    MediaType.JSON_UTF_8,
+                    "{}"),
+                Set.of("public"))
+            .kind());
+  }
+
+  @Test
   void supportsNativeDashboardsBootstrapWithoutRoutingToKaldb() {
     for (String path :
         new String[] {
@@ -76,7 +144,8 @@ class DashboardsGatewayServiceTest {
           "/_template/.kibana",
           "/_cluster/health/.kibana",
           "/_cat/templates/opensearch_dashboards_index_template*",
-          "/_index_template/opensearch_dashboards_index_template"
+          "/_index_template/opensearch_dashboards_index_template",
+          "/_aliases"
         }) {
       var plan =
           AuthorizedSearch.inspect(
@@ -122,7 +191,7 @@ class DashboardsGatewayServiceTest {
       }
       for (String body :
           new String[] {
-            "{\"script_fields\":{}}",
+            "{\"script_fields\":{\"x\":{\"script\":\"1\"}}}",
             "{\"runtime_mappings\":{}}",
             "{\"query\":{\"script\":{}}}",
             "{\"query\":{\"query_string\":{\"query\":\"body:foo OR secret:bar\"}}}",
@@ -132,7 +201,7 @@ class DashboardsGatewayServiceTest {
         assertEquals(400, h.request("/public/_search", body).status().code());
       }
       assertEquals(400, h.request("/public/_search?q=secret:PRIVATE", "{}").status().code());
-      assertEquals(400, h.request("/_search/scroll", "{}").status().code());
+      assertEquals(403, h.request("/_search/scroll", "{}").status().code());
       assertEquals(0, h.calls.get());
     }
   }
@@ -406,6 +475,7 @@ class DashboardsGatewayServiceTest {
     volatile String afterMapping;
     volatile String astraResponse = "{\"hits\":{\"total\":{\"value\":0},\"hits\":[]}}";
     volatile boolean spoofSeen;
+    volatile boolean serviceIdentity;
 
     SecureHarness(Path directory) throws Exception {
       astra =
@@ -450,7 +520,11 @@ class DashboardsGatewayServiceTest {
                     if (ctx.path().equals("/_plugins/_security/authinfo"))
                       return HttpResponse.of(
                           MediaType.JSON_UTF_8,
-                          "{\"user_name\":\"actual-reader\",\"roles\":[\"reader\"],\"backend_roles\":[]}");
+                          "{\"user_name\":\"actual-reader\",\"roles\":[\""
+                              + (serviceIdentity ? "kibana_server" : "reader")
+                              + "\"],\"backend_roles\":[]}");
+                    if (ctx.path().startsWith("/_search/scroll"))
+                      return HttpResponse.of(MediaType.JSON_UTF_8, "{\"native_scroll\":true}");
                     if (ctx.path().equals("/_plugins/_security/api/account"))
                       return HttpResponse.of(
                           MediaType.JSON_UTF_8, "{\"user_name\":\"actual-reader\"}");

@@ -23,6 +23,7 @@ import java.util.regex.Pattern;
 final class AuthorizedSearch {
   enum Kind {
     NATIVE,
+    NATIVE_SERVICE,
     SEARCH,
     MSEARCH,
     MAPPING,
@@ -81,7 +82,24 @@ final class AuthorizedSearch {
 
   static Plan inspect(AggregatedHttpRequest request, Set<String> registered) {
     String raw = request.path().split("\\?", 2)[0];
+    if (raw.equals("/_search/scroll")
+        || raw.startsWith("/_search/scroll/")
+        || raw.equals("/_index_template/tenant_template")) {
+      return new Plan(Kind.NATIVE_SERVICE, List.of(), Set.of(), false);
+    }
     if (raw.contains("%") || raw.contains("//") || raw.contains("..")) throw bad();
+    if (raw.equals("/_mget")) {
+      ObjectNode body = object(request.contentUtf8());
+      keys(body, Set.of("docs"));
+      JsonNode docs = body.get("docs");
+      if (docs == null || !docs.isArray() || docs.isEmpty()) throw bad();
+      for (JsonNode doc : docs) {
+        if (!doc.isObject()
+            || !doc.path("_index").isTextual()
+            || !systemIndex(doc.path("_index").asText())) throw forbidden();
+      }
+      return new Plan(Kind.NATIVE, List.of(), Set.of(), false);
+    }
     String[] parts = raw.substring(1).split("/", -1);
     if (raw.equals("/")
         || raw.startsWith("/_plugins/_security/")
@@ -89,6 +107,9 @@ final class AuthorizedSearch {
         || raw.startsWith("/_cluster/health")
         || raw.startsWith("/_cluster/state")
         || raw.equals("/_bulk")
+        || raw.equals("/_aliases")
+        || raw.equals("/_cat/plugins")
+        || (raw.equals("/_plugins/_query/_datasources") && request.method() == HttpMethod.GET)
         || (parts.length > 0 && systemIndex(parts[0]))
         || (parts.length == 2
             && Set.of("_alias", "_template", "_index_template", "_component_template")
@@ -170,6 +191,7 @@ final class AuthorizedSearch {
       String name = URLDecoder.decode(parts[0], StandardCharsets.UTF_8);
       if (!Set.of(
                   "preference",
+                  "pretty",
                   "rest_total_hits_as_int",
                   "ignore_unavailable",
                   "ignore_throttled",
@@ -177,6 +199,8 @@ final class AuthorizedSearch {
                   "expand_wildcards",
                   "max_concurrent_shard_requests",
                   "typed_keys",
+                  "track_total_hits",
+                  "timeout",
                   "fields",
                   "include_unmapped",
                   "startTimeEpochMs",
@@ -395,8 +419,14 @@ final class AuthorizedSearch {
             "version",
             "seq_no_primary_term",
             "timeout",
+            "script_fields",
             "highlight"));
     ObjectNode body = input.deepCopy();
+    if (body.has("script_fields")) {
+      if (!body.get("script_fields").isObject() || !body.get("script_fields").isEmpty())
+        throw bad();
+      body.remove("script_fields");
+    }
     for (String number : List.of("from", "size"))
       if (body.has(number)
           && (!body.get(number).canConvertToInt()

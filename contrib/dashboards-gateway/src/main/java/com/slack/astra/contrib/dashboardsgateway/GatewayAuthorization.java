@@ -191,6 +191,19 @@ final class GatewayAuthorization {
     return authorize(request, datasets, false);
   }
 
+  /** Permit native saved-object migration operations only for the authenticated server role. */
+  CompletableFuture<Void> requireDashboardsService(AggregatedHttpRequest request) {
+    return json(
+            HttpMethod.GET, "/_plugins/_security/authinfo", null, userAuthorization(request), true)
+        .thenApply(
+            identity -> {
+              if (!strings(identity.get("roles")).contains("kibana_server"))
+                throw new Rejected(
+                    HttpStatus.FORBIDDEN, "native migration requires the Dashboards server role");
+              return null;
+            });
+  }
+
   /** Discover only native-authorized datasets; policy outages still fail the whole request. */
   CompletableFuture<Decision> discover(AggregatedHttpRequest request, Set<String> datasets) {
     return authorize(request, datasets, true);

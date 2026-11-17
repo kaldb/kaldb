@@ -98,6 +98,11 @@ final class DashboardsGatewayService implements HttpService {
     try {
       GatewayAuthorization.userAuthorization(request);
       AuthorizedSearch.Plan plan = AuthorizedSearch.inspect(request, config.security().datasets());
+      if (plan.kind() == AuthorizedSearch.Kind.NATIVE_SERVICE)
+        return authorization
+            .requireDashboardsService(request)
+            .thenCompose(unused -> proxy(request, Upstream.OPENSEARCH, forwardPath, null, null))
+            .exceptionally(DashboardsGatewayService::authorizationFailure);
       if (plan.kind() == AuthorizedSearch.Kind.NATIVE)
         return proxy(request, Upstream.OPENSEARCH, forwardPath, null, null);
       return (plan.discovery()
