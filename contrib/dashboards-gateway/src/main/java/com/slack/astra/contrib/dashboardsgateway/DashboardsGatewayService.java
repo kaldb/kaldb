@@ -45,13 +45,19 @@ final class DashboardsGatewayService implements HttpService {
 
   private final GatewayConfig config;
   private final Map<Upstream, WebClient> upstreamClients;
+  private final GatewayAuthorization authorization;
 
   DashboardsGatewayService(GatewayConfig config) {
     this.config = config;
+    this.authorization = config.security() == null ? null : new GatewayAuthorization(config);
     this.upstreamClients =
         Map.of(
-            Upstream.ASTRA, newWebClient(config.astraUri(), config.requestTimeout()),
-            Upstream.OPENSEARCH, newWebClient(config.openSearchUri(), config.requestTimeout()));
+            Upstream.ASTRA,
+            newWebClient(config.astraUri(), config.requestTimeout()),
+            Upstream.OPENSEARCH,
+            authorization == null
+                ? newWebClient(config.openSearchUri(), config.requestTimeout())
+                : authorization.nativeClient);
   }
 
   @Override
@@ -59,8 +65,9 @@ final class DashboardsGatewayService implements HttpService {
     String routingPath = ctx.path();
     String forwardPath = req.path();
 
-    return ROUTING
-        .syntheticResponse(routingPath)
+    return (authorization == null || routingPath.equals(DashboardsGatewayRouting.HEALTH_PATH)
+            ? ROUTING.syntheticResponse(routingPath)
+            : java.util.Optional.<HttpResponse>empty())
         .orElseGet(
             () -> {
               HttpRequestDuplicator duplicator =
@@ -81,14 +88,80 @@ final class DashboardsGatewayService implements HttpService {
 
   private CompletableFuture<HttpResponse> forward(
       AggregatedHttpRequest request, String routingPath, String forwardPath) {
+    if (authorization != null) return forwardSecured(request, routingPath, forwardPath);
     Upstream upstream = ROUTING.selectUpstream(routingPath);
+    return proxy(request, upstream, forwardPath, null, null);
+  }
+
+  private CompletableFuture<HttpResponse> forwardSecured(
+      AggregatedHttpRequest request, String path, String forwardPath) {
+    try {
+      GatewayAuthorization.userAuthorization(request);
+      AuthorizedSearch.Plan plan = AuthorizedSearch.inspect(request, config.security().datasets());
+      if (plan.kind() == AuthorizedSearch.Kind.NATIVE_SERVICE)
+        return authorization
+            .requireDashboardsService(request)
+            .thenCompose(unused -> proxy(request, Upstream.OPENSEARCH, forwardPath, null, null))
+            .exceptionally(DashboardsGatewayService::authorizationFailure);
+      if (plan.kind() == AuthorizedSearch.Kind.NATIVE)
+        return proxy(request, Upstream.OPENSEARCH, forwardPath, null, null);
+      return (plan.discovery()
+              ? authorization.discover(request, plan.datasets())
+              : authorization.authorize(request, plan.datasets()))
+          .thenCompose(
+              decision -> {
+                if (plan.kind() == AuthorizedSearch.Kind.SEARCH
+                    || plan.kind() == AuthorizedSearch.Kind.MSEARCH) {
+                  AggregatedHttpRequest prepared =
+                      AuthorizedSearch.prepare(request, plan, decision);
+                  return proxy(prepared, Upstream.ASTRA, forwardPath, plan, decision);
+                }
+                return CompletableFuture.completedFuture(
+                    HttpResponse.of(
+                        MediaType.JSON_UTF_8,
+                        AuthorizedSearch.metadata(plan, decision).toString()));
+              })
+          .exceptionally(DashboardsGatewayService::authorizationFailure);
+    } catch (Exception e) {
+      if (e instanceof GatewayAuthorization.Rejected rejection
+          && rejection.status == HttpStatus.BAD_REQUEST)
+        LOG.warn("Unsupported secured resource: {} {}", request.method(), path);
+      return CompletableFuture.completedFuture(authorizationFailure(e));
+    }
+  }
+
+  private static HttpResponse authorizationFailure(Throwable failure) {
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (cause instanceof GatewayAuthorization.Rejected rejection) {
+        return HttpResponse.of(
+            rejection.status,
+            MediaType.JSON_UTF_8,
+            "{\"error\":\"" + rejection.getMessage() + "\"}");
+      }
+    }
+    return HttpResponse.of(
+        HttpStatus.SERVICE_UNAVAILABLE,
+        MediaType.JSON_UTF_8,
+        "{\"error\":\"native authorization unavailable\"}");
+  }
+
+  private CompletableFuture<HttpResponse> proxy(
+      AggregatedHttpRequest request,
+      Upstream upstream,
+      String forwardPath,
+      AuthorizedSearch.Plan plan,
+      GatewayAuthorization.Decision decision) {
     URI upstreamUri = config.uriFor(upstream).resolve(forwardPath);
 
     try {
       byte[] requestBody = request.content().array();
       RequestHeadersBuilder requestHeadersBuilder =
           RequestHeaders.builder(request.method(), forwardPath);
-      copyRequestHeaders(request.headers(), requestHeadersBuilder);
+      copyRequestHeaders(
+          request.headers(),
+          requestHeadersBuilder,
+          authorization != null,
+          upstream == Upstream.ASTRA);
       HttpRequest upstreamRequest =
           requestBody.length == 0
               ? HttpRequest.of(requestHeadersBuilder.build())
@@ -100,8 +173,18 @@ final class DashboardsGatewayService implements HttpService {
           .get(upstream)
           .execute(upstreamRequest)
           .aggregate()
-          .thenApply(response -> HttpResponse.of(response.headers(), response.content()))
-          .exceptionally(throwable -> gatewayErrorResponse(upstreamUri, throwable));
+          .thenApply(
+              response ->
+                  plan == null
+                      ? HttpResponse.of(response.headers(), response.content())
+                      : HttpResponse.of(
+                          MediaType.JSON_UTF_8,
+                          AuthorizedSearch.filterResponse(response, plan, decision).toString()))
+          .exceptionally(
+              throwable ->
+                  plan == null
+                      ? gatewayErrorResponse(upstreamUri, throwable)
+                      : authorizationFailure(throwable));
     } catch (Exception e) {
       return CompletableFuture.completedFuture(gatewayErrorResponse(upstreamUri, e));
     }
@@ -116,7 +199,10 @@ final class DashboardsGatewayService implements HttpService {
   }
 
   private static void copyRequestHeaders(
-      RequestHeaders requestHeaders, RequestHeadersBuilder requestHeadersBuilder) {
+      RequestHeaders requestHeaders,
+      RequestHeadersBuilder requestHeadersBuilder,
+      boolean secured,
+      boolean toKaldb) {
     requestHeaders.forEach(
         header -> {
           String name = header.getKey().toString();
@@ -124,6 +210,15 @@ final class DashboardsGatewayService implements HttpService {
           if (name.startsWith(":") || HOP_BY_HOP_HEADERS.contains(lowerCaseName)) {
             return;
           }
+          if (secured
+              && (lowerCaseName.startsWith("x-proxy-")
+                  || lowerCaseName.startsWith("x-forwarded-")
+                  || lowerCaseName.contains("opendistro")
+                  || lowerCaseName.contains("opensearch")
+                  || Set.of("x-user", "x-roles", "remote-user").contains(lowerCaseName)
+                  || (toKaldb
+                      && Set.of("authorization", "cookie", "securitytenant")
+                          .contains(lowerCaseName)))) return;
           requestHeadersBuilder.add(name, header.getValue());
         });
   }
