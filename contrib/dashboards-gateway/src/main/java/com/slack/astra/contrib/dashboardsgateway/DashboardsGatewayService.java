@@ -118,6 +118,9 @@ final class DashboardsGatewayService implements HttpService {
               })
           .exceptionally(DashboardsGatewayService::authorizationFailure);
     } catch (Exception e) {
+      if (e instanceof GatewayAuthorization.Rejected rejection
+          && rejection.status == HttpStatus.BAD_REQUEST)
+        LOG.warn("Unsupported secured resource: {} {}", request.method(), path);
       return CompletableFuture.completedFuture(authorizationFailure(e));
     }
   }

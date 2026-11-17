@@ -86,10 +86,19 @@ final class AuthorizedSearch {
     if (raw.equals("/")
         || raw.startsWith("/_plugins/_security/")
         || raw.startsWith("/_nodes")
-        || raw.equals("/_cluster/health")
+        || raw.startsWith("/_cluster/health")
         || raw.startsWith("/_cluster/state")
         || raw.equals("/_bulk")
-        || (parts.length > 0 && systemIndex(parts[0]))) {
+        || (parts.length > 0 && systemIndex(parts[0]))
+        || (parts.length == 2
+            && Set.of("_alias", "_template", "_index_template", "_component_template")
+                .contains(parts[0])
+            && (systemIndex(parts[1])
+                || parts[1].matches("opensearch_dashboards_index_template[a-zA-Z0-9_*.-]*")))
+        || (parts.length == 3
+            && parts[0].equals("_cat")
+            && parts[1].equals("templates")
+            && parts[2].matches("opensearch_dashboards_index_template[a-zA-Z0-9_*.-]*"))) {
       return new Plan(Kind.NATIVE, List.of(), Set.of(), false);
     }
     Kind kind;

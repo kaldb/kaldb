@@ -69,6 +69,23 @@ class DashboardsGatewayServiceTest {
   }
 
   @Test
+  void supportsNativeDashboardsBootstrapWithoutRoutingToKaldb() {
+    for (String path :
+        new String[] {
+          "/_alias/.kibana",
+          "/_template/.kibana",
+          "/_cluster/health/.kibana",
+          "/_cat/templates/opensearch_dashboards_index_template*",
+          "/_index_template/opensearch_dashboards_index_template"
+        }) {
+      var plan =
+          AuthorizedSearch.inspect(
+              AggregatedHttpRequest.of(HttpMethod.GET, path), Set.of("public"));
+      assertEquals(AuthorizedSearch.Kind.NATIVE, plan.kind(), path);
+    }
+  }
+
+  @Test
   void rejectsSchemaChangesDuringAuthorization() throws Exception {
     try (SecureHarness h = new SecureHarness(temporaryDirectory)) {
       h.afterMapping =
