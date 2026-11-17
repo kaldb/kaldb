@@ -27,6 +27,119 @@ class DashboardsGatewayServiceTest {
   @TempDir Path temporaryDirectory;
 
   @Test
+  void deniesEveryExplicitHiddenFieldReferenceBeforeKaldb() throws Exception {
+    try (SecureHarness h = new SecureHarness(temporaryDirectory)) {
+      h.caps = "{\"indices\":[\"public\"],\"fields\":{\"body\":{\"text\":{\"type\":\"text\"}}}}";
+      for (String body :
+          new String[] {
+            "{\"query\":{\"term\":{\"secret\":\"PRIVATE\"}}}",
+            "{\"query\":{\"exists\":{\"field\":\"secret\"}}}",
+            "{\"query\":{\"range\":{\"secret\":{\"gte\":1}}}}",
+            "{\"query\":{\"bool\":{\"filter\":[{\"term\":{\"secret\":\"PRIVATE\"}}]}}}",
+            "{\"sort\":[{\"secret\":\"asc\"}]}",
+            "{\"aggs\":{\"values\":{\"terms\":{\"field\":\"secret\"}}}}",
+            "{\"_source\":[\"secret\"]}",
+            "{\"_source\":[\"sec*\"]}",
+            "{\"_source\":[\"customer.*\"]}",
+            "{\"fields\":[\"secret\"]}",
+            "{\"docvalue_fields\":[{\"field\":\"secret\"}]}",
+            "{\"query\":{\"query_string\":{\"query\":\"secret:PRIVATE\"}}}"
+          }) {
+        assertEquals(403, h.request("/public/_search", body).status().code(), body);
+      }
+      assertEquals(0, h.calls.get());
+    }
+  }
+
+  @Test
+  void rejectsMixedMsearchAtomicallyAndMalformedResourceShapes() throws Exception {
+    try (SecureHarness h = new SecureHarness(temporaryDirectory)) {
+      h.caps = "{\"indices\":[\"public\"],\"fields\":{\"body\":{\"text\":{\"type\":\"text\"}}}}";
+      String mixed =
+          "{\"index\":\"public\"}\n{\"query\":{\"match_all\":{}}}\n{\"index\":\"public\"}\n{\"query\":{\"term\":{\"secret\":\"PRIVATE\"}}}\n";
+      assertEquals(403, h.request("/_msearch", mixed).status().code());
+      assertEquals(400, h.request("/_msearch", "{}\n{}\n").status().code());
+      assertEquals(400, h.request("/_msearch", "{\"index\":\"public\"}\n{}").status().code());
+      assertEquals(
+          403, h.request("/public/_msearch", "{\"index\":\"private\"}\n{}\n").status().code());
+      h.probeStatus = 403;
+      assertEquals(403, h.request("/priva%74e/_search", "{}").status().code());
+      assertEquals(0, h.calls.get());
+    }
+  }
+
+  @Test
+  void rejectsSchemaChangesDuringAuthorization() throws Exception {
+    try (SecureHarness h = new SecureHarness(temporaryDirectory)) {
+      h.afterMapping =
+          "{\"public\":{\"mappings\":{\"properties\":{\"body\":{\"type\":\"text\"}}}}}";
+      assertEquals(503, h.search(SecureHarness.USER).status().code());
+      assertEquals(0, h.calls.get());
+    }
+  }
+
+  @Test
+  void rejectsContainerValuesInScalarResponseFields() {
+    var mapping =
+        GatewayAuthorization.parse(
+            "{\"mappings\":{\"properties\":{\"body\":{\"type\":\"text\"}}}}"
+                .getBytes(StandardCharsets.UTF_8));
+    var dataset = new GatewayAuthorization.Dataset(Set.of("body"), mapping, mapping);
+    var response =
+        GatewayAuthorization.parse(
+            "{\"hits\":{\"hits\":[{\"_index\":\"public\",\"fields\":{\"body\":[{\"secret\":\"PRIVATE\"}]}}]}}"
+                .getBytes(StandardCharsets.UTF_8));
+    org.junit.jupiter.api.Assertions.assertThrows(
+        GatewayAuthorization.Rejected.class,
+        () -> AuthorizedSearch.filteredSearch(response, "public", dataset));
+  }
+
+  @Test
+  void filtersMetadataAndRejectsUnsupportedQueriesWithoutKaldbCalls() throws Exception {
+    try (SecureHarness h = new SecureHarness(temporaryDirectory)) {
+      h.caps = "{\"indices\":[\"public\"],\"fields\":{\"body\":{\"text\":{\"type\":\"text\"}}}}";
+      for (String path : new String[] {"/public/_mapping", "/public/_field_caps?fields=*"}) {
+        var response = h.request(path, "{}");
+        assertEquals(200, response.status().code());
+        assertFalse(response.contentUtf8().contains("secret"));
+      }
+      for (String body :
+          new String[] {
+            "{\"script_fields\":{}}",
+            "{\"runtime_mappings\":{}}",
+            "{\"query\":{\"script\":{}}}",
+            "{\"query\":{\"query_string\":{\"query\":\"body:foo OR secret:bar\"}}}",
+            "{\"query\":{\"bool\":{\"unknown\":[]}}}",
+            "{\"query\":{\"match_all\":{}},\"query\":{}}"
+          }) {
+        assertEquals(400, h.request("/public/_search", body).status().code());
+      }
+      assertEquals(400, h.request("/public/_search?q=secret:PRIVATE", "{}").status().code());
+      assertEquals(400, h.request("/_search/scroll", "{}").status().code());
+      assertEquals(0, h.calls.get());
+    }
+  }
+
+  @Test
+  void projectsVisibleFieldsAndDoesNotSearchHiddenValues() throws Exception {
+    try (SecureHarness h = new SecureHarness(temporaryDirectory)) {
+      h.caps = "{\"indices\":[\"public\"],\"fields\":{\"body\":{\"text\":{\"type\":\"text\"}}}}";
+      h.astraResponse =
+          "{\"hits\":{\"total\":{\"value\":1},\"hits\":[{\"_index\":\"public\",\"_source\":{\"body\":\"PUBLIC\",\"secret\":\"PRIVATE\",\"unknown\":\"PRIVATE\"},\"fields\":{\"body\":[\"PUBLIC\"],\"secret\":[\"PRIVATE\"]}}]}}";
+      var response =
+          h.request("/public/_search", "{\"query\":{\"query_string\":{\"query\":\"PRIVATE\"}}}");
+      assertEquals(200, response.status().code());
+      assertFalse(response.contentUtf8().contains("PRIVATE"));
+      assertFalse(h.lastAstra.contentUtf8().contains("secret"));
+      assertFalse(h.lastAstra.contentUtf8().contains("query_string"));
+      org.junit.jupiter.api.Assertions.assertTrue(h.lastAstra.contentUtf8().contains("body"));
+      h.astraResponse =
+          "{\"hits\":{\"hits\":[{\"_index\":\"private\",\"_source\":{\"secret\":\"PRIVATE\"}}]}}";
+      assertEquals(503, h.request("/public/_search", "{}").status().code());
+    }
+  }
+
+  @Test
   void rejectsUnsupportedFlsPolicyFormsAndParentExclusions() throws Exception {
     try (SecureHarness h = new SecureHarness(temporaryDirectory)) {
       for (String rule : new String[] {"secret", "~sec*", "~/secret/", "~customer"}) {
@@ -272,6 +385,9 @@ class DashboardsGatewayServiceTest {
     volatile String mapping =
         "{\"public\":{\"mappings\":{\"properties\":{\"body\":{\"type\":\"text\"},\"secret\":{\"type\":\"keyword\"}}}}}";
     volatile AggregatedHttpRequest lastAstra;
+    final AtomicInteger mappingCalls = new AtomicInteger();
+    volatile String afterMapping;
+    volatile String astraResponse = "{\"hits\":{\"total\":{\"value\":0},\"hits\":[]}}";
     volatile boolean spoofSeen;
 
     SecureHarness(Path directory) throws Exception {
@@ -288,9 +404,7 @@ class DashboardsGatewayServiceTest {
                                     calls.incrementAndGet();
                                     lastAstra = r;
                                     return HttpResponse.of(
-                                        HttpStatus.OK,
-                                        MediaType.JSON_UTF_8,
-                                        "{\"hits\":{\"total\":{\"value\":0},\"hits\":[]}}");
+                                        HttpStatus.OK, MediaType.JSON_UTF_8, astraResponse);
                                   })))
               .build();
       nativeServer =
@@ -309,8 +423,12 @@ class DashboardsGatewayServiceTest {
                           MediaType.JSON_UTF_8,
                           roles);
                     }
-                    if (ctx.path().endsWith("/_mapping") && POLICY.equals(auth))
-                      return HttpResponse.of(MediaType.JSON_UTF_8, mapping);
+                    if (ctx.path().endsWith("/_mapping") && POLICY.equals(auth)) {
+                      int read = mappingCalls.incrementAndGet();
+                      return HttpResponse.of(
+                          MediaType.JSON_UTF_8,
+                          read > 1 && afterMapping != null ? afterMapping : mapping);
+                    }
                     if (!USER.equals(auth)) return HttpResponse.of(HttpStatus.UNAUTHORIZED);
                     if (ctx.path().equals("/_plugins/_security/authinfo"))
                       return HttpResponse.of(
@@ -360,6 +478,19 @@ class DashboardsGatewayServiceTest {
               HttpRequest.of(
                   headers.build(),
                   com.linecorp.armeria.common.HttpData.ofUtf8("{\"query\":{\"match_all\":{}}}")))
+          .aggregate()
+          .join();
+    }
+
+    AggregatedHttpResponse request(String path, String body) {
+      return client
+          .execute(
+              HttpRequest.of(
+                  RequestHeaders.builder(HttpMethod.POST, path)
+                      .set("authorization", USER)
+                      .contentType(MediaType.JSON_UTF_8)
+                      .build(),
+                  com.linecorp.armeria.common.HttpData.ofUtf8(body)))
           .aggregate()
           .join();
     }

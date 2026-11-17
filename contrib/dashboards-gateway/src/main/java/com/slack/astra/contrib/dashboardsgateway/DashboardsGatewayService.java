@@ -90,27 +90,32 @@ final class DashboardsGatewayService implements HttpService {
       AggregatedHttpRequest request, String routingPath, String forwardPath) {
     if (authorization != null) return forwardSecured(request, routingPath, forwardPath);
     Upstream upstream = ROUTING.selectUpstream(routingPath);
-    return proxy(request, upstream, forwardPath);
+    return proxy(request, upstream, forwardPath, null, null);
   }
 
   private CompletableFuture<HttpResponse> forwardSecured(
       AggregatedHttpRequest request, String path, String forwardPath) {
     try {
-      boolean search = path.endsWith("/_search") || path.endsWith("/_msearch");
-      Set<String> datasets = Set.of();
-      if (search) {
-        if (!path.matches("/[a-z0-9][a-z0-9_-]{0,127}/_search") || forwardPath.contains("%")) {
-          throw new GatewayAuthorization.Rejected(
-              HttpStatus.BAD_REQUEST, "unsupported search resource");
-        }
-        datasets = Set.of(path.split("/")[1]);
-      }
-      boolean dataRequest = search;
-      return authorization
-          .authorize(request, datasets)
+      GatewayAuthorization.userAuthorization(request);
+      AuthorizedSearch.Plan plan = AuthorizedSearch.inspect(request, config.security().datasets());
+      if (plan.kind() == AuthorizedSearch.Kind.NATIVE)
+        return proxy(request, Upstream.OPENSEARCH, forwardPath, null, null);
+      return (plan.discovery()
+              ? authorization.discover(request, plan.datasets())
+              : authorization.authorize(request, plan.datasets()))
           .thenCompose(
-              decision ->
-                  proxy(request, dataRequest ? Upstream.ASTRA : Upstream.OPENSEARCH, forwardPath))
+              decision -> {
+                if (plan.kind() == AuthorizedSearch.Kind.SEARCH
+                    || plan.kind() == AuthorizedSearch.Kind.MSEARCH) {
+                  AggregatedHttpRequest prepared =
+                      AuthorizedSearch.prepare(request, plan, decision);
+                  return proxy(prepared, Upstream.ASTRA, forwardPath, plan, decision);
+                }
+                return CompletableFuture.completedFuture(
+                    HttpResponse.of(
+                        MediaType.JSON_UTF_8,
+                        AuthorizedSearch.metadata(plan, decision).toString()));
+              })
           .exceptionally(DashboardsGatewayService::authorizationFailure);
     } catch (Exception e) {
       return CompletableFuture.completedFuture(authorizationFailure(e));
@@ -133,7 +138,11 @@ final class DashboardsGatewayService implements HttpService {
   }
 
   private CompletableFuture<HttpResponse> proxy(
-      AggregatedHttpRequest request, Upstream upstream, String forwardPath) {
+      AggregatedHttpRequest request,
+      Upstream upstream,
+      String forwardPath,
+      AuthorizedSearch.Plan plan,
+      GatewayAuthorization.Decision decision) {
     URI upstreamUri = config.uriFor(upstream).resolve(forwardPath);
 
     try {
@@ -156,8 +165,18 @@ final class DashboardsGatewayService implements HttpService {
           .get(upstream)
           .execute(upstreamRequest)
           .aggregate()
-          .thenApply(response -> HttpResponse.of(response.headers(), response.content()))
-          .exceptionally(throwable -> gatewayErrorResponse(upstreamUri, throwable));
+          .thenApply(
+              response ->
+                  plan == null
+                      ? HttpResponse.of(response.headers(), response.content())
+                      : HttpResponse.of(
+                          MediaType.JSON_UTF_8,
+                          AuthorizedSearch.filterResponse(response, plan, decision).toString()))
+          .exceptionally(
+              throwable ->
+                  plan == null
+                      ? gatewayErrorResponse(upstreamUri, throwable)
+                      : authorizationFailure(throwable));
     } catch (Exception e) {
       return CompletableFuture.completedFuture(gatewayErrorResponse(upstreamUri, e));
     }

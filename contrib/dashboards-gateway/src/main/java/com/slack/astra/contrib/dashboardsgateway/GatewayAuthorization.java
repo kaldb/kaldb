@@ -188,6 +188,16 @@ final class GatewayAuthorization {
 
   /** Authenticate a real native principal and authorize all requested concrete indexes. */
   CompletableFuture<Decision> authorize(AggregatedHttpRequest request, Set<String> datasets) {
+    return authorize(request, datasets, false);
+  }
+
+  /** Discover only native-authorized datasets; policy outages still fail the whole request. */
+  CompletableFuture<Decision> discover(AggregatedHttpRequest request, Set<String> datasets) {
+    return authorize(request, datasets, true);
+  }
+
+  private CompletableFuture<Decision> authorize(
+      AggregatedHttpRequest request, Set<String> datasets, boolean partial) {
     String authorization = userAuthorization(request);
     return json(HttpMethod.GET, "/_plugins/_security/authinfo", null, authorization, true)
         .thenCompose(
@@ -215,9 +225,19 @@ final class GatewayAuthorization {
                               permissions.thenCompose(
                                   decisions ->
                                       authorizeDataset(dataset, authorization, exclusions)
-                                          .thenApply(
-                                              fields -> {
-                                                decisions.put(dataset, fields);
+                                          .handle(
+                                              (fields, error) -> {
+                                                if (error == null) decisions.put(dataset, fields);
+                                                else {
+                                                  Throwable cause = error;
+                                                  while (cause.getCause() != null)
+                                                    cause = cause.getCause();
+                                                  if (!partial
+                                                      || !(cause instanceof Rejected rejection)
+                                                      || rejection.status != HttpStatus.FORBIDDEN)
+                                                    throw new java.util.concurrent
+                                                        .CompletionException(cause);
+                                                }
                                                 return decisions;
                                               }));
                         }
@@ -299,7 +319,7 @@ final class GatewayAuthorization {
                       null,
                       authorization,
                       true)
-                  .thenApply(
+                  .thenCompose(
                       caps -> {
                         if (!strings(caps.get("indices")).equals(Set.of(dataset))
                             || !caps.path("fields").isObject()) throw unavailable();
@@ -320,7 +340,17 @@ final class GatewayAuthorization {
                                 });
                         if (visible.isEmpty())
                           throw new Rejected(HttpStatus.FORBIDDEN, "no visible fields");
-                        return new Dataset(visible, mapping.get(dataset), caps);
+                        return json(
+                                HttpMethod.GET,
+                                "/" + dataset + "/_mapping",
+                                null,
+                                policyAuthorization,
+                                false)
+                            .thenApply(
+                                current -> {
+                                  if (!mapping.equals(current)) throw unavailable();
+                                  return new Dataset(visible, mapping.get(dataset), caps);
+                                });
                       });
             });
   }
