@@ -30,10 +30,22 @@ final class GatewayAuthorization {
           .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
           .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
 
-  record Dataset(Set<String> fields, JsonNode mapping, JsonNode capabilities) {
+  record Dataset(
+      Set<String> fields, JsonNode mapping, JsonNode capabilities, Map<String, String> schema) {
+    Dataset(Set<String> fields, JsonNode mapping, JsonNode capabilities) {
+      this(fields, mapping, capabilities, GatewayAuthorization.schema(mapping));
+    }
+
     Dataset {
       fields = Set.copyOf(fields);
+      schema = Map.copyOf(schema);
     }
+  }
+
+  static Map<String, String> schema(JsonNode mapping) {
+    Map<String, String> leaves = new LinkedHashMap<>();
+    schemaLeaves(mapping.path("mappings").path("properties"), "", leaves, 0);
+    return leaves;
   }
 
   record Decision(String principal, Map<String, Dataset> datasets) {
@@ -100,6 +112,7 @@ final class GatewayAuthorization {
                   throw new Rejected(HttpStatus.FORBIDDEN, "unsupported schema type");
                 }
                 leaves.put(name, type);
+                if (leaves.size() > 2048) throw unavailable();
               }
             });
   }
@@ -108,8 +121,19 @@ final class GatewayAuthorization {
     Set<String> exclusions = new LinkedHashSet<>();
     if (role == null || !role.isObject() || !role.path("index_permissions").isArray())
       throw unavailable();
+    strings(role.get("cluster_permissions"));
+    if (!role.path("tenant_permissions").isArray()) throw unavailable();
+    for (JsonNode tenant : role.get("tenant_permissions")) {
+      if (!tenant.isObject()) throw unavailable();
+      strings(tenant.get("tenant_patterns"));
+      strings(tenant.get("allowed_actions"));
+    }
     for (JsonNode permission : role.get("index_permissions")) {
       if (!permission.isObject()) throw unavailable();
+      strings(permission.get("index_patterns"));
+      strings(permission.get("allowed_actions"));
+      strings(permission.get("fls"));
+      strings(permission.get("masked_fields"));
       JsonNode dls = permission.get("dls");
       JsonNode masked = permission.get("masked_fields");
       if ((dls != null && (!dls.isTextual() || !dls.asText().isBlank()))
@@ -362,7 +386,7 @@ final class GatewayAuthorization {
                             .thenApply(
                                 current -> {
                                   if (!mapping.equals(current)) throw unavailable();
-                                  return new Dataset(visible, mapping.get(dataset), caps);
+                                  return new Dataset(visible, mapping.get(dataset), caps, leaves);
                                 });
                       });
             });

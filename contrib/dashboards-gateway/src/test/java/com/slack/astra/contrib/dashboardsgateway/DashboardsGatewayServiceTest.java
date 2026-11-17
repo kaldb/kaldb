@@ -26,6 +26,133 @@ import org.junit.jupiter.api.io.TempDir;
 class DashboardsGatewayServiceTest {
   @TempDir Path temporaryDirectory;
 
+  private static GatewayAuthorization.Dataset largeDataset() {
+    var mapping = AuthorizedSearch.object("{\"mappings\":{\"properties\":{}}}");
+    var caps = AuthorizedSearch.object("{\"fields\":{}}");
+    Set<String> names = new java.util.LinkedHashSet<>();
+    for (int i = 0; i < 400; i++) {
+      String name = "field_" + i;
+      names.add(name);
+      ((com.fasterxml.jackson.databind.node.ObjectNode) mapping.path("mappings").path("properties"))
+          .putObject(name)
+          .put("type", "text");
+      ((com.fasterxml.jackson.databind.node.ObjectNode) caps.get("fields"))
+          .putObject(name)
+          .putObject("text")
+          .put("type", "text");
+    }
+    return new GatewayAuthorization.Dataset(names, mapping, caps);
+  }
+
+  @Test
+  void boundsAdversarialWildcardAndSelectorWork() {
+    org.junit.jupiter.api.Assertions.assertThrows(
+        GatewayAuthorization.Rejected.class,
+        () -> AuthorizedSearch.resolve("a".repeat(2049), Set.of("public")));
+    org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(
+        Duration.ofMillis(500),
+        () ->
+            assertEquals(
+                Set.of(),
+                AuthorizedSearch.resolve("************z", Set.of("permissions-demo-public"))));
+    var dataset = largeDataset();
+    var selectors = GatewayAuthorization.JSON.createArrayNode();
+    for (int i = 0; i < 2049; i++) selectors.add("field_0");
+    org.junit.jupiter.api.Assertions.assertThrows(
+        GatewayAuthorization.Rejected.class, () -> AuthorizedSearch.select(selectors, dataset));
+    org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(
+        Duration.ofMillis(500),
+        () ->
+            org.junit.jupiter.api.Assertions.assertThrows(
+                GatewayAuthorization.Rejected.class,
+                () ->
+                    AuthorizedSearch.select(
+                        GatewayAuthorization.JSON.getNodeFactory().textNode("************z"),
+                        dataset)));
+  }
+
+  @Test
+  void boundsAggregateUnfieldedQueryExpansion() {
+    var dataset = largeDataset();
+    var input = AuthorizedSearch.object("{\"query\":{\"bool\":{\"should\":[]}}}");
+    var clauses =
+        (com.fasterxml.jackson.databind.node.ArrayNode)
+            input.path("query").path("bool").get("should");
+    clauses.add(AuthorizedSearch.object("{\"query_string\":{\"query\":\"alpha\"}}"));
+    assertEquals(
+        400,
+        AuthorizedSearch.search(input, dataset)
+            .path("query")
+            .path("bool")
+            .path("should")
+            .get(0)
+            .path("bool")
+            .path("should")
+            .size());
+    for (int i = 1; i < 12; i++) clauses.add(clauses.get(0).deepCopy());
+    org.junit.jupiter.api.Assertions.assertThrows(
+        GatewayAuthorization.Rejected.class, () -> AuthorizedSearch.search(input, dataset));
+  }
+
+  @Test
+  void rejectsIncompleteNativePermissionEntries() throws Exception {
+    try (SecureHarness h = new SecureHarness(temporaryDirectory)) {
+      var baseline = AuthorizedSearch.object(h.roles);
+      for (String required :
+          new String[] {"index_patterns", "allowed_actions", "fls", "masked_fields"}) {
+        var broken = baseline.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode)
+                broken.path("reader").path("index_permissions").get(0))
+            .remove(required);
+        h.roles = broken.toString();
+        assertEquals(503, h.search(SecureHarness.USER).status().code(), required);
+      }
+      for (String required : new String[] {"cluster_permissions", "tenant_permissions"}) {
+        var broken = baseline.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) broken.get("reader")).remove(required);
+        h.roles = broken.toString();
+        assertEquals(503, h.search(SecureHarness.USER).status().code(), required);
+      }
+      assertEquals(0, h.calls.get());
+    }
+  }
+
+  @Test
+  void rejectsUnsupportedResultSemanticsBeforeKaldb() throws Exception {
+    try (SecureHarness h = new SecureHarness(temporaryDirectory)) {
+      java.util.List<Integer> statuses = new java.util.ArrayList<>();
+      for (String body :
+          new String[] {
+            "{\"post_filter\":{\"match_none\":{}}}",
+            "{\"query\":{\"query_string\":{\"query\":\"alpha beta\",\"default_operator\":\"AND\"}}}"
+          }) statuses.add(h.request("/public/_search", body).status().code());
+      assertEquals(java.util.List.of(400, 400), statuses);
+      assertEquals(
+          400,
+          h.request(
+                  "/_msearch",
+                  "{\"index\":\"public\"}\n{}\n{\"index\":\"public\"}\n{\"post_filter\":{\"match_none\":{}}}\n")
+              .status()
+              .code());
+      assertEquals(0, h.calls.get());
+    }
+  }
+
+  @Test
+  void authorizesUrlFieldSelectorsAndFiltersCapsSubset() throws Exception {
+    try (SecureHarness h = new SecureHarness(temporaryDirectory)) {
+      var caps = h.request("/public/_field_caps?fields=body", "{}");
+      var search = h.request("/public/_search?fields=secret", "{}");
+      h.caps = "{\"indices\":[\"public\"],\"fields\":{\"body\":{\"text\":{\"type\":\"text\"}}}}";
+      var hidden = h.request("/public/_field_caps?fields=secret", "{}");
+      org.junit.jupiter.api.Assertions.assertAll(
+          () -> assertFalse(caps.contentUtf8().contains("secret")),
+          () -> assertEquals(400, search.status().code()),
+          () -> assertEquals(403, hidden.status().code()),
+          () -> assertEquals(0, h.calls.get()));
+    }
+  }
+
   @Test
   void deniesEveryExplicitHiddenFieldReferenceBeforeKaldb() throws Exception {
     try (SecureHarness h = new SecureHarness(temporaryDirectory)) {
@@ -229,7 +356,12 @@ class DashboardsGatewayServiceTest {
   void rejectsUnsupportedFlsPolicyFormsAndParentExclusions() throws Exception {
     try (SecureHarness h = new SecureHarness(temporaryDirectory)) {
       for (String rule : new String[] {"secret", "~sec*", "~/secret/", "~customer"}) {
-        h.roles = "{\"reader\":{\"index_permissions\":[{\"fls\":[\"" + rule + "\"]}]}}";
+        var role = AuthorizedSearch.object(SecureHarness.ROLES);
+        ((com.fasterxml.jackson.databind.node.ObjectNode)
+                role.path("reader").path("index_permissions").get(0))
+            .putArray("fls")
+            .add(rule);
+        h.roles = role.toString();
         h.mapping =
             "{\"public\":{\"mappings\":{\"properties\":{\"body\":{\"type\":\"text\"},\"secret\":{\"type\":\"keyword\"},\"customer\":{\"properties\":{\"region\":{\"type\":\"keyword\"}}}}}}}";
         assertEquals(403, h.search(SecureHarness.USER).status().code(), rule);
@@ -273,10 +405,13 @@ class DashboardsGatewayServiceTest {
     try (SecureHarness h = new SecureHarness(temporaryDirectory)) {
       for (String policy :
           new String[] {"\"dls\":\"{\\\"match_all\\\":{}}\"", "\"masked_fields\":[\"secret\"]"}) {
-        h.roles =
-            "{\"reader\":{\"index_permissions\":[{\"index_patterns\":[\"unrelated\"],"
-                + policy
-                + "}]}}";
+        var role = AuthorizedSearch.object(SecureHarness.ROLES);
+        var permission =
+            (com.fasterxml.jackson.databind.node.ObjectNode)
+                role.path("reader").path("index_permissions").get(0);
+        permission.putArray("index_patterns").add("unrelated");
+        permission.setAll(AuthorizedSearch.object("{" + policy + "}"));
+        h.roles = role.toString();
         assertEquals(403, h.search(SecureHarness.USER).status().code());
       }
       assertEquals(0, h.calls.get());
@@ -463,8 +598,9 @@ class DashboardsGatewayServiceTest {
     final WebClient client;
     volatile int probeStatus = 200;
     volatile int policyStatus = 200;
-    volatile String roles =
-        "{\"reader\":{\"index_permissions\":[{\"index_patterns\":[\"public\"],\"allowed_actions\":[\"read\"],\"fls\":[],\"masked_fields\":[]}]}}";
+    static final String ROLES =
+        "{\"reader\":{\"cluster_permissions\":[],\"tenant_permissions\":[],\"index_permissions\":[{\"index_patterns\":[\"public\"],\"allowed_actions\":[\"read\"],\"fls\":[],\"masked_fields\":[]}]}}";
+    volatile String roles = ROLES;
     volatile String probeBody = PROBE;
     volatile String caps =
         "{\"indices\":[\"public\"],\"fields\":{\"body\":{\"text\":{\"type\":\"text\"}},\"secret\":{\"keyword\":{\"type\":\"keyword\"}}}}";

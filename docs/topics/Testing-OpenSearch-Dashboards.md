@@ -192,6 +192,16 @@ scroll/PIT, SQL/PPL, and other unsupported operations fail closed. Only the empt
 Metadata and returned documents are projected to visible leaves. The supplied
 demo verifies real KalDB fixtures and zero upstream calls for denied requests.
 
+`post_filter` and query-string operator/options are rejected because the bounded
+backend path cannot preserve their semantics. Literal query strings support only
+`query`, `fields`, and `default_field`. URL `fields` is accepted and authorized
+only for field capabilities. Matching uses a work-limited glob, exact field names
+use set lookup, and each multi-search shares selector/query-expansion budgets.
+The demo limits schemas and field selectors/query nodes to 2,048 and expanded
+text clauses to 4,096. Discovery accepts up to 32 index selectors of 128 characters.
+Native roles must include complete typed cluster/index/tenant permission arrays,
+with index patterns, allowed actions, FLS, and masking arrays on each index entry.
+
 The default mode remains the existing routing demo. Use `SECURED_MODE=true` and
 the private network layout for permission enforcement; the legacy demo's
 synthetic account responses are not an authorization mechanism.

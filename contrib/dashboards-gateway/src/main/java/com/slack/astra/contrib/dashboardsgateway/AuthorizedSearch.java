@@ -17,7 +17,6 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 /** Explicit request grammar and defensive response projection for secured reads. */
 final class AuthorizedSearch {
@@ -34,7 +33,42 @@ final class AuthorizedSearch {
 
   record Item(String index, ObjectNode body) {}
 
-  record Plan(Kind kind, List<Item> items, Set<String> datasets, boolean discovery) {}
+  record Plan(
+      Kind kind, List<Item> items, Set<String> datasets, boolean discovery, JsonNode fields) {
+    Plan(Kind kind, List<Item> items, Set<String> datasets, boolean discovery) {
+      this(kind, items, datasets, discovery, null);
+    }
+  }
+
+  static final class Budget {
+    int selectors = 2048;
+    int queryNodes = 2048;
+    int expandedClauses = 4096;
+    int matchingWork = 200000;
+  }
+
+  static boolean glob(String pattern, String value, Budget budget) {
+    if (pattern.length() > 2048) throw bad();
+    int p = 0, v = 0, star = -1, retry = 0;
+    while (v < value.length()) {
+      if (--budget.matchingWork < 0) throw bad();
+      if (p < pattern.length() && pattern.charAt(p) == value.charAt(v)) {
+        p++;
+        v++;
+      } else if (p < pattern.length() && pattern.charAt(p) == '*') {
+        star = p++;
+        retry = v;
+      } else if (star >= 0) {
+        p = star + 1;
+        v = ++retry;
+      } else return false;
+    }
+    while (p < pattern.length() && pattern.charAt(p) == '*') {
+      if (--budget.matchingWork < 0) throw bad();
+      p++;
+    }
+    return p == pattern.length();
+  }
 
   static GatewayAuthorization.Rejected bad() {
     return new GatewayAuthorization.Rejected(
@@ -69,12 +103,15 @@ final class AuthorizedSearch {
   }
 
   static Set<String> resolve(String selector, Set<String> registered) {
+    if (selector.length() > 4096) throw bad();
+    String[] patterns = selector.split(",", -1);
+    if (patterns.length > 32) throw bad();
+    Budget budget = new Budget();
     Set<String> result = new LinkedHashSet<>();
-    for (String pattern : selector.split(",", -1)) {
-      if (!pattern.matches("[a-z0-9*_-]+")) throw bad();
+    for (String pattern : new LinkedHashSet<>(List.of(patterns))) {
+      if (pattern.length() > 128 || !pattern.matches("[a-z0-9*_-]+")) throw bad();
       if (pattern.contains("*")) {
-        Pattern matcher = Pattern.compile(Pattern.quote(pattern).replace("*", "\\E.*\\Q"));
-        registered.stream().filter(name -> matcher.matcher(name).matches()).forEach(result::add);
+        registered.stream().filter(name -> glob(pattern, name, budget)).forEach(result::add);
       } else result.add(pattern);
     }
     return Set.copyOf(result);
@@ -142,7 +179,7 @@ final class AuthorizedSearch {
       selector = parts.length == 2 ? parts[0] : "*";
     }
     if (request.method() != HttpMethod.GET && request.method() != HttpMethod.POST) throw bad();
-    validateParameters(request.path());
+    Map<String, String> parameters = validateParameters(request.path(), kind);
     if (kind == Kind.MSEARCH) {
       String content = request.contentUtf8();
       if (!content.endsWith("\n")) throw bad();
@@ -180,12 +217,17 @@ final class AuthorizedSearch {
           Set.of(selector),
           false);
     }
-    return new Plan(kind, List.of(), resolve(selector, registered), selector.contains("*"));
+    JsonNode fields =
+        parameters.containsKey("fields")
+            ? GatewayAuthorization.JSON.valueToTree(
+                List.of(parameters.get("fields").split(",", -1)))
+            : null;
+    return new Plan(kind, List.of(), resolve(selector, registered), selector.contains("*"), fields);
   }
 
-  static void validateParameters(String path) {
-    if (!path.contains("?")) return;
-    Set<String> seen = new LinkedHashSet<>();
+  static Map<String, String> validateParameters(String path, Kind kind) {
+    Map<String, String> parameters = new LinkedHashMap<>();
+    if (!path.contains("?")) return parameters;
     for (String pair : path.split("\\?", 2)[1].split("&")) {
       String[] parts = pair.split("=", 2);
       String name = URLDecoder.decode(parts[0], StandardCharsets.UTF_8);
@@ -206,30 +248,48 @@ final class AuthorizedSearch {
                   "startTimeEpochMs",
                   "endTimeEpochMs")
               .contains(name)
-          || !seen.add(name)) throw bad();
+          || parameters.containsKey(name)
+          || parts.length != 2) throw bad();
+      if (Set.of("fields", "include_unmapped").contains(name) && kind != Kind.FIELD_CAPS)
+        throw bad();
+      String value = URLDecoder.decode(parts[1], StandardCharsets.UTF_8);
+      if (value.length() > 2048) throw bad();
+      parameters.put(name, value);
     }
+    return parameters;
   }
 
   static Set<String> select(JsonNode selector, GatewayAuthorization.Dataset dataset) {
+    return select(selector, dataset, new Budget());
+  }
+
+  static Set<String> select(
+      JsonNode selector, GatewayAuthorization.Dataset dataset, Budget budget) {
     Set<String> result = new LinkedHashSet<>();
     if (selector == null) return dataset.fields();
+    int count = selector.isArray() ? selector.size() : 1;
+    budget.selectors -= count;
+    if (budget.selectors < 0) throw bad();
     List<JsonNode> selectors = new ArrayList<>();
     if (selector.isArray()) selector.forEach(selectors::add);
     else selectors.add(selector);
-    Map<String, String> all = new LinkedHashMap<>();
-    GatewayAuthorization.schemaLeaves(
-        dataset.mapping().path("mappings").path("properties"), "", all, 0);
-    for (JsonNode item : selectors) {
+    for (JsonNode item : new LinkedHashSet<>(selectors)) {
       String field = item.isTextual() ? item.asText() : item.path("field").asText("");
       if (item.isObject()) keys(item, Set.of("field", "format"));
       if (field.equals("*")) {
         result.addAll(dataset.fields());
         continue;
       }
-      if (!field.matches("[a-zA-Z0-9_@.*-]+")) throw forbidden();
-      Pattern matcher = Pattern.compile(Pattern.quote(field).replace("*", "\\E.*\\Q"));
+      if (field.length() > 2048 || !field.matches("[a-zA-Z0-9_@.*-]+")) throw forbidden();
+      if (!field.contains("*")) {
+        field(field, dataset);
+        result.add(field);
+        continue;
+      }
       Set<String> matched = new LinkedHashSet<>();
-      all.keySet().stream().filter(name -> matcher.matcher(name).matches()).forEach(matched::add);
+      dataset.schema().keySet().stream()
+          .filter(name -> glob(field, name, budget))
+          .forEach(matched::add);
       if (matched.isEmpty() || !dataset.fields().containsAll(matched)) throw forbidden();
       result.addAll(matched);
     }
@@ -240,8 +300,9 @@ final class AuthorizedSearch {
     if (!dataset.fields().contains(name)) throw forbidden();
   }
 
-  static ObjectNode query(JsonNode node, GatewayAuthorization.Dataset dataset, int depth) {
-    if (depth > 20 || !node.isObject() || node.size() != 1) throw bad();
+  static ObjectNode query(
+      JsonNode node, GatewayAuthorization.Dataset dataset, int depth, Budget budget) {
+    if (--budget.queryNodes < 0 || depth > 20 || !node.isObject() || node.size() != 1) throw bad();
     String kind = node.fieldNames().next();
     JsonNode value = node.get(kind);
     ObjectNode result = ((ObjectNode) node).deepCopy();
@@ -288,26 +349,18 @@ final class AuthorizedSearch {
             if (clauses.isArray()) {
               if (clauses.size() > 100) throw bad();
               ArrayNode children = GatewayAuthorization.JSON.createArrayNode();
-              clauses.forEach(child -> children.add(query(child, dataset, depth + 1)));
+              clauses.forEach(child -> children.add(query(child, dataset, depth + 1, budget)));
               rewritten.set(clause, children);
-            } else rewritten.set(clause, query(clauses, dataset, depth + 1));
+            } else rewritten.set(clause, query(clauses, dataset, depth + 1, budget));
           }
       }
       case "query_string", "simple_query_string" -> {
-        keys(
-            value,
-            Set.of(
-                "query",
-                "fields",
-                "default_field",
-                "default_operator",
-                "analyze_wildcard",
-                "time_zone",
-                "lenient"));
+        keys(value, Set.of("query", "fields", "default_field"));
         if (!value.path("query").isTextual()) throw bad();
         String text = value.get("query").asText().trim();
-        Set<String> fields = select(value.get("fields"), dataset);
-        if (value.has("default_field")) fields = select(value.get("default_field"), dataset);
+        Set<String> fields = select(value.get("fields"), dataset, budget);
+        if (value.has("default_field"))
+          fields = select(value.get("default_field"), dataset, budget);
         int colon = text.indexOf(':');
         if (colon >= 0) {
           String explicit = text.substring(0, colon);
@@ -327,6 +380,8 @@ final class AuthorizedSearch {
           if (!Character.isLetterOrDigit(c) && !Character.isWhitespace(c) && "._-@".indexOf(c) < 0)
             throw bad();
         }
+        budget.expandedClauses -= fields.size();
+        if (budget.expandedClauses < 0) throw bad();
         ArrayNode alternatives = GatewayAuthorization.JSON.createArrayNode();
         for (String name : fields) {
           JsonNode types = dataset.capabilities().path("fields").path(name);
@@ -400,11 +455,14 @@ final class AuthorizedSearch {
   }
 
   static ObjectNode search(ObjectNode input, GatewayAuthorization.Dataset dataset) {
+    return search(input, dataset, new Budget());
+  }
+
+  static ObjectNode search(ObjectNode input, GatewayAuthorization.Dataset dataset, Budget budget) {
     keys(
         input,
         Set.of(
             "query",
-            "post_filter",
             "from",
             "size",
             "sort",
@@ -432,8 +490,7 @@ final class AuthorizedSearch {
           && (!body.get(number).canConvertToInt()
               || body.get(number).asInt() < 0
               || body.get(number).asInt() > 10000)) throw bad();
-    for (String clause : List.of("query", "post_filter"))
-      if (body.has(clause)) body.set(clause, query(body.get(clause), dataset, 0));
+    if (body.has("query")) body.set("query", query(body.get("query"), dataset, 0, budget));
     if (!body.has("query")) body.set("query", object("{\"match_all\":{}}"));
     if (body.has("sort")) {
       JsonNode sorts = body.get("sort");
@@ -454,16 +511,16 @@ final class AuthorizedSearch {
     if (source != null && source.isObject()) {
       keys(source, Set.of("includes", "excludes", "include", "exclude"));
       JsonNode selected = source.has("includes") ? source.get("includes") : source.get("include");
-      includes = new LinkedHashSet<>(select(selected, dataset));
+      includes = new LinkedHashSet<>(select(selected, dataset, budget));
       JsonNode excluded = source.has("excludes") ? source.get("excludes") : source.get("exclude");
-      if (excluded != null) includes.removeAll(select(excluded, dataset));
-    } else if (source != null && !source.isBoolean()) includes = select(source, dataset);
+      if (excluded != null) includes.removeAll(select(excluded, dataset, budget));
+    } else if (source != null && !source.isBoolean()) includes = select(source, dataset, budget);
     if (source == null || !source.isBoolean() || source.asBoolean())
       body.set(
           "_source", GatewayAuthorization.JSON.valueToTree(includes.stream().sorted().toList()));
     for (String selector : List.of("fields", "docvalue_fields", "stored_fields"))
       if (body.has(selector)) {
-        Set<String> selected = select(body.get(selector), dataset);
+        Set<String> selected = select(body.get(selector), dataset, budget);
         body.set(
             selector, GatewayAuthorization.JSON.valueToTree(selected.stream().sorted().toList()));
       }
@@ -485,7 +542,11 @@ final class AuthorizedSearch {
             .get("fields")
             .fieldNames()
             .forEachRemaining(
-                name -> select(GatewayAuthorization.JSON.getNodeFactory().textNode(name), dataset));
+                name ->
+                    select(
+                        GatewayAuthorization.JSON.getNodeFactory().textNode(name),
+                        dataset,
+                        budget));
       body.remove("highlight"); // Styling is deliberately outside this demo's backend grammar.
     }
     return body;
@@ -494,13 +555,14 @@ final class AuthorizedSearch {
   static AggregatedHttpRequest prepare(
       AggregatedHttpRequest request, Plan plan, GatewayAuthorization.Decision decision) {
     String body;
+    Budget budget = new Budget();
     if (plan.kind() == Kind.SEARCH) {
       Item item = plan.items().getFirst();
-      body = search(item.body(), decision.datasets().get(item.index())).toString();
+      body = search(item.body(), decision.datasets().get(item.index()), budget).toString();
     } else {
       StringBuilder ndjson = new StringBuilder();
       for (Item item : plan.items()) {
-        ObjectNode normalized = search(item.body(), decision.datasets().get(item.index()));
+        ObjectNode normalized = search(item.body(), decision.datasets().get(item.index()), budget);
         ndjson
             .append(GatewayAuthorization.JSON.createObjectNode().put("index", item.index()))
             .append('\n')
@@ -639,6 +701,7 @@ final class AuthorizedSearch {
 
   static ObjectNode metadata(Plan plan, GatewayAuthorization.Decision decision) {
     ObjectNode result = GatewayAuthorization.JSON.createObjectNode();
+    Budget budget = new Budget();
     if (plan.kind() == Kind.RESOLVE) {
       ArrayNode indexes = result.putArray("indices");
       result.putArray("aliases");
@@ -661,8 +724,7 @@ final class AuthorizedSearch {
           .datasets()
           .forEach(
               (index, dataset) ->
-                  dataset
-                      .fields()
+                  select(plan.fields(), dataset, budget)
                       .forEach(
                           name -> {
                             ObjectNode types =
