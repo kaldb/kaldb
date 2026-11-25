@@ -1,6 +1,13 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to coding agents working in this repository.
+
+## Pull Request Merge Policy
+
+- Never merge a PR into the main/default branch (`kaldb-main`, `main`, or `master`), locally or on GitHub. Final PR merges are performed by the user.
+- Do not enable auto-merge or push changes directly to the main/default branch. Keep changes on feature branches and leave PRs open for the user to merge.
+- Interpret "merge with main" as updating the PR's feature branch from the main/default branch, not as permission to merge the PR into main.
+- This policy takes precedence over skill workflows that suggest merging or finishing a branch.
 
 ## Building and Running
 
