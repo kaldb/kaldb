@@ -1,0 +1,50 @@
+# Project-scoped command approvals. Loaded by Codex for trusted projects on restart.
+# These command permissions do not authorize actions outside the current task.
+
+prefix_rule(
+    pattern = [["docker", "docker-compose"]],
+    decision = "allow",
+    justification = "Run local development containers and Compose workflows.",
+    match = ["docker ps", "docker compose up -d", "docker-compose logs"],
+    not_match = ["ssh production docker ps"],
+)
+
+prefix_rule(
+    pattern = ["gh"],
+    decision = "allow",
+    justification = "Use the locally authenticated GitHub CLI for the current task; AGENTS.md reserves PR merges for the user.",
+    match = ["gh pr view 75", "gh pr create --base kaldb-main", "gh api repos/kaldb/kaldb/pulls/75"],
+)
+
+# The stricter decision wins over the broad gh allow rule. API-based merges are
+# also prohibited by AGENTS.md; prefix rules cannot inspect arbitrary API bodies.
+prefix_rule(
+    pattern = ["gh", "pr", "merge"],
+    decision = "forbidden",
+    justification = "Leave the PR open for the user to merge, as required by AGENTS.md.",
+    match = ["gh pr merge 75", "gh pr merge 75 --auto --squash"],
+    not_match = ["gh pr view 75", "gh pr checks 75"],
+)
+
+prefix_rule(
+    pattern = [["rg", "grep", "cat", "ls", "pwd", "head", "tail", "wc", "stat", "file", "readlink", "realpath", "which", "uname", "whoami", "id", "ps", "lsof", "du", "df", "jq", "cut"]],
+    decision = "allow",
+    justification = "Inspect local source files, processes, ports, and disk usage.",
+    match = ["rg --files", "cat AGENTS.md", "ls -la", "lsof -i :9200"],
+    not_match = ["rm AGENTS.md", "bash -c command", "python3 -c command"],
+)
+
+prefix_rule(
+    pattern = ["git", ["status", "diff", "log", "show", "rev-parse", "ls-files", "ls-tree", "ls-remote", "for-each-ref", "describe", "blame", "grep", "shortlog", "fetch"]],
+    decision = "allow",
+    justification = "Inspect repository state and fetch upstream refs without merging or pushing.",
+    match = ["git status --short", "git diff", "git fetch origin kaldb-main"],
+    not_match = ["git push origin kaldb-main", "git merge feature", "git reset --hard"],
+)
+
+prefix_rule(
+    pattern = ["mvn"],
+    decision = "allow",
+    justification = "Build and test the local Maven project, including dependency downloads and test services.",
+    match = ["mvn test", "mvn -B package", "mvn -f contrib/dashboards-gateway/pom.xml test"],
+)
