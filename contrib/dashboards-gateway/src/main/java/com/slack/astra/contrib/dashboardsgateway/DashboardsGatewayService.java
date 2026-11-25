@@ -4,6 +4,7 @@ import com.linecorp.armeria.client.WebClient;
 import com.linecorp.armeria.common.AggregatedHttpRequest;
 import com.linecorp.armeria.common.ContentTooLargeException;
 import com.linecorp.armeria.common.HttpData;
+import com.linecorp.armeria.common.HttpMethod;
 import com.linecorp.armeria.common.HttpRequest;
 import com.linecorp.armeria.common.HttpRequestDuplicator;
 import com.linecorp.armeria.common.HttpResponse;
@@ -81,13 +82,45 @@ final class DashboardsGatewayService implements HttpService {
 
   private CompletableFuture<HttpResponse> forward(
       AggregatedHttpRequest request, String routingPath, String forwardPath) {
+    boolean traceSearch =
+        !config.traceAnalyticsDataset().isBlank()
+            && routingPath.startsWith("/otel-v1-apm-span-")
+            && routingPath.endsWith("/_search");
+    boolean traceDiscovery =
+        !config.traceAnalyticsDataset().isBlank()
+            && routingPath.startsWith("/otel-v1-apm-span-")
+            && request.method() == HttpMethod.HEAD;
+    if (traceSearch || traceDiscovery) {
+      forwardPath =
+          "/"
+              + config.traceAnalyticsDataset()
+              + (traceDiscovery ? "/_mapping" : "/_search")
+              + (traceSearch && forwardPath.contains("?")
+                  ? forwardPath.substring(forwardPath.indexOf('?'))
+                  : "");
+      routingPath = "/" + config.traceAnalyticsDataset() + "/_search";
+    }
     Upstream upstream = ROUTING.selectUpstream(routingPath);
     URI upstreamUri = config.uriFor(upstream).resolve(forwardPath);
 
     try {
       byte[] requestBody = request.content().array();
+      if (traceSearch) {
+        try {
+          requestBody =
+              TraceAnalyticsAdapter.request(
+                      request.contentUtf8(), URI.create(forwardPath).getRawQuery())
+                  .getBytes(StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException | java.time.DateTimeException | java.io.IOException e) {
+          return CompletableFuture.completedFuture(
+              HttpResponse.of(
+                  HttpStatus.BAD_REQUEST,
+                  MediaType.PLAIN_TEXT_UTF_8,
+                  "Invalid trace search request\n"));
+        }
+      }
       RequestHeadersBuilder requestHeadersBuilder =
-          RequestHeaders.builder(request.method(), forwardPath);
+          RequestHeaders.builder(traceDiscovery ? HttpMethod.GET : request.method(), forwardPath);
       copyRequestHeaders(request.headers(), requestHeadersBuilder);
       HttpRequest upstreamRequest =
           requestBody.length == 0
@@ -100,7 +133,20 @@ final class DashboardsGatewayService implements HttpService {
           .get(upstream)
           .execute(upstreamRequest)
           .aggregate()
-          .thenApply(response -> HttpResponse.of(response.headers(), response.content()))
+          .thenApply(
+              response -> {
+                if (traceSearch && response.status().isSuccess()) {
+                  try {
+                    return HttpResponse.of(
+                        response.status(),
+                        MediaType.JSON_UTF_8,
+                        TraceAnalyticsAdapter.response(response.contentUtf8()));
+                  } catch (java.io.IOException e) {
+                    throw new java.util.concurrent.CompletionException(e);
+                  }
+                }
+                return HttpResponse.of(response.headers(), response.content());
+              })
           .exceptionally(throwable -> gatewayErrorResponse(upstreamUri, throwable));
     } catch (Exception e) {
       return CompletableFuture.completedFuture(gatewayErrorResponse(upstreamUri, e));

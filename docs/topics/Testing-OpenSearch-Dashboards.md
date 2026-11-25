@@ -14,6 +14,76 @@ What is portable and repeatable from a clean checkout:
 - a precheck against Dashboards status and exact-name index resolution
 - full Dashboards E2E coverage for fixture ingest, data-view creation, Discover, and dashboard aggregations
 
+## Native OpenTelemetry trace demo
+
+The gateway adapter is an imported demo prototype. Remaining query translation,
+sort, completeness, and end-to-end verification work is tracked in
+[issue #76](https://github.com/kaldb/kaldb/issues/76).
+The application, Collector exports, dataset/indexer setup, and Grafana provisioning
+already live in the `kaldb_support` branch of
+[kaldb/opentelemetry-demo](https://github.com/kaldb/opentelemetry-demo/tree/kaldb_support/local/kaldb).
+Use that setup rather than duplicating it in this repository. The separate
+[OTLP receiver PR #55](https://github.com/kaldb/kaldb/pull/55) supplies `/v1/traces`;
+this gateway branch does not include that receiver implementation.
+
+The optional gateway adapter enables the **Trace analytics → Traces** list and native
+trace detail page, including the span timeline, service timing breakdown, payload,
+and span inspection. Searches and aggregations run against the existing KalDB
+`otel-demo-traces` dataset. OpenSearch continues to hold Dashboards saved objects;
+it does not need a copy of the spans or Data Prepper.
+
+First run the OpenTelemetry demo with its KalDB OTLP exporter and load generator.
+The KalDB preprocessor must provide `/v1/traces`, and `otel-demo-traces` must already
+contain spans. The running demo uses the OTLP-enabled KalDB image configured by
+the OpenTelemetry demo project; this gateway change does not add an OTLP receiver
+to the base KalDB image on this branch.
+
+Build and start the gateway, keeping any existing runtime/image overrides before
+the trace override in your Compose command:
+
+```bash
+docker compose -f docker-compose.yml \
+  -f config/docker-compose.trace-analytics.yaml build astra_dashboards_gateway
+docker compose -f docker-compose.yml \
+  -f config/docker-compose.trace-analytics.yaml up -d --no-deps astra_dashboards_gateway
+python3 scripts/verify-trace-analytics-demo.py
+```
+
+The verifier prints a direct trace URL. It exercises the same Dashboards HTTP
+routes as the installed 2.11.1 plugin, checks complete span retrieval and parent
+links across at least three services, validates timing units and span lookup,
+and checks that the backing OpenSearch cluster has no `otel*` indices. Pass
+`--trace-id ID` to inspect a particular trace or `--trace-group NAME` to select
+a different transaction. The default group is `user_browse_product`.
+
+Open `http://localhost:5601/app/observability-traces#/traces`, select a trace,
+and use **Timeline** or **Span list**. Click a timeline bar to inspect its span.
+`TRACE_ANALYTICS_DATASET` in the override enables the mapping from the plugin's
+`otel-v1-apm-span-*` index to an exact KalDB dataset. Leaving it unset preserves
+the gateway's ordinary routing. It must be an exact dataset name without wildcards.
+
+The adapter reuses `trace_id`, document `_id`, `parent_id`,
+`resource.service.name`, `_timesinceepoch`, `duration` (microseconds), and
+`status.code`. It returns the plugin's camel-case names, nanosecond durations,
+and nanosecond start-time sort values. The plugin sends search size in the URL;
+the adapter puts that limit into the KalDB search body so the timeline includes
+all spans, up to the plugin's 3,000-span limit.
+
+This is a trace-view demo, not a replacement for Data Prepper's full trace-group
+enrichment. Overview values and trace-group filtering use root spans. Filtering
+the trace list by a child service is not supported; service filters there match
+the root service. Service topology is not generated, so the separate service-map
+panel can show no matches. Source timestamps are preserved: clock skew in a
+producing service stretches the timeline. In the current astronomy demo the
+quote service can have a large clock offset; the verifier rejects skewed traces
+and defaults to a browse-product transaction that does not call that service.
+
+Gateway regression tests:
+
+```bash
+mvn -q -f contrib/dashboards-gateway/pom.xml test
+```
+
 ## Gateway base images
 
 `contrib/dashboards-gateway.Dockerfile` pins both Maven/Corretto and the Corretto runtime to
