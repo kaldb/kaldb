@@ -100,7 +100,8 @@ KalDB exposes OpenSearch-compatible APIs for query and ingest workflows, which h
 - Shared runtime defaults live in `config/config.yaml`.
 - Install JDK 25 LTS (Amazon Corretto is used in CI and Docker) and set `JAVA_HOME` to it.
 - Building and running KalDB requires Java 25; structured concurrency uses preview features,
-  so launch the server with `java --enable-preview -jar astra/target/astra.jar config/config.yaml`.
+  so launch the server with `S3_ENDPOINT=http://localhost:19090 java --enable-preview -jar astra/target/astra.jar config/config.yaml`
+  when using the Compose dependencies. If you change `S3_MOCK_PORT`, use that port in `S3_ENDPOINT`.
 
 ### Common commands
 

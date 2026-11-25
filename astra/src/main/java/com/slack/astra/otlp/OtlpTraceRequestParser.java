@@ -109,7 +109,7 @@ public final class OtlpTraceRequestParser {
 
   private static boolean isHex(String value) {
     for (int i = 0; i < value.length(); i++) {
-      if (Character.digit(value.charAt(i), 16) == -1) {
+      if (!HexFormat.isHexDigit(value.charAt(i))) {
         return false;
       }
     }

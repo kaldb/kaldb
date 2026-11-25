@@ -52,6 +52,9 @@ Resolve one routing key using header → configured default → `otel_traces`. U
 key for parsing, dataset rate limiting, and Kafka submission. Store it as the span's `service_name`
 and retain its producing service as `resource.service.name`. Consequently, the dataset's
 `serviceNamePattern` can equal the configured key or use `_all`.
+The existing limiter and producer select the first matching dataset in descending throughput order;
+a wildcard dataset can take precedence over an exact match with lower throughput. The header selects
+a routing key, not a dataset-name lookup, and does not change this matching order.
 
 Apply dataset rate limiting and submit through `BulkIngestKafkaProducer`. Charge at least one
 byte for each empty protobuf span. The handler uses Armeria's blocking executor through

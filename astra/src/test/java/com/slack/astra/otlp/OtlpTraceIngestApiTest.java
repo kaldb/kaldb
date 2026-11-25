@@ -385,6 +385,28 @@ class OtlpTraceIngestApiTest {
   }
 
   @Test
+  void rejectsJsonTraceIdsContainingNonAsciiHexDigitsWithoutIngesting() throws Exception {
+    for (String field : List.of("traceId", "spanId", "parentSpanId")) {
+      for (String digit : List.of("０", "Ｆ", "١")) {
+        String json =
+            """
+            {"resourceSpans":[{"scopeSpans":[{"spans":[{"%s":"%s"}]}]}]}
+            """
+                .formatted(field, digit.repeat(field.equals("traceId") ? 32 : 16));
+        assertResponse(
+            ingest(MediaType.JSON, json.getBytes(StandardCharsets.UTF_8)),
+            BAD_REQUEST.code(),
+            0,
+            0,
+            "Unable to parse OTLP trace request");
+      }
+    }
+    try (KafkaConsumer<String, byte[]> kafkaConsumer = getTestKafkaConsumer()) {
+      validateOffset(kafkaConsumer, 0);
+    }
+  }
+
+  @Test
   void rejectsUnsupportedContentType() throws Exception {
     AggregatedHttpResponse response =
         ingest(MediaType.PLAIN_TEXT_UTF_8, "{}".getBytes(StandardCharsets.UTF_8));

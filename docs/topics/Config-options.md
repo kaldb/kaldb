@@ -805,11 +805,18 @@ OpenTelemetry demo sets it to `otel-demo-traces` to match its provisioned trace 
 The parser sets each span's routing `service_name` to the selected dataset key and preserves the
 producing service separately as `resource.service.name`. Provision the dataset with `serviceNamePattern`
 equal to the selected key, or `_all`; different producing services can then share the trace dataset.
+Routing follows the matching precedence described below, including when the configured default is used.
 
 #### Request header override
 
-Set `X-KalDB-Dataset` to choose one existing dataset routing key for the entire request. The same
-key is used for rate limiting and Kafka routing. Header values must contain 1–256 letters, digits,
+Set `X-KalDB-Dataset` to choose one routing key for the entire request. The same key is used for
+rate limiting and Kafka routing. Both select the first matching dataset in descending throughput
+order, comparing the key with each dataset's `serviceNamePattern`. A wildcard pattern (`_all` or `*`)
+with higher throughput can take precedence over an exact-match dataset with lower throughput.
+The header does not look up a dataset by name or give exact matches priority. Use nonoverlapping
+patterns when a routing key must reach a dedicated dataset.
+
+Header values must contain 1–256 letters, digits,
 underscores, or hyphens, following the dataset-name rules. Blank, invalid, or repeated headers return
 HTTP 400 without writing spans; an explicit invalid override never falls back to another dataset.
 Dataset provisioning and existing rate limits still apply.

@@ -2,8 +2,9 @@
 
 # Traces
 
-Send traces to KalDB with OpenTelemetry, then use the Zipkin compatible API to search and render
-them in Grafana.
+Send traces to KalDB with OpenTelemetry, then open a known trace ID in Grafana through the Zipkin
+compatible API. The Zipkin service, span, and trace search endpoints return empty arrays; Grafana
+cannot discover traces through those endpoints.
 
 ## Sending traces with OpenTelemetry Collector
 
@@ -14,7 +15,9 @@ HTTP to the Collector; the Collector forwards traces to KalDB over HTTP.
 First provision a trace dataset and its Kafka partition assignments using the
 [manager API](API-manager.md). This example uses the routing key `otel_traces`; set the dataset's
 `serviceNamePattern` to `otel_traces` (or use an existing `_all` route). The exporter header selects
-an existing route and does not create a dataset.
+a routing key and does not create a dataset. Matching datasets are checked in descending throughput
+order, so a wildcard route with higher throughput can take precedence over an exact match. See
+[dataset routing](Config-options.md#request-header-override) before using overlapping routes.
 
 Save the following as `otel-collector.yaml`. It defines a complete trace pipeline, including a
 memory limiter, bounded batches, an in-memory export queue, and retries:
@@ -106,7 +109,7 @@ In order to render traces using the [Zipkin compatible API](API-zipkin.md), the 
 <deflist type="medium">
 <def title="_timesinceepoch">Epoch time in milliseconds</def>
 <def title="trace_id">Unique trace ID</def>
-<def title="service_name">String identifying producing service</def>
+<def title="service_name">Dataset routing key for OTLP spans; the producing service is preserved in resource.service.name</def>
 <def title="name">String identifying the span</def>
 <def title="duration">Duration in microseconds</def>
 </deflist>
