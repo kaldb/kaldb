@@ -814,12 +814,19 @@ underscores, or hyphens, following the dataset-name rules. Blank, invalid, or re
 HTTP 400 without writing spans; an explicit invalid override never falls back to another dataset.
 Dataset provisioning and existing rate limits still apply.
 
-For example, configure the Collector's OTLP/HTTP exporter:
+For example, configure the Collector's OTLP/HTTP exporter (named `otlphttp` in older Collectors):
 
 ```yaml
 exporters:
-  otlphttp/kaldb:
+  otlp_http/kaldb:
     endpoint: http://kaldb:8086
+    encoding: proto
+    compression: gzip
     headers:
       X-KalDB-Dataset: application-traces
 ```
+
+The exporter appends `/v1/traces` to the base endpoint. KalDB supports its default gzip request
+compression. See
+[Sending traces with OpenTelemetry Collector](Traces.md#sending-traces-with-opentelemetry-collector)
+for a complete receiver, processor, exporter, and service pipeline configuration.
