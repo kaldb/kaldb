@@ -153,7 +153,8 @@ public class ElasticsearchApiService {
     LOG.debug("Search request: {}", postBody);
 
     CurrentTraceContext currentTraceContext = Tracing.current().currentTraceContext();
-    try (var scope = new StructuredTaskScope<EsSearchResponse>()) {
+    try (var scope =
+        StructuredTaskScope.open(StructuredTaskScope.Joiner.<EsSearchResponse>awaitAll())) {
       List<StructuredTaskScope.Subtask<EsSearchResponse>> requestSubtasks =
           openSearchRequest.parseMultiSearchRequest(postBody).stream()
               .map((request) -> scope.fork(currentTraceContext.wrap(() -> doSearch(request))))

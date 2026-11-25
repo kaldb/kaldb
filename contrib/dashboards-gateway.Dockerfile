@@ -1,10 +1,10 @@
 # Pin multi-platform image digests so upstream rebuilds cannot silently change the toolchain or OS.
-FROM maven:3.10.0-amazoncorretto-21@sha256:f7ccf5b5013cab77ba7f9137f5ce2fb573eb29791069d6cdd9bc9c1486065946 AS build
+FROM maven:3-amazoncorretto-25@sha256:219984ceca321a578409b7eacc235837a299f96e3433246830df5d506c07dc77 AS build
 WORKDIR /work
 COPY . /work/
 RUN mvn -f /work/contrib/dashboards-gateway/pom.xml -DskipTests package
 
-FROM amazoncorretto:21-al2023@sha256:90100f194336ef2326f5efe1ee747395fd87d8210ad6d60463196aa0c4b0ad4e
+FROM amazoncorretto:25-al2023@sha256:d4b9047349107b5c5a3c67f89853c48a83d4c769d4196a03f675a4c365737f7b
 COPY --from=build /work/contrib/dashboards-gateway/target/tools-dashboards-gateway.jar /dashboards-gateway.jar
 # The pinned AL2023 image provides curl-minimal for the HTTP healthcheck.
 RUN curl --version

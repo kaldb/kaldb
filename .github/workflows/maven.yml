@@ -47,13 +47,14 @@ jobs:
             - 'benchmarks/**'
             - 'config/**'
             - 'pom.xml'
-    - name: Set up JDK 21
+            - 'contrib/dashboards-gateway/**'
+            - 'tools/loadgen/**'
+            - '.github/workflows/maven.yml'
+    - name: Set up JDK 25
       if: steps.filter.outputs.java == 'true'
       uses: actions/setup-java@v3
       with:
-        java-version: '21'
-        #  Currently, LTS versions of Eclipse Temurin (temurin) are cached on the GitHub Hosted Runners.
-        #  When temurin releases Java 21 we can start using that again
+        java-version: '25'
         distribution: 'corretto'
         cache: 'maven'
     - name: Ensure code is formatted
