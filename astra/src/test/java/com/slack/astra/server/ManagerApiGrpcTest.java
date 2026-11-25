@@ -1712,10 +1712,14 @@ public class ManagerApiGrpcTest {
                 .build());
     assertThat(deletedExistingDataset.getName()).isEqualTo(existingDatasetName);
 
-    ManagerApi.ListDatasetMetadataResponse listAfterDeleteResponse =
-        managerApiStub.listDatasetMetadata(
-            ManagerApi.ListDatasetMetadataRequest.newBuilder().build());
-    assertThat(listAfterDeleteResponse.getDatasetMetadataList()).isEmpty();
+    await()
+        .untilAsserted(
+            () -> {
+              ManagerApi.ListDatasetMetadataResponse listAfterDeleteResponse =
+                  managerApiStub.listDatasetMetadata(
+                      ManagerApi.ListDatasetMetadataRequest.newBuilder().build());
+              assertThat(listAfterDeleteResponse.getDatasetMetadataList()).isEmpty();
+            });
   }
 
   @Test
