@@ -3,7 +3,10 @@ package com.slack.astra.logstore.search;
 import static com.slack.astra.logstore.search.SearchResultUtils.fromValueProto;
 import static com.slack.astra.logstore.search.SearchResultUtils.toValueProto;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 
+import com.google.protobuf.ByteString;
+import com.slack.astra.logstore.LogMessage;
 import com.slack.astra.metadata.schema.FieldType;
 import com.slack.astra.proto.schema.Schema;
 import com.slack.astra.proto.service.AstraSearch;
@@ -17,8 +20,310 @@ import org.opensearch.index.query.QueryStringQueryBuilder;
 import org.opensearch.index.query.TermsQueryBuilder;
 import org.opensearch.search.aggregations.AggregationBuilder;
 import org.opensearch.search.aggregations.bucket.histogram.DateHistogramAggregationBuilder;
+import org.opensearch.search.aggregations.bucket.terms.MultiTermsAggregationBuilder;
+import org.opensearch.search.aggregations.bucket.terms.TermsAggregationBuilder;
 
 public class SearchResultUtilsTest {
+  @Test
+  public void shouldRejectZeroHitRequestWithoutAggregations() {
+    AstraSearch.SearchRequest searchRequest =
+        AstraSearch.SearchRequest.newBuilder()
+            .setDataset("test-data")
+            .setQuery("{\"match_all\":{}}")
+            .setStartTimeEpochMs(0)
+            .setEndTimeEpochMs(1)
+            .setHowMany(0)
+            .setAggregationJson("")
+            .build();
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> SearchResultUtils.fromSearchRequest(searchRequest))
+        .withMessage("Hits or aggregation should be requested.");
+  }
+
+  @Test
+  public void shouldRejectNegativeHitRequest() {
+    AstraSearch.SearchRequest searchRequest =
+        AstraSearch.SearchRequest.newBuilder()
+            .setDataset("test-data")
+            .setStartTimeEpochMs(0)
+            .setEndTimeEpochMs(1)
+            .setHowMany(-1)
+            .setAggregationJson("")
+            .build();
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> SearchResultUtils.fromSearchRequest(searchRequest))
+        .withMessage("hits requested should not be negative.");
+  }
+
+  /** Verifies negative from offsets are rejected before search planning. */
+  @Test
+  void shouldRejectNegativeFrom() {
+    AstraSearch.SearchRequest searchRequest =
+        AstraSearch.SearchRequest.newBuilder()
+            .setDataset("test-data")
+            .setStartTimeEpochMs(0)
+            .setEndTimeEpochMs(1)
+            .setHowMany(1)
+            .setStartFrom(-1)
+            .build();
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> SearchResultUtils.fromSearchRequest(searchRequest))
+        .withMessage("from should not be negative.");
+  }
+
+  /** Verifies overflowing from plus size windows are rejected. */
+  @Test
+  void shouldRejectFromPlusSizeOverflow() {
+    AstraSearch.SearchRequest searchRequest =
+        AstraSearch.SearchRequest.newBuilder()
+            .setDataset("test-data")
+            .setStartTimeEpochMs(0)
+            .setEndTimeEpochMs(1)
+            .setHowMany(2)
+            .setStartFrom(Integer.MAX_VALUE)
+            .build();
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> SearchResultUtils.fromSearchRequest(searchRequest))
+        .withMessage("from plus size is too large.");
+  }
+
+  /** Verifies large but non-overflowing result windows are rejected. */
+  @Test
+  void shouldRejectResultWindowAboveLimit() {
+    AstraSearch.SearchRequest searchRequest =
+        AstraSearch.SearchRequest.newBuilder()
+            .setDataset("test-data")
+            .setStartTimeEpochMs(0)
+            .setEndTimeEpochMs(1)
+            .setHowMany(1)
+            .setStartFrom(10_000)
+            .build();
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> SearchResultUtils.fromSearchRequest(searchRequest))
+        .withMessage("from plus size must be less than or equal to 10000.");
+  }
+
+  /** Verifies object, scalar, and _doc sort clauses are parsed into hit sort specs. */
+  @Test
+  void shouldParseHitSortSpecs() {
+    List<SearchQuery.SortFieldSpec> sortFieldSpecs =
+        SearchResultUtils.parseSortFieldSpecs(
+            """
+            [
+              {
+                "@timestamp": {
+                  "order": "desc",
+                  "unmapped_type": "boolean"
+                }
+              },
+              {
+                "SearchPhrase": {}
+              },
+              {
+                "WindowClientWidth": "desc"
+              },
+              {
+                "_doc": {
+                  "order": "desc"
+                }
+              }
+            ]
+            """);
+
+    assertThat(sortFieldSpecs)
+        .containsExactly(
+            new SearchQuery.SortFieldSpec("@timestamp", SearchQuery.SortDirection.DESC),
+            new SearchQuery.SortFieldSpec("SearchPhrase", SearchQuery.SortDirection.ASC),
+            new SearchQuery.SortFieldSpec("WindowClientWidth", SearchQuery.SortDirection.DESC));
+  }
+
+  /** Verifies blank or omitted sort JSON produces no requested sort fields. */
+  @Test
+  void shouldReturnEmptyHitSortSpecsForMissingSortJson() {
+    assertThat(SearchResultUtils.parseSortFieldSpecs(null)).isEmpty();
+    assertThat(SearchResultUtils.parseSortFieldSpecs("")).isEmpty();
+    assertThat(SearchResultUtils.parseSortFieldSpecs("   ")).isEmpty();
+    assertThat(SearchResultUtils.parseSortFieldSpecs("[]")).isEmpty();
+  }
+
+  /** Verifies omitted user sort still builds the internal stable sort fields. */
+  @Test
+  void shouldUseStableInternalSortFieldsWhenRequestOmitsSort() {
+    SearchQuery.HitSortPlan hitSortPlan = SearchQuery.HitSortPlan.fromRequested(List.of());
+
+    assertThat(hitSortPlan.requestedSortFields()).isEmpty();
+    assertThat(hitSortPlan.effectiveSortFields())
+        .containsExactly(
+            new SearchQuery.SortFieldSpec(
+                LogMessage.SystemField.TIME_SINCE_EPOCH.fieldName, SearchQuery.SortDirection.DESC),
+            new SearchQuery.SortFieldSpec(
+                LogMessage.SystemField.ID.fieldName, SearchQuery.SortDirection.ASC));
+  }
+
+  /** Verifies requested stable fields are not duplicated in the effective sort plan. */
+  @Test
+  void shouldNotDuplicateStableInternalSortFieldsAlreadyRequested() {
+    SearchQuery.SortFieldSpec requestedTimestampSort =
+        new SearchQuery.SortFieldSpec(
+            LogMessage.SystemField.TIME_SINCE_EPOCH.fieldName, SearchQuery.SortDirection.ASC);
+
+    SearchQuery.HitSortPlan hitSortPlan =
+        SearchQuery.HitSortPlan.fromRequested(List.of(requestedTimestampSort));
+
+    assertThat(hitSortPlan.requestedSortFields()).containsExactly(requestedTimestampSort);
+    assertThat(hitSortPlan.effectiveSortFields())
+        .containsExactly(
+            requestedTimestampSort,
+            new SearchQuery.SortFieldSpec(
+                LogMessage.SystemField.ID.fieldName, SearchQuery.SortDirection.ASC));
+  }
+
+  /** Verifies scalar and object single-sort forms parse to equivalent sort specs. */
+  @Test
+  void shouldParseSingleHitSortSpecForms() {
+    assertThat(SearchResultUtils.parseSortFieldSpecs("\"SearchPhrase\""))
+        .containsExactly(
+            new SearchQuery.SortFieldSpec("SearchPhrase", SearchQuery.SortDirection.ASC));
+    assertThat(
+            SearchResultUtils.parseSortFieldSpecs(
+                """
+                {
+                  "SearchPhrase": {
+                    "order": "asc"
+                  }
+                }
+                """))
+        .containsExactly(
+            new SearchQuery.SortFieldSpec("SearchPhrase", SearchQuery.SortDirection.ASC));
+  }
+
+  /** Verifies arrays can mix scalar, object, and textual sort direction clauses. */
+  @Test
+  void shouldParseMixedHitSortSpecForms() {
+    assertThat(
+            SearchResultUtils.parseSortFieldSpecs(
+                """
+                [
+                  "SearchPhrase",
+                  {
+                    "WindowClientWidth": {
+                      "order": "asc"
+                    }
+                  },
+                  {
+                    "CounterID": "desc"
+                  }
+                ]
+                """))
+        .containsExactly(
+            new SearchQuery.SortFieldSpec("SearchPhrase", SearchQuery.SortDirection.ASC),
+            new SearchQuery.SortFieldSpec("WindowClientWidth", SearchQuery.SortDirection.ASC),
+            new SearchQuery.SortFieldSpec("CounterID", SearchQuery.SortDirection.DESC));
+  }
+
+  /** Verifies _doc-only sorting is treated as a no-op. */
+  @Test
+  void shouldIgnoreDocOnlyHitSortSpec() {
+    assertThat(
+            SearchResultUtils.parseSortFieldSpecs(
+                """
+                [
+                  {
+                    "_doc": {
+                      "order": "desc"
+                    }
+                  }
+                ]
+                """))
+        .isEmpty();
+  }
+
+  /** Verifies user-requested _id sorting is rejected. */
+  @Test
+  void shouldRejectUserRequestedIdHitSortSpec() {
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> SearchResultUtils.parseSortFieldSpecs("[\"_id\"]"))
+        .withMessage("Sorting by _id is not supported.");
+  }
+
+  /** Verifies invalid sort JSON fails parsing. */
+  @Test
+  void shouldRejectInvalidHitSortJson() {
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> SearchResultUtils.parseSortFieldSpecs("{invalid-json"));
+  }
+
+  /** Verifies unsupported sort clause shapes are rejected. */
+  @Test
+  void shouldRejectUnsupportedHitSortClauseShape() {
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> SearchResultUtils.parseSortFieldSpecs("[123]"))
+        .withMessage("Unsupported sort clause: 123");
+  }
+
+  /** Verifies unsupported sort directions are rejected instead of defaulting to ascending. */
+  @Test
+  void shouldRejectInvalidHitSortDirections() {
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> SearchResultUtils.parseSortFieldSpecs("[{\"SearchPhrase\":\"down\"}]"))
+        .withMessage("Unsupported sort direction for field SearchPhrase: down");
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> SearchResultUtils.parseSortFieldSpecs("[{\"SearchPhrase\":123}]"))
+        .withMessage("Unsupported sort direction for field SearchPhrase: 123");
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                SearchResultUtils.parseSortFieldSpecs(
+                    "[{\"SearchPhrase\":{\"order\":\"descending\"}}]"))
+        .withMessage("Unsupported sort direction for field SearchPhrase: descending");
+  }
+
+  /** Verifies unsupported sort options and _score sorting are rejected. */
+  @Test
+  void shouldRejectUnsupportedHitSortOptionsAndScoreSort() {
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                SearchResultUtils.parseSortFieldSpecs(
+                    "[{\"SearchPhrase\":{\"order\":\"asc\",\"missing\":\"_last\"}}]"))
+        .withMessage("Unsupported sort option for field SearchPhrase: missing");
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> SearchResultUtils.parseSortFieldSpecs("[\"_score\"]"))
+        .withMessage("Sorting by _score is not supported.");
+  }
+
+  /** Verifies an unset wire sort value is rejected instead of coerced to null. */
+  @Test
+  void shouldRejectUnsetHitSortValueProto() {
+    AstraSearch.HitSortValue unsetSortValue = AstraSearch.HitSortValue.newBuilder().build();
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> SearchResultUtils.fromHitSortValueProto(unsetSortValue))
+        .withMessageContaining("HitSortValue proto has no supported value set");
+  }
+
+  @Test
+  void shouldUsePrimitiveComparisonForSameKindDoubleSortValues() {
+    assertThat(HitSortValue.compareAscending(HitSortValue.of(-0.0D), HitSortValue.of(0.0D)))
+        .isNegative();
+  }
+
+  @Test
+  void shouldPreserveFloatSortValueForResponseRendering() {
+    HitSortValue floatSortValue = HitSortValue.of(0.1f);
+
+    assertThat(floatSortValue.responseValue()).isEqualTo(0.1f);
+    assertThat(
+            SearchResultUtils.fromHitSortValueProto(
+                    SearchResultUtils.toHitSortValueProto(floatSortValue))
+                .responseValue())
+        .isEqualTo(0.1f);
+  }
 
   @Test
   public void shouldParseAggIntoAggregationFactoriesBuilder() {
@@ -64,9 +369,101 @@ public class SearchResultUtilsTest {
   }
 
   @Test
+  public void shouldParseMultipleTopLevelAggsIntoAggregationFactoriesBuilder() {
+    AstraSearch.SearchRequest searchRequest =
+        AstraSearch.SearchRequest.newBuilder()
+            .setAggregationJson(
+                """
+                {
+                  "over_time": {
+                    "date_histogram": {
+                      "field": "_timesinceepoch",
+                      "interval": "10m",
+                      "min_doc_count": 0,
+                      "extended_bounds": {
+                        "min": 1676498801027,
+                        "max": 1676500240688
+                      },
+                      "format": "epoch_millis"
+                    },
+                    "aggs": {}
+                  },
+                  "services": {
+                    "terms": {
+                      "field": "service_name",
+                      "size": 10,
+                      "min_doc_count": 1
+                    }
+                  }
+                }""")
+            .build();
+
+    SearchQuery output = SearchResultUtils.fromSearchRequest(searchRequest);
+    assertThat(output.aggregatorFactoriesBuilder).isNotNull();
+    assertThat(output.aggregatorFactoriesBuilder.getAggregatorFactories()).hasSize(2);
+
+    Collection<AggregationBuilder> aggregatorFactories =
+        output.aggregatorFactoriesBuilder.getAggregatorFactories();
+    assertThat(aggregatorFactories)
+        .anyMatch(
+            aggregationBuilder ->
+                aggregationBuilder.getName().equals("over_time")
+                    && aggregationBuilder instanceof DateHistogramAggregationBuilder);
+    assertThat(aggregatorFactories)
+        .anyMatch(
+            aggregationBuilder ->
+                aggregationBuilder.getName().equals("services")
+                    && aggregationBuilder instanceof TermsAggregationBuilder);
+  }
+
+  /** Verifies multi_terms requests are parsed into the native OpenSearch aggregation builder. */
+  @Test
+  public void shouldParseMultiTermsAggregationWithFieldAndScriptSources() {
+    AstraSearch.SearchRequest searchRequest =
+        AstraSearch.SearchRequest.newBuilder()
+            .setAggregationJson(
+                """
+                {
+                  "dimensions": {
+                    "multi_terms": {
+                      "terms": [
+                        {
+                          "field": "country"
+                        },
+                        {
+                          "script": {
+                            "source": "doc['browser'].value"
+                          },
+                          "value_type": "string"
+                        }
+                      ],
+                      "size": 5,
+                      "order": {
+                        "_count": "desc"
+                      }
+                    }
+                  }
+                }""")
+            .build();
+
+    SearchQuery output = SearchResultUtils.fromSearchRequest(searchRequest);
+    assertThat(output.aggregatorFactoriesBuilder).isNotNull();
+    assertThat(output.aggregatorFactoriesBuilder.getAggregatorFactories()).hasSize(1);
+
+    AggregationBuilder aggregationBuilder =
+        output.aggregatorFactoriesBuilder.getAggregatorFactories().iterator().next();
+    assertThat(aggregationBuilder).isInstanceOf(MultiTermsAggregationBuilder.class);
+    MultiTermsAggregationBuilder multiTermsAggregationBuilder =
+        (MultiTermsAggregationBuilder) aggregationBuilder;
+    assertThat(multiTermsAggregationBuilder.getName()).isEqualTo("dimensions");
+    assertThat(multiTermsAggregationBuilder.size()).isEqualTo(5);
+  }
+
+  @Test
   public void shouldParseBasicMustNotQueryIntoQueryBuilder() {
     AstraSearch.SearchRequest searchRequest =
         AstraSearch.SearchRequest.newBuilder()
+            .setHowMany(1)
             .setQuery(
                 """
             {
@@ -95,6 +492,7 @@ public class SearchResultUtilsTest {
   public void shouldParseMustNotTermsQueryIntoQueryBuilder() {
     AstraSearch.SearchRequest searchRequest =
         AstraSearch.SearchRequest.newBuilder()
+            .setHowMany(1)
             .setQuery(
                 """
             {
@@ -127,6 +525,7 @@ public class SearchResultUtilsTest {
   public void shouldParseBasicFilterQueryIntoQueryBuilder() {
     AstraSearch.SearchRequest searchRequest =
         AstraSearch.SearchRequest.newBuilder()
+            .setHowMany(1)
             .setQuery(
                 """
             {
@@ -155,6 +554,7 @@ public class SearchResultUtilsTest {
   public void shouldParseFilterTermsQueryIntoQueryBuilder() {
     AstraSearch.SearchRequest searchRequest =
         AstraSearch.SearchRequest.newBuilder()
+            .setHowMany(1)
             .setQuery(
                 """
             {
@@ -187,6 +587,7 @@ public class SearchResultUtilsTest {
   public void shouldParseBasicMustQueryIntoQueryBuilder() {
     AstraSearch.SearchRequest searchRequest =
         AstraSearch.SearchRequest.newBuilder()
+            .setHowMany(1)
             .setQuery(
                 """
             {
@@ -215,6 +616,7 @@ public class SearchResultUtilsTest {
   public void shouldParseMustTermsQueryIntoQueryBuilder() {
     AstraSearch.SearchRequest searchRequest =
         AstraSearch.SearchRequest.newBuilder()
+            .setHowMany(1)
             .setQuery(
                 """
             {
@@ -247,6 +649,7 @@ public class SearchResultUtilsTest {
   public void shouldParseBasicShouldQueryIntoQueryBuilder() {
     AstraSearch.SearchRequest searchRequest =
         AstraSearch.SearchRequest.newBuilder()
+            .setHowMany(1)
             .setQuery(
                 """
             {
@@ -275,6 +678,7 @@ public class SearchResultUtilsTest {
   public void shouldParseShouldTermsQueryIntoQueryBuilder() {
     AstraSearch.SearchRequest searchRequest =
         AstraSearch.SearchRequest.newBuilder()
+            .setHowMany(1)
             .setQuery(
                 """
             {
@@ -307,6 +711,7 @@ public class SearchResultUtilsTest {
   public void shouldParseNonBoolQueryIntoQueryBuilder() {
     AstraSearch.SearchRequest searchRequest =
         AstraSearch.SearchRequest.newBuilder()
+            .setHowMany(1)
             .setQuery(
                 """
             {
@@ -348,9 +753,12 @@ public class SearchResultUtilsTest {
     assertThat(fromValueProto(toValueProto(null))).isEqualTo(null);
     assertThat(fromValueProto(toValueProto(1))).isEqualTo(1);
     assertThat(fromValueProto(toValueProto(2L))).isEqualTo(2L);
+    assertThat(fromValueProto(toValueProto(3F))).isEqualTo(3D);
     assertThat(fromValueProto(toValueProto(3D))).isEqualTo(3D);
     assertThat(fromValueProto(toValueProto("4"))).isEqualTo("4");
     assertThat(fromValueProto(toValueProto(false))).isEqualTo(false);
+    assertThat(fromValueProto(toValueProto(ByteString.copyFrom(new byte[] {0, 1, -1}))))
+        .isEqualTo(ByteString.copyFrom(new byte[] {0, 1, -1}));
     assertThat(fromValueProto(toValueProto(Map.of("1", 2, "3", false))))
         .isEqualTo(Map.of("1", 2, "3", false));
     assertThat(fromValueProto(toValueProto(List.of("1", 2, 3D, false))))

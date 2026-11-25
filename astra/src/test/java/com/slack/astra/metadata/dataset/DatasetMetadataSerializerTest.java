@@ -18,8 +18,7 @@ public class DatasetMetadataSerializerTest {
   public void testDatasetMetadataSerializer() throws InvalidProtocolBufferException {
     final Instant partitionStart = Instant.now();
     final Instant partitionEnd = Instant.now().plus(1, ChronoUnit.DAYS);
-    final String partitionName = "partitionName";
-    final List<String> partitionList = List.of(partitionName);
+    final List<String> partitionList = List.of("1");
 
     final String name = "testDataset";
     final String owner = "testOwner";
@@ -44,12 +43,26 @@ public class DatasetMetadataSerializerTest {
   }
 
   @Test
+  public void testDatasetMetadataSerializerWithDedicatedPartitions()
+      throws InvalidProtocolBufferException {
+    final DatasetMetadata datasetMetadata =
+        new DatasetMetadata(
+            "testDataset", "testOwner", 2000, Collections.emptyList(), "serviceName", true);
+
+    String serializedDatasetMetadata = serDe.toJsonStr(datasetMetadata);
+    assertThat(serializedDatasetMetadata).isNotEmpty();
+
+    DatasetMetadata deserializedDatasetMetadata = serDe.fromJsonStr(serializedDatasetMetadata);
+    assertThat(deserializedDatasetMetadata).isEqualTo(datasetMetadata);
+    assertThat(deserializedDatasetMetadata.isUsingDedicatedPartitions()).isTrue();
+  }
+
+  @Test
   public void testDatasetMetadataSerializerWithServiceNames()
       throws InvalidProtocolBufferException {
     final Instant partitionStart = Instant.now();
     final Instant partitionEnd = Instant.now().plus(1, ChronoUnit.DAYS);
-    final String partitionName = "partitionName";
-    final List<String> partitionList = List.of(partitionName);
+    final List<String> partitionList = List.of("1");
 
     final String name = "testDataset";
     final String owner = "testOwner";
@@ -80,8 +93,7 @@ public class DatasetMetadataSerializerTest {
     final Instant partitionEnd1 = Instant.now().plus(1, ChronoUnit.DAYS);
     final Instant partitionStart2 = partitionEnd1.plus(1, ChronoUnit.MILLIS);
     final Instant partitionEnd2 = partitionStart2.plus(1, ChronoUnit.DAYS);
-    final String partitionName = "partitionName1";
-    final List<String> partitionList = List.of(partitionName);
+    final List<String> partitionList = List.of("1");
 
     final String name = "testDataset";
     final String owner = "testOwner";
@@ -147,8 +159,7 @@ public class DatasetMetadataSerializerTest {
   public void testDatasetPartitionMetadata() {
     final Instant start = Instant.now();
     final Instant end = Instant.now().plus(1, ChronoUnit.DAYS);
-    final String name = "partitionName";
-    final List<String> list = List.of(name);
+    final List<String> list = List.of("1");
 
     final DatasetPartitionMetadata datasetPartitionMetadata =
         new DatasetPartitionMetadata(start.toEpochMilli(), end.toEpochMilli(), list);
@@ -166,5 +177,23 @@ public class DatasetMetadataSerializerTest {
     assertThat(datasetPartitionMetadataFromProto.startTimeEpochMs).isEqualTo(start.toEpochMilli());
     assertThat(datasetPartitionMetadataFromProto.endTimeEpochMs).isEqualTo(end.toEpochMilli());
     assertThat(datasetPartitionMetadataFromProto.getPartitions()).isEqualTo(list);
+  }
+
+  @Test
+  public void testDatasetPartitionMetadataRejectsNonNumericProtoValues() {
+    Throwable invalidPartitionId =
+        catchThrowable(
+            () ->
+                DatasetPartitionMetadata.fromDatasetPartitionMetadataProto(
+                    Metadata.DatasetPartitionMetadata.newBuilder()
+                        .setStartTimeEpochMs(100)
+                        .setEndTimeEpochMs(200)
+                        .addPartitions("partition-a")
+                        .build()));
+
+    assertThat(invalidPartitionId).isInstanceOf(IllegalArgumentException.class);
+    assertThat(invalidPartitionId)
+        .hasMessageContaining(
+            "partitions must contain only canonical non-negative integer partition IDs");
   }
 }

@@ -98,7 +98,7 @@ public class RecoveryChunkManagerTest {
     metricsRegistry = new SimpleMeterRegistry();
     // create an S3 client.
     s3AsyncClient = S3TestUtils.createS3CrtClient(S3_MOCK_EXTENSION.getServiceEndpoint());
-    blobStore = new BlobStore(s3AsyncClient, S3_TEST_BUCKET);
+    blobStore = new BlobStore(s3AsyncClient, S3_TEST_BUCKET, "");
 
     localZkServer = new TestingServer();
     localZkServer.start();
@@ -202,6 +202,7 @@ public class RecoveryChunkManagerTest {
             0,
             MAX_TIME,
             10,
+            0,
             Collections.emptyList(),
             QueryBuilderUtil.generateQueryBuilder("Message1", 0L, MAX_TIME),
             null,
@@ -244,6 +245,7 @@ public class RecoveryChunkManagerTest {
                         0,
                         MAX_TIME,
                         10,
+                        0,
                         Collections.emptyList(),
                         QueryBuilderUtil.generateQueryBuilder("Message101", 0L, MAX_TIME),
                         null,
@@ -274,6 +276,7 @@ public class RecoveryChunkManagerTest {
                         0,
                         MAX_TIME,
                         10,
+                        0,
                         Collections.emptyList(),
                         QueryBuilderUtil.generateQueryBuilder("Message102", 0L, MAX_TIME),
                         null,
@@ -347,6 +350,7 @@ public class RecoveryChunkManagerTest {
             0,
             TemporaryLogStoreAndSearcherExtension.MAX_TIME,
             10,
+            0,
             Collections.emptyList(),
             QueryBuilderUtil.generateQueryBuilder(searchString, 0L, MAX_TIME),
             null,
@@ -355,15 +359,14 @@ public class RecoveryChunkManagerTest {
 
     assertThat(result.hits.size()).isEqualTo(expectedHitCount);
 
-    // Special case: if we're expecting this search to have no hits then it won't have any
-    // snapshots
-    // or replicas either
+    // Special case: if the search has no hits then it requested no logical snapshot coverage.
+    // Otherwise one snapshot was requested and fulfilled.
     if (expectedHitCount == 0) {
-      assertThat(result.totalSnapshots).isEqualTo(0);
-      assertThat(result.snapshotsWithReplicas).isEqualTo(0);
+      assertThat(result.requestedSnapshots).isEqualTo(0);
+      assertThat(result.fulfilledSnapshots).isEqualTo(0);
     } else {
-      assertThat(result.totalSnapshots).isEqualTo(1);
-      assertThat(result.snapshotsWithReplicas).isEqualTo(1);
+      assertThat(result.requestedSnapshots).isEqualTo(1);
+      assertThat(result.fulfilledSnapshots).isEqualTo(1);
     }
   }
 
@@ -420,7 +423,7 @@ public class RecoveryChunkManagerTest {
   @Test
   public void testAddMessagesWithFailedRollOverStopsIngestion() throws Exception {
     // Use a non-existent bucket to induce roll-over failure.
-    initChunkManager(new BlobStore(s3AsyncClient, "fakebucket"));
+    initChunkManager(new BlobStore(s3AsyncClient, "fakebucket", ""));
 
     int offset = 1;
 

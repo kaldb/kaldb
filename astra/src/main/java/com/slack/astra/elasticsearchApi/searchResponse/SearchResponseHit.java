@@ -1,14 +1,12 @@
 package com.slack.astra.elasticsearchApi.searchResponse;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.google.common.collect.ImmutableList;
-import com.google.protobuf.ByteString;
 import com.slack.astra.logstore.LogMessage;
 import com.slack.astra.logstore.LogWireMessage;
 import com.slack.astra.util.JsonUtil;
 import java.io.IOException;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -33,8 +31,9 @@ public class SearchResponseHit {
   @JsonProperty("_source")
   private final Map<String, Object> source;
 
+  @JsonInclude(JsonInclude.Include.NON_NULL)
   @JsonProperty("sort")
-  private List<Long> sort;
+  private final List<Object> sort;
 
   public SearchResponseHit(
       String index,
@@ -43,7 +42,7 @@ public class SearchResponseHit {
       String score,
       Instant timestamp,
       Map<String, Object> source,
-      List<Long> sort) {
+      List<Object> sort) {
     this.index = index;
     this.type = type;
     this.id = id;
@@ -77,7 +76,7 @@ public class SearchResponseHit {
     return source;
   }
 
-  public List<Long> getSort() {
+  public List<Object> getSort() {
     return sort;
   }
 
@@ -88,7 +87,7 @@ public class SearchResponseHit {
     private Instant timestamp;
     private String score;
     private Map<String, Object> source = new HashMap<>();
-    private List<Long> sort = new ArrayList<>();
+    private List<Object> sort;
 
     public Builder index(String index) {
       this.index = index;
@@ -120,7 +119,7 @@ public class SearchResponseHit {
       return this;
     }
 
-    public Builder sort(List<Long> sort) {
+    public Builder sort(List<Object> sort) {
       this.sort = sort;
       return this;
     }
@@ -131,8 +130,10 @@ public class SearchResponseHit {
     }
   }
 
-  public static SearchResponseHit fromByteString(ByteString byteString) throws IOException {
-    LogWireMessage hit = JsonUtil.read(byteString.toStringUtf8(), LogWireMessage.class);
+  /** Builds a response hit using sort values produced during Lucene collection. */
+  public static SearchResponseHit fromJsonString(String messageJson, List<Object> sortValues)
+      throws IOException {
+    LogWireMessage hit = JsonUtil.read(messageJson, LogWireMessage.class);
     LogMessage message = LogMessage.fromWireMessage(hit);
 
     return new Builder()
@@ -141,7 +142,7 @@ public class SearchResponseHit {
         .id(message.getId())
         .timestamp(message.getTimestamp())
         .source(message.getSource())
-        .sort(ImmutableList.of(message.getTimestamp().toEpochMilli()))
+        .sort(sortValues)
         .build();
   }
 }

@@ -159,6 +159,7 @@ public class RecoveryChunkImplTest {
               0,
               MAX_TIME,
               10,
+              0,
               Collections.emptyList(),
               QueryBuilderUtil.generateQueryBuilder("*:*", 0L, MAX_TIME),
               null,
@@ -170,6 +171,7 @@ public class RecoveryChunkImplTest {
               0,
               MAX_TIME,
               10,
+              0,
               Collections.emptyList(),
               QueryBuilderUtil.generateQueryBuilder("Message1", 0L, MAX_TIME),
               null,
@@ -182,6 +184,7 @@ public class RecoveryChunkImplTest {
                   0,
                   MAX_TIME,
                   10,
+                  0,
                   Collections.emptyList(),
                   QueryBuilderUtil.generateQueryBuilder("Message*", 0L, MAX_TIME),
                   null,
@@ -308,6 +311,7 @@ public class RecoveryChunkImplTest {
                           startTimeMs,
                           endTimeMs,
                           10,
+                          0,
                           Collections.emptyList(),
                           QueryBuilderUtil.generateQueryBuilder(
                               searchString, startTimeMs, endTimeMs),
@@ -340,6 +344,7 @@ public class RecoveryChunkImplTest {
                   0,
                   MAX_TIME,
                   10,
+                  0,
                   Collections.emptyList(),
                   QueryBuilderUtil.generateQueryBuilder("Message1", 0L, MAX_TIME),
                   null,
@@ -410,6 +415,7 @@ public class RecoveryChunkImplTest {
                   0,
                   MAX_TIME,
                   10,
+                  0,
                   Collections.emptyList(),
                   QueryBuilderUtil.generateQueryBuilder("Message1", 0L, MAX_TIME),
                   null,
@@ -426,6 +432,7 @@ public class RecoveryChunkImplTest {
                   0,
                   MAX_TIME,
                   10,
+                  0,
                   Collections.emptyList(),
                   QueryBuilderUtil.generateQueryBuilder("Message1", 0L, MAX_TIME),
                   null,
@@ -620,6 +627,7 @@ public class RecoveryChunkImplTest {
               0,
               MAX_TIME,
               10,
+              0,
               Collections.emptyList(),
               QueryBuilderUtil.generateQueryBuilder("Message1", 0L, MAX_TIME),
               null,
@@ -640,7 +648,7 @@ public class RecoveryChunkImplTest {
 
       S3AsyncClient s3AsyncClient =
           S3TestUtils.createS3CrtClient(S3_MOCK_EXTENSION.getServiceEndpoint());
-      BlobStore blobStore = new BlobStore(s3AsyncClient, bucket);
+      BlobStore blobStore = new BlobStore(s3AsyncClient, bucket, "");
 
       // Snapshot to S3 without creating the s3 bucket.
       assertThat(chunk.snapshotToS3(blobStore)).isFalse();
@@ -670,6 +678,7 @@ public class RecoveryChunkImplTest {
               0,
               MAX_TIME,
               10,
+              0,
               Collections.emptyList(),
               QueryBuilderUtil.generateQueryBuilder("Message1", 0L, MAX_TIME),
               null,
@@ -690,7 +699,7 @@ public class RecoveryChunkImplTest {
       S3AsyncClient s3AsyncClient =
           S3TestUtils.createS3CrtClient(S3_MOCK_EXTENSION.getServiceEndpoint());
       s3AsyncClient.createBucket(CreateBucketRequest.builder().bucket(bucket).build()).get();
-      BlobStore blobStore = new BlobStore(s3AsyncClient, bucket);
+      BlobStore blobStore = new BlobStore(s3AsyncClient, bucket, "");
 
       // Snapshot to S3
       assertThat(chunk.snapshotToS3(blobStore)).isTrue();

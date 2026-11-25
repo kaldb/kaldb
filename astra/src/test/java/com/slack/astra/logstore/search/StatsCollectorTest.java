@@ -7,6 +7,7 @@ import static com.slack.astra.logstore.LuceneIndexStoreImpl.REFRESHES_TIMER;
 import static com.slack.astra.testlib.MessageUtil.TEST_DATASET_NAME;
 import static com.slack.astra.testlib.MetricsUtil.getCount;
 import static com.slack.astra.testlib.MetricsUtil.getTimerCount;
+import static com.slack.astra.testlib.TemporaryLogStoreAndSearcherExtension.search;
 import static com.slack.astra.util.AggregatorFactoriesUtil.createGenericDateHistogramAggregatorFactoriesBuilder;
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -47,7 +48,8 @@ public class StatsCollectorTest {
     strictLogStore.logStore.refresh();
 
     SearchResult<LogMessage> allIndexItems =
-        strictLogStore.logSearcher.search(
+        search(
+            strictLogStore.logSearcher,
             TEST_DATASET_NAME,
             0,
             QueryBuilderUtil.generateQueryBuilder(
@@ -57,7 +59,8 @@ public class StatsCollectorTest {
 
     assertThat(allIndexItems.hits.size()).isEqualTo(0);
 
-    InternalDateHistogram dateHistogram = (InternalDateHistogram) allIndexItems.internalAggregation;
+    InternalDateHistogram dateHistogram =
+        (InternalDateHistogram) allIndexItems.internalAggregations.get("1");
     assertThat(Objects.requireNonNull(dateHistogram).getBuckets().size()).isEqualTo(5);
     for (InternalDateHistogram.Bucket bucket : Objects.requireNonNull(dateHistogram).getBuckets()) {
       assertThat(bucket.getDocCount()).isEqualTo(1);

@@ -157,6 +157,9 @@ message DatasetMetadata {
 
   // either same as name or a special value _all or * which matches all services
   string service_name_pattern = 5;
+
+  // True if this dataset requires dedicated partitions when auto assigning.
+  bool using_dedicated_partitions = 6;
 }
 
 message HpaMetricMetadata {
@@ -265,4 +268,12 @@ message RedactedFieldMetadata {
   int64 start_time_epoch_ms = 3;
   // End or latest timestamp of the redaction window
   int64 end_time_epoch_ms = 4;
+}
+
+message PartitionMetadata {
+  // Numeric-only partition identifier; allocator ordering compares this as an integer.
+  string partition_id = 1;
+  // Maximum provisionable throughput for this partition, in bytes per second. Assignment planning
+  // and validation treat this as a hard capacity limit.
+  int64 max_capacity = 2;
 }

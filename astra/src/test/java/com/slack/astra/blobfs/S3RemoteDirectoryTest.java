@@ -18,7 +18,7 @@ class S3RemoteDirectoryTest {
     String chunkId = "chunkId";
     String bucketName = "bucketName";
     S3AsyncClient s3AsyncClient = mock(S3AsyncClient.class);
-    BlobStore blobStore = spy(new BlobStore(s3AsyncClient, bucketName));
+    BlobStore blobStore = spy(new BlobStore(s3AsyncClient, bucketName, ""));
 
     doReturn(List.of("foo/bar.example")).when(blobStore).listFiles(any());
 

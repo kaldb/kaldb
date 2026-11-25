@@ -1,0 +1,2 @@
+{"search_type":"query_then_fetch","ignore_unavailable":true,"index":"test"}
+{"size":500,"query":{"bool":{"must":[],"filter":[{"match_all":{}},{"range":{"@timestamp":{"gte":"now-3h","lte":"now","format":"strict_date_optional_time"}}}],"should":[],"must_not":[]}},"sort":[{"@timestamp":{"order":"desc","unmapped_type":"boolean"}}],"aggs":{}}

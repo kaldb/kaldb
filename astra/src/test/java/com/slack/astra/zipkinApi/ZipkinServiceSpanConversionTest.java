@@ -4,7 +4,11 @@ import static com.slack.astra.testlib.MessageUtil.TEST_DATASET_NAME;
 import static com.slack.astra.testlib.MessageUtil.TEST_MESSAGE_TYPE;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.MapperFeature;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.slack.astra.logstore.LogMessage;
 import com.slack.astra.logstore.LogWireMessage;
 import java.time.Instant;
@@ -17,6 +21,14 @@ import org.assertj.core.util.Lists;
 import org.junit.jupiter.api.Test;
 
 public class ZipkinServiceSpanConversionTest {
+  private static final ObjectMapper objectMapper =
+      JsonMapper.builder()
+          // sort alphabetically for easier test asserts
+          .configure(MapperFeature.SORT_PROPERTIES_ALPHABETICALLY, true)
+          // don't serialize null values or empty maps
+          .serializationInclusion(JsonInclude.Include.NON_EMPTY)
+          .build();
+
   private static LogWireMessage makeWireMessageForSpans(
       String id,
       Instant ts,
@@ -60,15 +72,21 @@ public class ZipkinServiceSpanConversionTest {
     Instant time = Instant.now();
     List<LogWireMessage> messages = generateLogWireMessagesForOneTrace(time, 2, "1");
 
+    List<ZipkinSpanResponse> spans = TraceFetcher.convertLogWireMessageToZipkinSpan(messages);
+    String actualOutput = objectMapper.writeValueAsString(spans);
+
     // follows output format from https://zipkin.io/zipkin-api/#/default/get_trace__traceId_
-    String output =
+    String expectedOutput =
         String.format(
             "[{\"duration\":1,\"id\":\"1\",\"name\":\"Trace1\",\"remoteEndpoint\":{\"serviceName\":\"service1\"},\"timestamp\":%d,\"traceId\":\"1\"},{\"duration\":2,\"id\":\"2\",\"name\":\"Trace2\",\"parentId\":\"1\",\"remoteEndpoint\":{\"serviceName\":\"service1\"},\"timestamp\":%d,\"traceId\":\"1\"}]",
-            ZipkinService.convertToMicroSeconds(time.plusSeconds(1)),
-            ZipkinService.convertToMicroSeconds(time.plusSeconds(2)));
-    assertThat(ZipkinService.convertLogWireMessageToZipkinSpan(messages)).isEqualTo(output);
+            TraceFetcher.convertToMicroSeconds(time.plusSeconds(1)),
+            TraceFetcher.convertToMicroSeconds(time.plusSeconds(2)));
+    assertThat(actualOutput).isEqualTo(expectedOutput);
 
-    assertThat(ZipkinService.convertLogWireMessageToZipkinSpan(new ArrayList<>())).isEqualTo("[]");
+    assertThat(
+            objectMapper.writeValueAsString(
+                TraceFetcher.convertLogWireMessageToZipkinSpan(new ArrayList<>())))
+        .isEqualTo("[]");
   }
 
   @Test
@@ -83,11 +101,14 @@ public class ZipkinServiceSpanConversionTest {
         makeWireMessageForSpans("na", time, "na", Optional.empty(), (long) duration, "na", "na");
     messages = Lists.newArrayList(logWireMessageInt, logWireMessageWithLong);
 
+    List<ZipkinSpanResponse> spans = TraceFetcher.convertLogWireMessageToZipkinSpan(messages);
+    String actualOutput = objectMapper.writeValueAsString(spans);
+
     // follows output format from https://zipkin.io/zipkin-api/#/default/get_trace__traceId_
-    String output =
+    String expectedOutput =
         String.format(
             "[{\"duration\":10,\"id\":\"na\",\"name\":\"na\",\"remoteEndpoint\":{\"serviceName\":\"na\"},\"timestamp\":%d,\"traceId\":\"na\"},{\"duration\":10,\"id\":\"na\",\"name\":\"na\",\"remoteEndpoint\":{\"serviceName\":\"na\"},\"timestamp\":%d,\"traceId\":\"na\"}]",
-            ZipkinService.convertToMicroSeconds(time), ZipkinService.convertToMicroSeconds(time));
-    assertThat(ZipkinService.convertLogWireMessageToZipkinSpan(messages)).isEqualTo(output);
+            TraceFetcher.convertToMicroSeconds(time), TraceFetcher.convertToMicroSeconds(time));
+    assertThat(actualOutput).isEqualTo(expectedOutput);
   }
 }

@@ -28,7 +28,7 @@ class S3IndexInputTest {
 
   @Test
   public void shouldPageInContents() throws IOException {
-    BlobStore blobStore = spy(new BlobStore(s3Client, TEST_BUCKET));
+    BlobStore blobStore = spy(new BlobStore(s3Client, TEST_BUCKET, ""));
     String resourceDescription = "resource";
     String chunkId = UUID.randomUUID().toString();
 

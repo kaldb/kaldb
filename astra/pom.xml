@@ -152,6 +152,12 @@
             <version>${curator.version}</version>
         </dependency>
 
+      <dependency>
+        <groupId>commons-codec</groupId>
+        <artifactId>commons-codec</artifactId>
+        <version>1.17.0</version>
+      </dependency>
+
         <!-- Lucene dependencies -->
         <dependency>
             <groupId>org.apache.lucene</groupId>
@@ -357,7 +363,7 @@
         <dependency>
             <groupId>software.amazon.awssdk.crt</groupId>
             <artifactId>aws-crt</artifactId>
-            <version>0.38.5</version>
+            <version>0.39.4</version>
         </dependency>
         <dependency>
             <groupId>software.amazon.awssdk</groupId>
@@ -568,7 +574,7 @@
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>3.14.0</version>
                 <configuration>
-                    <compilerVersion>${javac.target}</compilerVersion>
+                    <release>${javac.target}</release>
                     <source>${javac.target}</source>
                     <testSource>${javac.target}</testSource>
                     <target>${javac.target}</target>

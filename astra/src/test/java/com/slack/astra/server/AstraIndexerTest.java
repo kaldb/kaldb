@@ -36,6 +36,7 @@ import com.slack.astra.metadata.snapshot.SnapshotMetadata;
 import com.slack.astra.metadata.snapshot.SnapshotMetadataStore;
 import com.slack.astra.proto.config.AstraConfigs;
 import com.slack.astra.testlib.ChunkManagerUtil;
+import com.slack.astra.testlib.MessageUtil;
 import com.slack.astra.testlib.TestKafkaServer;
 import com.slack.astra.util.QueryBuilderUtil;
 import com.slack.astra.writer.kafka.AstraKafkaConsumer;
@@ -644,10 +645,11 @@ public class AstraIndexerTest {
     SearchResult<LogMessage> searchResult =
         chunkManagerUtil.chunkManager.query(
             new SearchQuery(
-                "test",
+                MessageUtil.TEST_DATASET_NAME,
                 chunk1StartTimeMs,
                 chunk1StartTimeMs + (100 * 1000),
                 10,
+                0,
                 Collections.emptyList(),
                 QueryBuilderUtil.generateQueryBuilder(
                     "Message100", chunk1StartTimeMs, chunk1StartTimeMs + (100 * 1000)),
@@ -660,7 +662,7 @@ public class AstraIndexerTest {
     assertThat(searchResult.tookMicros).isNotZero();
     assertThat(searchResult.failedNodes).isZero();
     assertThat(searchResult.totalNodes).isEqualTo(1);
-    assertThat(searchResult.totalSnapshots).isEqualTo(1);
-    assertThat(searchResult.snapshotsWithReplicas).isEqualTo(1);
+    assertThat(searchResult.requestedSnapshots).isEqualTo(1);
+    assertThat(searchResult.fulfilledSnapshots).isEqualTo(1);
   }
 }

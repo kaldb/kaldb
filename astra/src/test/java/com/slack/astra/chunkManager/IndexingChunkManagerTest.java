@@ -128,7 +128,7 @@ public class IndexingChunkManagerTest {
     metricsRegistry = new SimpleMeterRegistry();
     // create an S3 client and a bucket for test
     s3AsyncClient = S3TestUtils.createS3CrtClient(S3_MOCK_EXTENSION.getServiceEndpoint());
-    blobStore = new BlobStore(s3AsyncClient, S3_TEST_BUCKET);
+    blobStore = new BlobStore(s3AsyncClient, S3_TEST_BUCKET, "");
 
     localZkServer = new TestingServer();
     localZkServer.start();
@@ -421,6 +421,7 @@ public class IndexingChunkManagerTest {
             0,
             MAX_TIME,
             10,
+            0,
             Collections.emptyList(),
             QueryBuilderUtil.generateQueryBuilder("Message1", 0L, MAX_TIME),
             null,
@@ -480,6 +481,7 @@ public class IndexingChunkManagerTest {
                         0,
                         MAX_TIME,
                         10,
+                        0,
                         Collections.emptyList(),
                         QueryBuilderUtil.generateQueryBuilder("Message101", 0L, MAX_TIME),
                         null,
@@ -510,6 +512,7 @@ public class IndexingChunkManagerTest {
                         0,
                         MAX_TIME,
                         10,
+                        0,
                         Collections.emptyList(),
                         QueryBuilderUtil.generateQueryBuilder("Message102", 0L, MAX_TIME),
                         null,
@@ -536,8 +539,8 @@ public class IndexingChunkManagerTest {
       List<String> chunkIds,
       String searchString,
       int expectedHitCount,
-      int totalSnapshots,
-      int expectedSnapshotsWithReplicas,
+      int expectedRequestedSnapshots,
+      int expectedFulfilledSnapshots,
       int expectedFailedNodes) {
 
     AstraLocalQueryService<LogMessage> astraLocalQueryService =
@@ -558,8 +561,8 @@ public class IndexingChunkManagerTest {
                 .build());
 
     assertThat(response.getHitsList().size()).isEqualTo(expectedHitCount);
-    assertThat(response.getTotalSnapshots()).isEqualTo(totalSnapshots);
-    assertThat(response.getSnapshotsWithReplicas()).isEqualTo(expectedSnapshotsWithReplicas);
+    assertThat(response.getRequestedSnapshots()).isEqualTo(expectedRequestedSnapshots);
+    assertThat(response.getFulfilledSnapshots()).isEqualTo(expectedFulfilledSnapshots);
     assertThat(response.getFailedNodes()).isEqualTo(expectedFailedNodes);
   }
 
@@ -567,8 +570,8 @@ public class IndexingChunkManagerTest {
       ChunkManager<LogMessage> chunkManager,
       String searchString,
       int expectedHitCount,
-      int totalSnapshots,
-      int expectedSnapshotsWithReplicas,
+      int expectedRequestedSnapshots,
+      int expectedFulfilledSnapshots,
       int expectedFailedNodes) {
 
     testChunkManagerSearch(
@@ -576,8 +579,8 @@ public class IndexingChunkManagerTest {
         Collections.emptyList(),
         searchString,
         expectedHitCount,
-        totalSnapshots,
-        expectedSnapshotsWithReplicas,
+        expectedRequestedSnapshots,
+        expectedFulfilledSnapshots,
         expectedFailedNodes);
   }
 
@@ -593,6 +596,7 @@ public class IndexingChunkManagerTest {
             startTimeEpochMs,
             endTimeEpochMs,
             10,
+            0,
             Collections.emptyList(),
             QueryBuilderUtil.generateQueryBuilder(searchString, startTimeEpochMs, endTimeEpochMs),
             null,
@@ -757,6 +761,12 @@ public class IndexingChunkManagerTest {
                     .setVInt32(20000)
                     .setKey(LogMessage.ReservedField.HOSTNAME.fieldName)
                     .setFieldType(Schema.SchemaFieldType.INTEGER)
+                    .build())
+            .addTags(
+                Trace.KeyValue.newBuilder()
+                    .setVStr(MessageUtil.TEST_DATASET_NAME)
+                    .setKey(LogMessage.ReservedField.SERVICE_NAME.fieldName)
+                    .setFieldType(Schema.SchemaFieldType.KEYWORD)
                     .build())
             .build();
     chunkManager.addMessage(
@@ -967,9 +977,9 @@ public class IndexingChunkManagerTest {
     // this worked but was kinda flaky since it messes with shutdown and refresh intervals
     chunk.setLogSearcher(new AlreadyClosedLogIndexSearcherImpl());
 
-    testChunkManagerSearch(chunkManager, "Message18", 0, 2, 2, 1);
-    testChunkManagerSearch(chunkManager, "Message1", 1, 2, 2, 1);
-    testChunkManagerSearch(chunkManager, "Message25", 1, 2, 2, 1);
+    testChunkManagerSearch(chunkManager, "Message18", 0, 3, 2, 1);
+    testChunkManagerSearch(chunkManager, "Message1", 1, 3, 2, 1);
+    testChunkManagerSearch(chunkManager, "Message25", 1, 3, 2, 1);
   }
 
   @Test
@@ -1025,9 +1035,9 @@ public class IndexingChunkManagerTest {
                 ((ReadWriteChunk<LogMessage>) chunk)
                     .setLogSearcher(new AlreadyClosedLogIndexSearcherImpl()));
 
-    testChunkManagerSearch(chunkManager, "Message1", 0, 0, 0, 3);
-    testChunkManagerSearch(chunkManager, "Message11", 0, 0, 0, 3);
-    testChunkManagerSearch(chunkManager, "Message21", 0, 0, 0, 3);
+    testChunkManagerSearch(chunkManager, "Message1", 0, 3, 0, 3);
+    testChunkManagerSearch(chunkManager, "Message11", 0, 3, 0, 3);
+    testChunkManagerSearch(chunkManager, "Message21", 0, 3, 0, 3);
 
     // Query interface throws search exceptions.
     chunkManager
@@ -1304,7 +1314,7 @@ public class IndexingChunkManagerTest {
         new DiskOrMessageCountBasedRolloverStrategy(metricsRegistry, 10 * 1024 * 1024 * 1024L, 10L);
     initChunkManager(
         chunkRollOverStrategy,
-        new BlobStore(s3AsyncClient, S3_TEST_BUCKET + "Fail"),
+        new BlobStore(s3AsyncClient, S3_TEST_BUCKET + "Fail", ""),
         IndexingChunkManager.makeDefaultRollOverExecutor());
 
     // Adding a message and close the chunkManager right away should still finish the failed
@@ -1352,7 +1362,7 @@ public class IndexingChunkManagerTest {
         new DiskOrMessageCountBasedRolloverStrategy(metricsRegistry, 10 * 1024 * 1024 * 1024L, 10L);
     initChunkManager(
         chunkRollOverStrategy,
-        new BlobStore(s3AsyncClient, S3_TEST_BUCKET + "Fail"),
+        new BlobStore(s3AsyncClient, S3_TEST_BUCKET + "Fail", ""),
         IndexingChunkManager.makeDefaultRollOverExecutor());
 
     int offset = 1;
@@ -1398,7 +1408,7 @@ public class IndexingChunkManagerTest {
         new DiskOrMessageCountBasedRolloverStrategy(metricsRegistry, 10 * 1024 * 1024 * 1024L, 10L);
     initChunkManager(
         chunkRollOverStrategy,
-        new BlobStore(s3AsyncClient, S3_TEST_BUCKET + "Fail"),
+        new BlobStore(s3AsyncClient, S3_TEST_BUCKET + "Fail", ""),
         MoreExecutors.newDirectExecutorService());
 
     // Adding a messages very quickly when running a rollover in background would result in an

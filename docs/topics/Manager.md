@@ -3,6 +3,9 @@
 The manager node is responsible for coordination over the entire system. This node handles creation of replicas,
 assignments for cache nodes and recovery indexers, and is responsible for detecting system anomalies.
 
+For shard-assignment consistency semantics, known concurrency hazards, and pending follow-up work,
+see [Shard assignment consistency](Shard-assignment-consistency.md).
+
 ## System design
 The cluster manager is responsible for the following tasks:
 

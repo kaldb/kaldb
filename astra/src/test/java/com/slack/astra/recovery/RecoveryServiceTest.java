@@ -93,7 +93,7 @@ public class RecoveryServiceTest {
     meterRegistry = new SimpleMeterRegistry();
     zkServer = new TestingServer();
     s3AsyncClient = S3TestUtils.createS3CrtClient(S3_MOCK_EXTENSION.getServiceEndpoint());
-    blobStore = new BlobStore(s3AsyncClient, TEST_S3_BUCKET);
+    blobStore = new BlobStore(s3AsyncClient, TEST_S3_BUCKET, "");
   }
 
   @AfterEach
@@ -357,7 +357,10 @@ public class RecoveryServiceTest {
     // Start recovery service
     recoveryService =
         new RecoveryService(
-            astraCfg, curatorFramework, meterRegistry, new BlobStore(s3AsyncClient, fakeS3Bucket));
+            astraCfg,
+            curatorFramework,
+            meterRegistry,
+            new BlobStore(s3AsyncClient, fakeS3Bucket, ""));
     recoveryService.startAsync();
     recoveryService.awaitRunning(DEFAULT_START_STOP_DURATION);
 
@@ -485,7 +488,10 @@ public class RecoveryServiceTest {
     // Start recovery service
     recoveryService =
         new RecoveryService(
-            astraCfg, curatorFramework, meterRegistry, new BlobStore(s3AsyncClient, fakeS3Bucket));
+            astraCfg,
+            curatorFramework,
+            meterRegistry,
+            new BlobStore(s3AsyncClient, fakeS3Bucket, ""));
     recoveryService.startAsync();
     recoveryService.awaitRunning(DEFAULT_START_STOP_DURATION);
 

@@ -2,16 +2,15 @@ package com.slack.astra.logstore.search;
 
 import brave.ScopedSpan;
 import brave.Tracing;
+import com.google.common.collect.Iterables;
+import com.google.common.collect.Streams;
 import com.slack.astra.logstore.LogMessage;
 import com.slack.astra.logstore.opensearch.AstraBigArrays;
 import com.slack.astra.logstore.opensearch.ScriptServiceProvider;
 import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Comparator;
 import java.util.List;
-import java.util.stream.Collectors;
-import org.opensearch.search.aggregations.AggregationBuilder;
 import org.opensearch.search.aggregations.InternalAggregation;
+import org.opensearch.search.aggregations.InternalAggregations;
 import org.opensearch.search.aggregations.pipeline.PipelineAggregator;
 
 /**
@@ -20,6 +19,14 @@ import org.opensearch.search.aggregations.pipeline.PipelineAggregator;
  * merged using the histogram merge function.
  */
 public class SearchResultAggregatorImpl<T extends LogMessage> implements SearchResultAggregator<T> {
+
+  private static HitSortValue sortValueAt(List<HitSortValue> sortValues, int index) {
+    if (index >= sortValues.size()) {
+      return HitSortValue.nullValue();
+    }
+    HitSortValue sortValue = sortValues.get(index);
+    return sortValue == null ? HitSortValue.nullValue() : sortValue;
+  }
 
   private final SearchQuery searchQuery;
 
@@ -34,32 +41,30 @@ public class SearchResultAggregatorImpl<T extends LogMessage> implements SearchR
     long tookMicros = 0;
     int failedNodes = 0;
     int totalNodes = 0;
-    int totalSnapshots = 0;
-    int snapshpotReplicas = 0;
-    List<InternalAggregation> internalAggregationList = new ArrayList<>();
+    int requestedSnapshots = 0;
+    int fulfilledSnapshots = 0;
+    List<InternalAggregations> internalAggregationList = new ArrayList<>();
 
     for (SearchResult<T> searchResult : searchResults) {
       tookMicros = Math.max(tookMicros, searchResult.tookMicros);
       failedNodes += searchResult.failedNodes;
       totalNodes += searchResult.totalNodes;
-      totalSnapshots += searchResult.totalSnapshots;
-      snapshpotReplicas += searchResult.snapshotsWithReplicas;
-      if (searchResult.internalAggregation != null) {
-        internalAggregationList.add(searchResult.internalAggregation);
+      requestedSnapshots += searchResult.requestedSnapshots;
+      fulfilledSnapshots += searchResult.fulfilledSnapshots;
+      if (searchResult.internalAggregations != null) {
+        internalAggregationList.add(searchResult.internalAggregations);
       }
     }
 
-    InternalAggregation internalAggregation = null;
+    InternalAggregations internalAggregations = null;
     if (internalAggregationList.size() > 0) {
       InternalAggregation.ReduceContext reduceContext;
-      PipelineAggregator.PipelineTree pipelineTree = null;
+      PipelineAggregator.PipelineTree pipelineTree = PipelineAggregator.PipelineTree.EMPTY;
       // The last aggregation should be indicated using the final aggregation boolean. This performs
       // some final pass "destructive" actions, such as applying min doc count or extended bounds.
       if (finalAggregation) {
         if (searchQuery.aggregatorFactoriesBuilder != null) {
-          Collection<AggregationBuilder> aggregationBuilders =
-              searchQuery.aggregatorFactoriesBuilder.getAggregatorFactories();
-          pipelineTree = aggregationBuilders.iterator().next().buildPipelineTree();
+          pipelineTree = searchQuery.aggregatorFactoriesBuilder.buildPipelineTree();
         }
 
         reduceContext =
@@ -75,32 +80,19 @@ public class SearchResultAggregatorImpl<T extends LogMessage> implements SearchR
                 ScriptServiceProvider.getInstance(),
                 () -> PipelineAggregator.PipelineTree.EMPTY);
       }
-      // Using the first element on the list as the basis for the reduce method is per OpenSearch
-      // recommendations: "For best efficiency, when implementing, try reusing an existing instance
-      // (typically the first in the given list) to save on redundant object construction."
-      internalAggregation =
-          internalAggregationList.get(0).reduce(internalAggregationList, reduceContext);
-
-      if (finalAggregation) {
-        // materialize any parent pipelines
-        internalAggregation =
-            internalAggregation.reducePipelines(internalAggregation, reduceContext, pipelineTree);
-        // materialize any sibling pipelines at top level
-        for (PipelineAggregator pipelineAggregator : pipelineTree.aggregators()) {
-          internalAggregation = pipelineAggregator.reduce(internalAggregation, reduceContext);
-        }
-      }
+      internalAggregations =
+          InternalAggregations.topLevelReduce(internalAggregationList, reduceContext);
     }
 
-    // TODO: Instead of sorting all hits using a bounded priority queue of size k is more efficient.
-    List<T> resultHits =
-        searchResults.stream()
-            .flatMap(r -> r.hits.stream())
-            .sorted(
-                Comparator.comparing(
-                    (T m) -> m.getTimestamp().toEpochMilli(), Comparator.reverseOrder()))
+    List<List<SearchResultHit<T>>> sortedHitLists =
+        searchResults.stream().map(searchResult -> searchResult.hits).toList();
+    // TODO: Consider replacing this with an explicit bounded priority queue or Lucene TopDocs
+    // merge-style helper if coordinator hit merging shows up in profiles.
+    List<SearchResultHit<T>> resultHits =
+        Streams.stream(Iterables.mergeSorted(sortedHitLists, this::compareHits))
+            .skip(searchQuery.startFrom)
             .limit(searchQuery.howMany)
-            .collect(Collectors.toList());
+            .toList();
 
     span.tag("resultHits", String.valueOf(resultHits.size()));
     span.tag("finalAggregation", String.valueOf(finalAggregation));
@@ -111,8 +103,34 @@ public class SearchResultAggregatorImpl<T extends LogMessage> implements SearchR
         tookMicros,
         failedNodes,
         totalNodes,
-        totalSnapshots,
-        snapshpotReplicas,
-        internalAggregation);
+        requestedSnapshots,
+        fulfilledSnapshots,
+        internalAggregations);
+  }
+
+  private int compareHits(SearchResultHit<T> left, SearchResultHit<T> right) {
+    List<SearchQuery.SortFieldSpec> sortFieldSpecs = searchQuery.hitSortPlan.effectiveSortFields();
+    for (int i = 0; i < sortFieldSpecs.size(); i++) {
+      int comparison =
+          compareSortValues(
+              sortValueAt(left.sortValues(), i),
+              sortValueAt(right.sortValues(), i),
+              sortFieldSpecs.get(i));
+      if (comparison != 0) {
+        return comparison;
+      }
+    }
+    return 0;
+  }
+
+  private static int compareSortValues(
+      HitSortValue left, HitSortValue right, SearchQuery.SortFieldSpec sortFieldSpec) {
+    int comparison = HitSortValue.compareAscending(left, right);
+    if (comparison == 0
+        || left.kind() == HitSortValue.Kind.NULL
+        || right.kind() == HitSortValue.Kind.NULL) {
+      return comparison;
+    }
+    return sortFieldSpec.descending() ? -comparison : comparison;
   }
 }

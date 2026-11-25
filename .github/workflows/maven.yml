@@ -4,8 +4,10 @@
 name: Java CI with Maven
 
 on:
+  workflow_dispatch:
   push:
     branches:
+      - kaldb-main
       - master
   pull_request:
     branches:

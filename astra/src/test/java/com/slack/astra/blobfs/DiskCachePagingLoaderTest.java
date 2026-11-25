@@ -1,5 +1,6 @@
 package com.slack.astra.blobfs;
 
+import static com.slack.astra.blobfs.S3TestUtils.prefixedBlobStore;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.spy;
 
@@ -14,6 +15,7 @@ import java.util.concurrent.ExecutionException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
+import software.amazon.awssdk.services.s3.model.ListObjectsRequest;
 
 class DiskCachePagingLoaderTest {
 
@@ -32,7 +34,7 @@ class DiskCachePagingLoaderTest {
 
   @Test
   public void testCacheKeyCalculations() {
-    BlobStore blobStore = spy(new BlobStore(s3Client, TEST_BUCKET));
+    BlobStore blobStore = spy(new BlobStore(s3Client, TEST_BUCKET, ""));
     String filename = "file.example";
     String chunkId = UUID.randomUUID().toString();
 
@@ -62,7 +64,7 @@ class DiskCachePagingLoaderTest {
 
   @Test
   public void testDiskPaging() throws IOException, ExecutionException {
-    BlobStore blobStore = spy(new BlobStore(s3Client, TEST_BUCKET));
+    BlobStore blobStore = spy(new BlobStore(s3Client, TEST_BUCKET, ""));
     String filename = "file.example";
     String chunkId = UUID.randomUUID().toString();
 
@@ -87,8 +89,9 @@ class DiskCachePagingLoaderTest {
   }
 
   @Test
-  public void testDiskPagingWholeFileOneChunk() throws IOException, ExecutionException {
-    BlobStore blobStore = spy(new BlobStore(s3Client, TEST_BUCKET));
+  public void testDiskPagingWholeFileOneChunk()
+      throws IOException, ExecutionException, InterruptedException {
+    BlobStore blobStore = spy(prefixedBlobStore(s3Client, TEST_BUCKET, "/astra/cache/"));
     String filename = "file2.example";
     String chunkId = UUID.randomUUID().toString();
 
@@ -103,13 +106,27 @@ class DiskCachePagingLoaderTest {
     Files.writeString(exampleFile, contents, Charset.defaultCharset());
     blobStore.upload(chunkId, directory);
 
+    assertThat(
+            s3Client
+                .listObjects(
+                    ListObjectsRequest.builder()
+                        .bucket(TEST_BUCKET)
+                        .prefix("astra/cache/" + chunkId)
+                        .build())
+                .get()
+                .contents()
+                .stream()
+                .map(s3Object -> s3Object.key())
+                .toList())
+        .containsExactly("astra/cache/" + chunkId + "/" + filename);
+
     diskCachePagingLoader.readBytes(chunkId, filename, readBytes, 0, 0, contents.getBytes().length);
     assertThat(contents).isEqualTo(new String(readBytes));
   }
 
   @Test
   public void testDiskPagingWholeFileSmallChunks() throws IOException, ExecutionException {
-    BlobStore blobStore = spy(new BlobStore(s3Client, TEST_BUCKET));
+    BlobStore blobStore = spy(new BlobStore(s3Client, TEST_BUCKET, ""));
     String filename = "file3.example";
     String chunkId = UUID.randomUUID().toString();
 

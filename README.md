@@ -1,75 +1,136 @@
+# KalDB
 
-# Astra
-[![release version](https://img.shields.io/github/v/release/slackhq/astra?include_prereleases)](https://github.com/slackhq/astra/releases)
-[![release pipeline](https://img.shields.io/github/actions/workflow/status/slackhq/astra/maven.yml?branch=master)](https://github.com/slackhq/astra/actions/workflows/maven.yml)
-[![license](https://img.shields.io/github/license/slackhq/astra)](https://github.com/slackhq/astra/blob/master/LICENSE)
-[![All Contributors](https://img.shields.io/github/all-contributors/slackhq/astra?color=ee8449)](#contributors)
+[![CI](https://img.shields.io/github/actions/workflow/status/kaldb/kaldb/maven.yml?branch=kaldb-main&label=ci)](https://github.com/kaldb/kaldb/actions/workflows/maven.yml)
+[![License](https://img.shields.io/github/license/kaldb/kaldb)](LICENSE)
+[![Documentation](https://img.shields.io/badge/docs-kaldb.com-blue)](https://kaldb.com/docs/)
 
+KalDB is a cloud-native log search and analytics engine built for high-volume observability workloads. It combines OpenSearch-compatible APIs with a disaggregated storage architecture: Kafka for durable ingest, Lucene for indexing, and S3 for indexed storage.
 
-Astra is a cloud-native search and analytics engine for log, trace, and audit data. It is designed to be easy to operate, 
-cost-effective, and scale to petabytes of data.
+[Quick Start](#quick-start) • [Architecture](#architecture-overview) • [Docs](https://kaldb.com/docs/) • [Talks](#talks-and-architecture-deep-dives) • [Contributing](.github/CONTRIBUTING.md)
 
-https://slackhq.github.io/astra/
+[Star it!](https://github.com/kaldb/kaldb)
 
-## Goals
-- Native support for log, trace, audit use cases.
-- Aggressively prioritize ingest of recent data over older data.
-- Full-text search capability.
-- First-class Kubernetes support for all components.
-- Autoscaling of ingest and query capacity.
-- Coordination free ingestion, so failure of a single node does not impact ingestion.
-- Works out of the box with sensible defaults.
-- Designed for zero data loss.
-- First-class Grafana support with [accompanying plugin](https://github.com/slackhq/slack-astra-app).
-- Built-in multi-tenancy, supporting several small use-cases on a single cluster.
-- Supports the majority of Apache Lucene features.
-- Drop-in replacement for most Opensearch log use cases.
-- Operate with multiple cloud providers.
+> KalDB builds on the Astra codebase originally open-sourced by Slack and reflects production learnings from large-scale deployments at Slack and Airbnb. The project is in transition, and parts of the codebase, APIs, and docs still use the original `Astra` name.
 
-## Non-Goals
-- General-purpose search cases, such as for an ecommerce site.
-- Document mutability - records are expected to be append only.
-- Additional storage engines other than Lucene.
-- Support for JVM versions other than the current LTS.
-- Supporting multiple Lucene versions.
+## Why KalDB
 
-## Licensing
-Licensed under [MIT](LICENSE). Copyright (c) 2024 Slack.
+- Built for log-heavy workloads with spiky ingest patterns and long retention requirements.
+- OpenSearch-compatible ingest and query APIs reduce migration work for existing pipelines and dashboards.
+- OpenSearch analytics support covers all ClickBench queries, including `multi_terms` aggregations, sibling aggregations, sorts with filters, and bucket-level filtering and sorting.
+- Decoupled compute and storage lets you scale indexing and querying separately.
+- Native support for logs, traces, and audit-style event data.
+- Designed to work well with Grafana, Zipkin-compatible trace tooling, and cloud object storage.
 
-## Contributors
+## Why It Exists
 
-<!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
-<!-- prettier-ignore-start -->
-<!-- markdownlint-disable -->
-<table>
-  <tbody>
-    <tr>
-      <td align="center" valign="top" width="14.28%"><a href="https://github.com/vthacker"><img src="https://avatars.githubusercontent.com/u/158041?v=4?s=100" width="100px;" alt="Varun Thacker"/><br /><sub><b>Varun Thacker</b></sub></a><br /><a href="#code-vthacker" title="Code">💻</a> <a href="#doc-vthacker" title="Documentation">📖</a> <a href="#review-vthacker" title="Reviewed Pull Requests">👀</a> <a href="#bug-vthacker" title="Bug reports">🐛</a> <a href="#ideas-vthacker" title="Ideas, Planning, & Feedback">🤔</a> <a href="#talk-vthacker" title="Talks">📢</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://github.com/bryanlb"><img src="https://avatars.githubusercontent.com/u/771133?v=4?s=100" width="100px;" alt="Bryan Burkholder"/><br /><sub><b>Bryan Burkholder</b></sub></a><br /><a href="#code-bryanlb" title="Code">💻</a> <a href="#doc-bryanlb" title="Documentation">📖</a> <a href="#review-bryanlb" title="Reviewed Pull Requests">👀</a> <a href="#bug-bryanlb" title="Bug reports">🐛</a> <a href="#ideas-bryanlb" title="Ideas, Planning, & Feedback">🤔</a> <a href="#talk-bryanlb" title="Talks">📢</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://github.com/kyle-sammons"><img src="https://avatars.githubusercontent.com/u/1023070?v=4?s=100" width="100px;" alt="Kyle Sammons"/><br /><sub><b>Kyle Sammons</b></sub></a><br /><a href="#plugin-kyle-sammons" title="Plugin/utility libraries">🔌</a> <a href="#code-kyle-sammons" title="Code">💻</a> <a href="#bug-kyle-sammons" title="Bug reports">🐛</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="http://www.linkedin.com/in/mansu"><img src="https://avatars.githubusercontent.com/u/93836?v=4?s=100" width="100px;" alt="Suman Karumuri"/><br /><sub><b>Suman Karumuri</b></sub></a><br /><a href="#code-mansu" title="Code">💻</a> <a href="#review-mansu" title="Reviewed Pull Requests">👀</a> <a href="#ideas-mansu" title="Ideas, Planning, & Feedback">🤔</a> <a href="#talk-mansu" title="Talks">📢</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://github.com/ermontross"><img src="https://avatars.githubusercontent.com/u/10778883?v=4?s=100" width="100px;" alt="Emma Montross"/><br /><sub><b>Emma Montross</b></sub></a><br /><a href="#plugin-ermontross" title="Plugin/utility libraries">🔌</a> <a href="#code-ermontross" title="Code">💻</a> <a href="#bug-ermontross" title="Bug reports">🐛</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://github.com/danhermann"><img src="https://avatars.githubusercontent.com/u/22777892?v=4?s=100" width="100px;" alt="Dan Hermann"/><br /><sub><b>Dan Hermann</b></sub></a><br /><a href="#code-danhermann" title="Code">💻</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://www.linkedin.com/in/kai-xing-chen"><img src="https://avatars.githubusercontent.com/u/22359229?v=4?s=100" width="100px;" alt="Kai Chen"/><br /><sub><b>Kai Chen</b></sub></a><br /><a href="#code-kx-chen" title="Code">💻</a></td>
-    </tr>
-    <tr>
-      <td align="center" valign="top" width="14.28%"><a href="https://github.com/autata"><img src="https://avatars.githubusercontent.com/u/24304518?v=4?s=100" width="100px;" alt="Aubrey"/><br /><sub><b>Aubrey</b></sub></a><br /><a href="#code-autata" title="Code">💻</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://github.com/shellywu815"><img src="https://avatars.githubusercontent.com/u/115680578?v=4?s=100" width="100px;" alt="Shelly Wu"/><br /><sub><b>Shelly Wu</b></sub></a><br /><a href="#code-shellywu815" title="Code">💻</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="http://www.solidspark.com"><img src="https://avatars.githubusercontent.com/u/1429729?v=4?s=100" width="100px;" alt="Ryan Katkov"/><br /><sub><b>Ryan Katkov</b></sub></a><br /><a href="#business-solidspark" title="Business development">💼</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://slack.com/"><img src="https://avatars.githubusercontent.com/u/6911160?v=4?s=100" width="100px;" alt="Slack"/><br /><sub><b>Slack</b></sub></a><br /><a href="#financial-slackhq" title="Financial">💵</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://opensource.salesforce.com"><img src="https://avatars.githubusercontent.com/u/453694?v=4?s=100" width="100px;" alt="Salesforce"/><br /><sub><b>Salesforce</b></sub></a><br /><a href="#financial-salesforce" title="Financial">💵</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://github.com/HenryCaiHaiying"><img src="https://avatars.githubusercontent.com/u/7378943?v=4?s=100" width="100px;" alt="Henry Haiying Cai"/><br /><sub><b>Henry Haiying Cai</b></sub></a><br /><a href="#code-HenryCaiHaiying" title="Code">💻</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://github.com/gjacoby126"><img src="https://avatars.githubusercontent.com/u/5717906?v=4?s=100" width="100px;" alt="Geoffrey Jacoby"/><br /><sub><b>Geoffrey Jacoby</b></sub></a><br /><a href="#bug-gjacoby126" title="Bug reports">🐛</a></td>
-    </tr>
-    <tr>
-      <td align="center" valign="top" width="14.28%"><a href="https://github.com/zarna1parekh"><img src="https://avatars.githubusercontent.com/u/9705210?v=4?s=100" width="100px;" alt="Zarna Parekh"/><br /><sub><b>Zarna Parekh</b></sub></a><br /><a href="#code-zarna1parekh" title="Code">💻</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://github.com/baroquebobcat"><img src="https://avatars.githubusercontent.com/u/7378?v=4?s=100" width="100px;" alt="Nora Howard"/><br /><sub><b>Nora Howard</b></sub></a><br /><a href="#code-baroquebobcat" title="Code">💻</a> <a href="#bug-baroquebobcat" title="Bug reports">🐛</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://github.com/georgeluong"><img src="https://avatars.githubusercontent.com/u/4889254?v=4?s=100" width="100px;" alt="georgeluong"/><br /><sub><b>georgeluong</b></sub></a><br /><a href="#business-georgeluong" title="Business development">💼</a></td>
-    </tr>
-  </tbody>
-</table>
+KalDB was created to solve practical problems that show up as log search scales.
+These include ingest delays during traffic spikes, schema conflicts from fast-moving services, and operational complexity from running many large search clusters.
+The architecture and public talks around KalDB focus on a simple idea: keep the search experience fast, but move durability and long-term storage onto systems that scale more naturally for cloud-native environments.
 
-<!-- markdownlint-restore -->
-<!-- prettier-ignore-end -->
+## Architecture Overview
 
-<!-- ALL-CONTRIBUTORS-LIST:END -->
+KalDB is a Lucene-based system inspired by aggregator/leaf/tailer-style architectures. Kafka handles durable ingest, S3 stores indexed data, and stateless indexers can be scaled independently to keep fresh data searchable during spikes.
+
+```mermaid
+flowchart TD
+    producers[Log shippers / bulk ingest] --> preprocessor[Preprocessor]
+    grafana[Grafana / clients] --> query[Query]
+
+    preprocessor --> kafka[(Kafka)]
+    kafka --> indexers[Indexers]
+    kafka --> recovery[Recovery]
+
+    indexers --> s3[(S3 / object storage)]
+    recovery --> s3
+
+    query --> indexers
+    query --> cache[Cache]
+    cache <--> s3
+
+    manager[Manager] <--> zk[(ZooKeeper)]
+    manager <--> s3
+```
+
+Core properties of the design:
+
+- Fresh-data ingest is prioritized during peak load.
+- Indexer nodes are stateless, which makes horizontal scaling straightforward.
+- Storage and query paths are separated so long retention does not force expensive hot storage everywhere.
+- Existing OpenSearch-oriented tooling can often be reused instead of rewritten.
+
+## Quick Start
+
+If you want the shortest path to a local cluster, use the helper script:
+
+```bash
+./quick_start.sh --clean
+```
+
+Local endpoints:
+
+- Query API: `http://localhost:8081`
+- Admin UI: `http://localhost:8083/admin/`
+- Manager API: `http://localhost:8083`
+- Preprocessor ingest API: `http://localhost:8086`
+- Grafana: `http://localhost:3000/explore`
+
+For the manual curl workflow, API examples, and the per-service setup details, see [Getting-started.md](docs/topics/Getting-started.md).
+
+## What You Can Build With It
+
+### Log search with Lucene-style queries
+
+KalDB supports Lucene query syntax for field filters, wildcards, boolean queries, ranges, and optional full-text search. See [Logs.md](docs/topics/Logs.md) for examples and Grafana integration details.
+
+### Trace search with a Zipkin-compatible API
+
+KalDB can store and serve traces when the required span fields are indexed. See [Traces.md](docs/topics/Traces.md) for the expected schema and Grafana setup.
+
+### OpenSearch-oriented migrations
+
+KalDB exposes OpenSearch-compatible APIs for query and ingest workflows, which helps reuse existing shippers, clients, and dashboards. Its analytics support covers the full ClickBench query set, including `multi_terms` aggregations, sibling aggregations, hit sorting with filters, bucket sorting, `bucket_selector` HAVING-style filters, and empty-string field semantics. See [Migrating.md](docs/topics/Migrating.md), [API-opensearch.md](docs/topics/API-opensearch.md), and [Aggregations.md](docs/topics/Aggregations.md).
+
+## Developer Setup
+
+### Local development
+
+- Import the repository as a Maven project in IntelliJ.
+- The `.run/` directory contains run configurations for each node role.
+- Shared runtime defaults live in `config/config.yaml`.
+- CI builds with JDK 21.
+
+### Common commands
+
+```bash
+mvn package
+```
+
+### Repository map
+
+- `astra/`: core server, APIs, indexing, query, metadata, and node implementations
+- `config/`: local configuration and Grafana provisioning
+- `docs/`: architecture, operations, APIs, and getting-started material
+- `benchmarks/`: JMH benchmarks for indexing and API workloads
+- `tools/`: helper tools such as the span generator and UI tests
+
+## Learn More
+
+- [KalDB website](https://kaldb.com/)
+- [Documentation](https://kaldb.com/docs/)
+- [Getting-started.md](docs/topics/Getting-started.md)
+- [Architecture.md](docs/topics/Architecture.md)
+- [Recommendations.md](docs/topics/Recommendations.md)
+- [Roadmap.md](docs/topics/Roadmap.md)
+
+## Talks And Architecture Deep Dives
+
+- [Monitorama 2022: KalDB: A k8s Native Log Search Platform](https://www.youtube.com/watch?v=CQKXzQ1yyEQ)
+- [Strange Loop 2022: KalDB: A Cloud Native Log Search Platform](https://www.youtube.com/watch?v=TNf_oqm7JQQ)
+- [Berlin Buzzwords 2023: KalDB: Serverless Lucene at Petabyte Scale](https://www.youtube.com/watch?v=Xs-aNMg94ck)
+- [SREcon APAC 2023: Taming Spiky Log Volumes with KalDB](https://www.youtube.com/watch?v=GKV1m_w6mFc)
+
+The public talks complement the architecture docs well: the docs explain the components, while the talks explain the operational pressure and design tradeoffs that shaped them.
+
+## Contributing
+
+See [CONTRIBUTING.md](.github/CONTRIBUTING.md) and open issues.

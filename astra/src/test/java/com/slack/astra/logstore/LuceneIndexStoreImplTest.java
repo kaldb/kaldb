@@ -9,6 +9,7 @@ import static com.slack.astra.testlib.MetricsUtil.getTimerCount;
 import static com.slack.astra.testlib.TemporaryLogStoreAndSearcherExtension.MAX_TIME;
 import static com.slack.astra.testlib.TemporaryLogStoreAndSearcherExtension.addMessages;
 import static com.slack.astra.testlib.TemporaryLogStoreAndSearcherExtension.findAllMessages;
+import static com.slack.astra.testlib.TemporaryLogStoreAndSearcherExtension.search;
 import static com.slack.astra.util.AggregatorFactoriesUtil.createGenericDateHistogramAggregatorFactoriesBuilder;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
@@ -122,13 +123,20 @@ public class LuceneIndexStoreImplTest {
                       .setKey("nested.duplicateproperty")
                       .setFieldType(Schema.SchemaFieldType.KEYWORD)
                       .build())
+              .addTags(
+                  Trace.KeyValue.newBuilder()
+                      .setVStr(MessageUtil.TEST_DATASET_NAME)
+                      .setKey(LogMessage.ReservedField.SERVICE_NAME.fieldName)
+                      .setFieldType(Schema.SchemaFieldType.KEYWORD)
+                      .build())
               .build();
       logStore.logStore.addMessage(span);
       logStore.logStore.commit();
       logStore.logStore.refresh();
 
       SearchResult<LogMessage> result1 =
-          logStore.logSearcher.search(
+          search(
+              logStore.logSearcher,
               MessageUtil.TEST_DATASET_NAME,
               100,
               QueryBuilderUtil.generateQueryBuilder("nested.key1:value1", 0L, MAX_TIME),
@@ -137,7 +145,8 @@ public class LuceneIndexStoreImplTest {
       assertThat(result1.hits.size()).isEqualTo(1);
 
       SearchResult<LogMessage> result2 =
-          logStore.logSearcher.search(
+          search(
+              logStore.logSearcher,
               MessageUtil.TEST_DATASET_NAME,
               100,
               QueryBuilderUtil.generateQueryBuilder("duplicateproperty:duplicate1", 0L, MAX_TIME),
@@ -146,7 +155,8 @@ public class LuceneIndexStoreImplTest {
       assertThat(result2.hits.size()).isEqualTo(1);
 
       SearchResult<LogMessage> result3 =
-          logStore.logSearcher.search(
+          search(
+              logStore.logSearcher,
               MessageUtil.TEST_DATASET_NAME,
               100,
               QueryBuilderUtil.generateQueryBuilder("nested.duplicateproperty:2", 0L, MAX_TIME),
@@ -184,6 +194,12 @@ public class LuceneIndexStoreImplTest {
                       .setKey("nested.duplicateproperty")
                       .setFieldType(Schema.SchemaFieldType.KEYWORD)
                       .build())
+              .addTags(
+                  Trace.KeyValue.newBuilder()
+                      .setVStr(MessageUtil.TEST_DATASET_NAME)
+                      .setKey(LogMessage.ReservedField.SERVICE_NAME.fieldName)
+                      .setFieldType(Schema.SchemaFieldType.KEYWORD)
+                      .build())
               .build();
       logStore.logStore.addMessage(span);
       logStore.logStore.commit();
@@ -196,15 +212,18 @@ public class LuceneIndexStoreImplTest {
               .fixedInterval(DateHistogramInterval.SECOND));
 
       SearchResult<LogMessage> result1 =
-          logStore.logSearcher.search(
+          search(
+              logStore.logSearcher,
               MessageUtil.TEST_DATASET_NAME,
               100,
               QueryBuilderUtil.generateQueryBuilder("nested.key1:value1", 0L, MAX_TIME),
               null,
               aggregatorFactoriesBuilder);
       assertThat(result1.hits.size()).isEqualTo(1);
-      assertThat(result1.internalAggregation.getName()).isEqualTo("1");
-      assertThat(result1.internalAggregation.getType()).isEqualTo("date_histogram");
+      assertThat(Objects.requireNonNull(result1.internalAggregations).get("1").getName())
+          .isEqualTo("1");
+      assertThat(Objects.requireNonNull(result1.internalAggregations).get("1").getType())
+          .isEqualTo("date_histogram");
     }
 
     @Test
@@ -423,7 +442,7 @@ public class LuceneIndexStoreImplTest {
           S3TestUtils.createS3CrtClient(S3_MOCK_EXTENSION.getServiceEndpoint());
       String bucket = "snapshot-test";
       s3AsyncClient.createBucket(CreateBucketRequest.builder().bucket(bucket).build()).get();
-      BlobStore blobStore = new BlobStore(s3AsyncClient, bucket);
+      BlobStore blobStore = new BlobStore(s3AsyncClient, bucket, "");
 
       String chunkId = UUID.randomUUID().toString();
       blobStore.upload(chunkId, dirPath);

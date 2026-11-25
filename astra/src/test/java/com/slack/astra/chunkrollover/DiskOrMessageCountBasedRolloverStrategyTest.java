@@ -91,7 +91,7 @@ public class DiskOrMessageCountBasedRolloverStrategyTest {
     metricsRegistry = new SimpleMeterRegistry();
 
     s3AsyncClient = S3TestUtils.createS3CrtClient(S3_MOCK_EXTENSION.getServiceEndpoint());
-    blobStore = new BlobStore(s3AsyncClient, S3_TEST_BUCKET);
+    blobStore = new BlobStore(s3AsyncClient, S3_TEST_BUCKET, "");
 
     localZkServer = new TestingServer();
     localZkServer.start();
@@ -230,8 +230,8 @@ public class DiskOrMessageCountBasedRolloverStrategyTest {
     assertThat(response.getTookMicros()).isNotZero();
     assertThat(response.getFailedNodes()).isZero();
     assertThat(response.getTotalNodes()).isEqualTo(1);
-    assertThat(response.getTotalSnapshots()).isEqualTo(3);
-    assertThat(response.getSnapshotsWithReplicas()).isEqualTo(3);
+    assertThat(response.getRequestedSnapshots()).isEqualTo(3);
+    assertThat(response.getFulfilledSnapshots()).isEqualTo(3);
   }
 
   @Test
@@ -270,6 +270,21 @@ public class DiskOrMessageCountBasedRolloverStrategyTest {
     assertThat(getCount(RollOverChunkTask.ROLLOVERS_FAILED, metricsRegistry)).isEqualTo(0);
     assertThat(getCount(RollOverChunkTask.ROLLOVERS_COMPLETED, metricsRegistry)).isEqualTo(1);
     assertThat(chunkManager.getChunkList().size()).isEqualTo(2);
+  }
+
+  @Test
+  public void testMaxTimeRolloverDisabledWhenConfiguredWithSentinelValue() {
+    Instant rolloverStartTime = Instant.parse("2024-01-01T00:00:00Z");
+    Instant laterTime = rolloverStartTime.plusSeconds(10);
+
+    assertThat(
+            DiskOrMessageCountBasedRolloverStrategy.isMaxTimePerChunkRolloverEnabled(
+                Long.MAX_VALUE))
+        .isFalse();
+    assertThat(
+            DiskOrMessageCountBasedRolloverStrategy.hasReachedMaxTimePerChunk(
+                rolloverStartTime, laterTime, Long.MAX_VALUE))
+        .isFalse();
   }
 
   @Test
@@ -319,8 +334,8 @@ public class DiskOrMessageCountBasedRolloverStrategyTest {
     assertThat(response.getTookMicros()).isNotZero();
     assertThat(response.getFailedNodes()).isZero();
     assertThat(response.getTotalNodes()).isEqualTo(1);
-    assertThat(response.getTotalSnapshots()).isEqualTo(3);
-    assertThat(response.getSnapshotsWithReplicas()).isEqualTo(3);
+    assertThat(response.getRequestedSnapshots()).isEqualTo(3);
+    assertThat(response.getFulfilledSnapshots()).isEqualTo(3);
   }
 
   @Test

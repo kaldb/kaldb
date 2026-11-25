@@ -15,6 +15,7 @@ message DatasetPartitionMetadata {
   // List of Kafka partition ids
   repeated string partitions = 3;
 }
+
 // Describes ownership, throughput, and partition mapping for a given dataset
 message DatasetMetadata {
   // Unique name for provisioned service
@@ -31,8 +32,18 @@ message DatasetMetadata {
 
   // either same as name or a special value _all or * which matches all services
   string service_name_pattern = 5;
+
+  // True if this dataset requires dedicated partitions when auto assigning.
+  bool using_dedicated_partitions = 6;
 }
 
+message PartitionMetadata {
+  // Numeric-only partition identifier; allocator ordering compares this as an integer.
+  string partition_id = 1;
+  // Maximum provisionable throughput for this partition, in bytes per second. Assignment planning
+  // and validation treat this as a hard capacity limit.
+  int64 max_capacity = 2;
+}
 
 // ManagerApiService is the administration API for operating on dataset metadata and the associated partition assignments
 service ManagerApiService {
@@ -60,12 +71,9 @@ service ManagerApiService {
       post: "/slack.proto.astra.ManagerApiService/ListDatasetMetadata"
     };
   }
-
-  // UpdatePartitionAssignment allocates a new partition assignment for a dataset. If a rate and a list of
-  // partition_ids are provided, it will use it use the list of partition ids as the current allocation
-  // and invalidates the existing assignment.
-  //
-  // In the future if only a rate is provided with an empty list the allocation will be automatically assigned.
+  // UpdatePartitionAssignment records an explicit partition assignment when partition_ids is
+  // non-empty. If partition_ids is empty, the manager automatically assigns partitions from the
+  // partition catalog using throughput, minimum partition count, and dedication mode.
   rpc UpdatePartitionAssignment(UpdatePartitionAssignmentRequest) returns (UpdatePartitionAssignmentResponse) {
     option (google.api.http) = {
       post: "/slack.proto.astra.ManagerApiService/UpdatePartitionAssignment"
@@ -80,6 +88,26 @@ service ManagerApiService {
   rpc RestoreReplicaIds(RestoreReplicaIdsRequest) returns (RestoreReplicaIdsResponse) {
     option (google.api.http) = {
       post: "/slack.proto.astra.ManagerApiService/RestoreReplicaIds"
+    };
+  }
+  // CreatePartition adds a new entry to the partition catalog.
+  rpc CreatePartition(CreatePartitionRequest) returns (PartitionMetadata) {
+    option (google.api.http) = {
+      post: "/slack.proto.astra.ManagerApiService/CreatePartition"
+    };
+  }
+
+  // DeletePartition removes an unused partition from the partition catalog.
+  rpc DeletePartition(DeletePartitionRequest) returns (DeletePartitionResponse) {
+    option (google.api.http) = {
+      post: "/slack.proto.astra.ManagerApiService/DeletePartition"
+    };
+  }
+
+  // ListPartitionMetadata returns the current calculated capacity and occupancy for each partition.
+  rpc ListPartitionMetadata(ListPartitionRequest) returns (ListPartitionMetadataResponse) {
+    option (google.api.http) = {
+      post: "/slack.proto.astra.ManagerApiService/ListPartitionMetadata"
     };
   }
 }
@@ -123,10 +151,14 @@ message ListDatasetMetadataResponse {
 message UpdatePartitionAssignmentRequest {
   // Must be an exact string name match
   string name = 1;
-  // Optional maximum throughput of the dataset - if set to -1 the existing value will not be updated
+  // Dataset throughput in bytes. Clients should always set this field. Zero is valid, negative
+  // values are rejected, and omitted proto3 fields are observed as 0 by the server.
   int64 throughput_bytes = 2;
-  // Optional desired partition IDs - if empty will be automatically assigned
+  // Optional desired numeric partition IDs - if empty will be automatically assigned
   repeated string partition_ids = 3;
+  // Optional required partitions to be exclusive for the tenant. If omitted, the existing dataset
+  // mode is preserved. New datasets default to shared partitions.
+  optional bool require_dedicated_partition = 4;
 }
 
 // UpdatePartitionAssignmentResponse represents the response after assigning a new set of partitions
@@ -151,4 +183,61 @@ message RestoreReplicaIdsRequest {
 
 message RestoreReplicaIdsResponse {
   string status = 1;
+}
+
+message CreatePartitionRequest {
+  // Numeric-only partition identifier; non-numeric values are rejected.
+  string partition_id = 1;
+  // Maximum provisionable throughput for this partition, in bytes per second. Required and must
+  // be greater than 0.
+  int64 max_capacity = 2;
+}
+
+message DeletePartitionRequest {
+  // Numeric-only partition identifier; non-numeric values are rejected.
+  string partition_id = 1;
+}
+
+message DeletePartitionResponse {
+  // Human-readable success message returned after the partition is removed.
+  string status = 1;
+}
+
+message ListPartitionRequest {}
+
+message ListPartitionMetadataResponse {
+  // Calculated live capacity and occupancy state for each partition in the catalog.
+  repeated LivePartitionState partition_metadata = 1;
+}
+
+message LivePartitionState {
+  // Numeric-only partition identifier.
+  string partition_id = 1;
+  // Maximum provisionable throughput for this partition, in bytes per second.
+  int64 max_capacity = 2;
+  // Sum of the active datasets' per-partition throughput currently assigned to this partition, in
+  // bytes per second.
+  int64 provisioned_capacity = 3;
+
+  // Exactly one calculated occupancy state for this partition.
+  oneof occupancy {
+    // No dataset currently uses this partition.
+    EmptyPartitionOccupancy empty = 4;
+    // Multiple shared datasets currently use this partition.
+    SharedPartitionOccupancy shared = 5;
+    // Exactly one dataset exclusively uses this partition.
+    DedicatedPartitionOccupancy dedicated = 6;
+  }
+}
+
+message EmptyPartitionOccupancy {}
+
+message SharedPartitionOccupancy {
+  // Dataset names currently sharing this partition.
+  repeated string datasets = 1;
+}
+
+message DedicatedPartitionOccupancy {
+  // Dataset name that exclusively uses this partition.
+  string dataset = 1;
 }

@@ -1,5 +1,6 @@
 package com.slack.astra.blobfs;
 
+import static com.slack.astra.blobfs.S3TestUtils.prefixedBlobStore;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.spy;
 
@@ -31,7 +32,7 @@ class HeapCachePagingLoaderTest {
 
   @Test
   public void testHeapCachingPartialByteRead() throws IOException, ExecutionException {
-    BlobStore blobStore = spy(new BlobStore(s3Client, TEST_BUCKET));
+    BlobStore blobStore = spy(new BlobStore(s3Client, TEST_BUCKET, ""));
     String filename = "file.example";
     String chunkId = UUID.randomUUID().toString();
 
@@ -59,7 +60,7 @@ class HeapCachePagingLoaderTest {
 
   @Test
   public void testDiskPagingWholeFileOneChunk() throws IOException, ExecutionException {
-    BlobStore blobStore = spy(new BlobStore(s3Client, TEST_BUCKET));
+    BlobStore blobStore = spy(prefixedBlobStore(s3Client, TEST_BUCKET, "astra/heap"));
     String filename = "file2.example";
     String chunkId = UUID.randomUUID().toString();
 
@@ -76,13 +77,15 @@ class HeapCachePagingLoaderTest {
     Files.writeString(exampleFile, contents, Charset.defaultCharset());
     blobStore.upload(chunkId, directory);
 
+    assertThat(heapCachePagingLoader.length(chunkId, filename))
+        .isEqualTo(contents.getBytes().length);
     heapCachePagingLoader.readBytes(chunkId, filename, readBytes, 0, 0, contents.getBytes().length);
     assertThat(contents).isEqualTo(new String(readBytes));
   }
 
   @Test
   public void testDiskPagingWholeFileSmallChunks() throws IOException, ExecutionException {
-    BlobStore blobStore = spy(new BlobStore(s3Client, TEST_BUCKET));
+    BlobStore blobStore = spy(new BlobStore(s3Client, TEST_BUCKET, ""));
     String filename = "file3.example";
     String chunkId = UUID.randomUUID().toString();
 

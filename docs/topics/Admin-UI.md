@@ -3,6 +3,13 @@
 A simplified administration UI is provided by the manager node, providing easy access to the 
 [manager api operations](API-manager.md). 
 
+## Dataset CRUD
+
+The Admin UI Datasets tab creates and edits dataset metadata together with quota and shard assignment.
+The Dataset form includes owner, service name pattern, throughput in bytes/sec, partition mode, and
+assignment strategy. New datasets default to dedicated partitions with auto-assignment from the
+partition catalog.
+
 ## DocService
 
 The DocService is an admin UI automatically generated from the protobuf definitions 

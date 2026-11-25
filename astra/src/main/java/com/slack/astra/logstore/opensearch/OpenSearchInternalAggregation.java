@@ -5,7 +5,6 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Arrays;
-import java.util.List;
 import org.opensearch.core.common.io.stream.InputStreamStreamInput;
 import org.opensearch.core.common.io.stream.NamedWriteableAwareStreamInput;
 import org.opensearch.core.common.io.stream.NamedWriteableRegistry;
@@ -25,7 +24,9 @@ import org.opensearch.search.aggregations.bucket.histogram.InternalAutoDateHisto
 import org.opensearch.search.aggregations.bucket.histogram.InternalDateHistogram;
 import org.opensearch.search.aggregations.bucket.histogram.InternalHistogram;
 import org.opensearch.search.aggregations.bucket.terms.DoubleTerms;
+import org.opensearch.search.aggregations.bucket.terms.InternalMultiTerms;
 import org.opensearch.search.aggregations.bucket.terms.LongTerms;
+import org.opensearch.search.aggregations.bucket.terms.MultiTermsAggregationBuilder;
 import org.opensearch.search.aggregations.bucket.terms.StringTerms;
 import org.opensearch.search.aggregations.bucket.terms.TermsAggregationBuilder;
 import org.opensearch.search.aggregations.bucket.terms.UnmappedTerms;
@@ -72,6 +73,12 @@ public class OpenSearchInternalAggregation {
   private static final NamedWriteableRegistry NAMED_WRITEABLE_REGISTRY =
       new NamedWriteableRegistry(
           Arrays.asList(
+              // TODO: Evaluate whether the AggregationBuilder.class registrations are still needed.
+              // Those entries deserialize request-side aggregation builder objects, but Astra
+              // currently parses aggregation requests from JSON through XContent and only uses this
+              // registry to deserialize InternalAggregations returned over transport. If that
+              // remains true, the AggregationBuilder.class entries can likely be removed while
+              // keeping the InternalAggregation and supporting value-format registrations.
               new NamedWriteableRegistry.Entry(
                   AggregationBuilder.class,
                   DateHistogramAggregationBuilder.NAME,
@@ -114,6 +121,10 @@ public class OpenSearchInternalAggregation {
                   InternalAggregation.class, LongTerms.NAME, LongTerms::new),
               new NamedWriteableRegistry.Entry(
                   InternalAggregation.class, DoubleTerms.NAME, DoubleTerms::new),
+              new NamedWriteableRegistry.Entry(
+                  InternalAggregation.class,
+                  MultiTermsAggregationBuilder.NAME,
+                  InternalMultiTerms::new),
               new NamedWriteableRegistry.Entry(
                   AggregationBuilder.class, AvgAggregationBuilder.NAME, AvgAggregationBuilder::new),
               new NamedWriteableRegistry.Entry(
@@ -228,17 +239,15 @@ public class OpenSearchInternalAggregation {
                   DocValueFormat.UNSIGNED_LONG_SHIFTED.getWriteableName(),
                   in -> DocValueFormat.UNSIGNED_LONG_SHIFTED)));
 
-  /** Serializes InternalAggregation to byte array for transport */
-  public static byte[] toByteArray(InternalAggregation internalAggregation) {
-    if (internalAggregation == null) {
+  /** Serializes InternalAggregations to byte array for transport */
+  public static byte[] toByteArray(InternalAggregations internalAggregations) {
+    if (internalAggregations == null) {
       return new byte[] {};
     }
 
     byte[] returnBytes;
     try (ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream()) {
       try (StreamOutput streamOutput = new OutputStreamStreamOutput(byteArrayOutputStream)) {
-        InternalAggregations internalAggregations =
-            new InternalAggregations(List.of(internalAggregation), null);
         internalAggregations.writeTo(streamOutput);
       }
       returnBytes = byteArrayOutputStream.toByteArray();
@@ -249,25 +258,19 @@ public class OpenSearchInternalAggregation {
     return returnBytes;
   }
 
-  /** Deserializes a bytearray into an InternalAggregation */
-  public static InternalAggregation fromByteArray(byte[] bytes) throws IOException {
+  /** Deserializes a bytearray into InternalAggregations */
+  public static InternalAggregations fromByteArray(byte[] bytes) throws IOException {
     if (bytes.length == 0) {
       return null;
     }
 
-    InternalAggregation internalAggregation;
     try (InputStream inputStream = new ByteArrayInputStream(bytes)) {
       try (StreamInput streamInput = new InputStreamStreamInput(inputStream)) {
         try (NamedWriteableAwareStreamInput namedWriteableAwareStreamInput =
             new NamedWriteableAwareStreamInput(streamInput, NAMED_WRITEABLE_REGISTRY)) {
-          // the use of this InternalAggregations wrapper lightly follows OpenSearch
-          // See OpenSearch InternalAggregationsTest.writeToAndReadFrom() for more details
-          InternalAggregations internalAggregations =
-              InternalAggregations.readFrom(namedWriteableAwareStreamInput);
-          internalAggregation = internalAggregations.copyResults().get(0);
+          return InternalAggregations.readFrom(namedWriteableAwareStreamInput);
         }
       }
     }
-    return internalAggregation;
   }
 }

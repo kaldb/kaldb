@@ -43,6 +43,7 @@ import org.apache.lucene.document.FloatDocValuesField;
 import org.apache.lucene.document.InetAddressPoint;
 import org.apache.lucene.document.SortedDocValuesField;
 import org.apache.lucene.document.SortedNumericDocValuesField;
+import org.apache.lucene.document.StoredField;
 import org.apache.lucene.sandbox.document.HalfFloatPoint;
 import org.assertj.core.api.Assertions;
 import org.assertj.core.api.AssertionsForClassTypes;
@@ -244,18 +245,69 @@ public class SpanFormatterWithSchemaTest {
   }
 
   @Test
+  public void testEmptyStringIsAValueButNullIsAbsent() {
+    // For keyword-style fields "" is a real value and must be indexed; null/absent is not.
+    // In-schema keyword field "" produces a KEYWORD KV with an empty value (not dropped).
+    Trace.KeyValue kv = SpanFormatter.convertKVtoProto("host", "", schema).get(0);
+    assertThat(kv.getFieldType()).isEqualTo(Schema.SchemaFieldType.KEYWORD);
+    assertThat(kv.getVStr()).isEqualTo("");
+    assertThat(kv.getIndexSignal()).isEqualTo(Trace.IndexSignal.IN_SCHEMA_INDEX);
+
+    // A dynamic (not-in-schema) field with "" is still indexed as a keyword value.
+    Trace.KeyValue dynamicKv = SpanFormatter.convertKVtoProto("dynamicField", "", schema).get(0);
+    assertThat(dynamicKv.getFieldType()).isEqualTo(Schema.SchemaFieldType.KEYWORD);
+    assertThat(dynamicKv.getVStr()).isEqualTo("");
+
+    // null has no value, so no field is produced.
+    assertThat(SpanFormatter.convertKVtoProto("host", null, schema)).isNull();
+  }
+
+  @Test
+  public void testEmptyStringKeywordReachesLuceneDocument() throws Exception {
+    // End-to-end: a "" keyword value flows through convertKVtoProto into the Lucene document as a
+    // real indexed term AND a doc-value, so term, exists, terms/multi_terms, cardinality, and sort
+    // all observe it the way OpenSearch would.
+    Trace.Span.Builder spanBuilder =
+        Trace.Span.newBuilder().setId(ByteString.copyFrom("eskw".getBytes()));
+    SpanFormatter.convertKVtoProto("host", "", schema).forEach(spanBuilder::addTags);
+    Trace.Span span = spanBuilder.build();
+
+    Document doc =
+        build(
+                SchemaAwareLogDocumentBuilderImpl.FieldConflictPolicy.RAISE_ERROR,
+                false,
+                meterRegistry)
+            .fromMessage(span);
+
+    // indexed term is the empty string
+    assertThat(Arrays.stream(doc.getFields("host")).anyMatch(f -> "".equals(f.stringValue())))
+        .isTrue();
+    // doc-value is the empty string (this is what aggregations read)
+    assertThat(
+            Arrays.stream(doc.getFields("host"))
+                .anyMatch(
+                    f ->
+                        f instanceof SortedDocValuesField
+                            && "".equals(f.binaryValue().utf8ToString())))
+        .isTrue();
+  }
+
+  @Test
   public void testSimpleSchema() {
     Trace.KeyValue kv = SpanFormatter.convertKVtoProto("host", "host1", schema).get(0);
     assertThat(kv.getVStr()).isEqualTo("host1");
     assertThat(kv.getFieldType()).isEqualTo(Schema.SchemaFieldType.KEYWORD);
+    assertThat(kv.getIndexSignal()).isEqualTo(Trace.IndexSignal.IN_SCHEMA_INDEX);
 
     kv = SpanFormatter.convertKVtoProto("message", "my message", schema).get(0);
     assertThat(kv.getVStr()).isEqualTo("my message");
     assertThat(kv.getFieldType()).isEqualTo(Schema.SchemaFieldType.TEXT);
+    assertThat(kv.getIndexSignal()).isEqualTo(Trace.IndexSignal.IN_SCHEMA_INDEX);
 
     kv = SpanFormatter.convertKVtoProto("ip", "8.8.8.8", schema).get(0);
     assertThat(kv.getVStr()).isEqualTo("8.8.8.8");
     assertThat(kv.getFieldType()).isEqualTo(Schema.SchemaFieldType.IP);
+    assertThat(kv.getIndexSignal()).isEqualTo(Trace.IndexSignal.IN_SCHEMA_INDEX);
 
     String myTimestamp = "2021-01-01T00:00:00Z";
     Instant myDateInstant = Instant.parse(myTimestamp);
@@ -266,6 +318,7 @@ public class SpanFormatterWithSchemaTest {
             .build();
     kv = SpanFormatter.convertKVtoProto("myTimestamp", myTimestamp, schema).get(0);
     assertThat(kv.getVDate()).isEqualTo(myDateTimestamp);
+    assertThat(kv.getIndexSignal()).isEqualTo(Trace.IndexSignal.IN_SCHEMA_INDEX);
 
     myTimestamp = "2021-01-01T00:00:00Z";
     myDateInstant = Instant.parse(myTimestamp);
@@ -276,48 +329,59 @@ public class SpanFormatterWithSchemaTest {
             .build();
     kv = SpanFormatter.convertKVtoProto("myTimestamp", myTimestamp, schema).get(0);
     assertThat(kv.getVDate()).isEqualTo(myDateTimestamp);
+    assertThat(kv.getIndexSignal()).isEqualTo(Trace.IndexSignal.IN_SCHEMA_INDEX);
 
     assertThat(kv.getFieldType()).isEqualTo(Schema.SchemaFieldType.DATE);
 
     kv = SpanFormatter.convertKVtoProto("success", "true", schema).get(0);
     assertThat(kv.getFieldType()).isEqualTo(Schema.SchemaFieldType.BOOLEAN);
     assertThat(kv.getVBool()).isEqualTo(true);
+    assertThat(kv.getIndexSignal()).isEqualTo(Trace.IndexSignal.IN_SCHEMA_INDEX);
 
     kv = SpanFormatter.convertKVtoProto("success", true, schema).get(0);
     assertThat(kv.getFieldType()).isEqualTo(Schema.SchemaFieldType.BOOLEAN);
     assertThat(kv.getVBool()).isEqualTo(true);
+    assertThat(kv.getIndexSignal()).isEqualTo(Trace.IndexSignal.IN_SCHEMA_INDEX);
 
     kv = SpanFormatter.convertKVtoProto("cost", "10.0", schema).get(0);
     assertThat(kv.getFieldType()).isEqualTo(Schema.SchemaFieldType.DOUBLE);
     assertThat(kv.getVFloat64()).isEqualTo(10.0);
+    assertThat(kv.getIndexSignal()).isEqualTo(Trace.IndexSignal.IN_SCHEMA_INDEX);
 
     kv = SpanFormatter.convertKVtoProto("cost", 10.0, schema).get(0);
     assertThat(kv.getFieldType()).isEqualTo(Schema.SchemaFieldType.DOUBLE);
     assertThat(kv.getVFloat64()).isEqualTo(10.0);
+    assertThat(kv.getIndexSignal()).isEqualTo(Trace.IndexSignal.IN_SCHEMA_INDEX);
 
     kv = SpanFormatter.convertKVtoProto("amount", "10.0", schema).get(0);
     assertThat(kv.getFieldType()).isEqualTo(Schema.SchemaFieldType.FLOAT);
     assertThat(kv.getVFloat32()).isEqualTo(10.0f);
+    assertThat(kv.getIndexSignal()).isEqualTo(Trace.IndexSignal.IN_SCHEMA_INDEX);
 
     kv = SpanFormatter.convertKVtoProto("amount", 10.0, schema).get(0);
     assertThat(kv.getFieldType()).isEqualTo(Schema.SchemaFieldType.FLOAT);
     assertThat(kv.getVFloat32()).isEqualTo(10.0f);
+    assertThat(kv.getIndexSignal()).isEqualTo(Trace.IndexSignal.IN_SCHEMA_INDEX);
 
     kv = SpanFormatter.convertKVtoProto("amount_half_float", "10.0", schema).get(0);
     assertThat(kv.getFieldType()).isEqualTo(Schema.SchemaFieldType.HALF_FLOAT);
     assertThat(kv.getVFloat32()).isEqualTo(10.0f);
+    assertThat(kv.getIndexSignal()).isEqualTo(Trace.IndexSignal.IN_SCHEMA_INDEX);
 
     kv = SpanFormatter.convertKVtoProto("amount_half_float", 10.0, schema).get(0);
     assertThat(kv.getFieldType()).isEqualTo(Schema.SchemaFieldType.HALF_FLOAT);
     assertThat(kv.getVFloat32()).isEqualTo(10.0f);
+    assertThat(kv.getIndexSignal()).isEqualTo(Trace.IndexSignal.IN_SCHEMA_INDEX);
 
     kv = SpanFormatter.convertKVtoProto("value", "10", schema).get(0);
     assertThat(kv.getFieldType()).isEqualTo(Schema.SchemaFieldType.INTEGER);
     assertThat(kv.getVInt32()).isEqualTo(10);
+    assertThat(kv.getIndexSignal()).isEqualTo(Trace.IndexSignal.IN_SCHEMA_INDEX);
 
     kv = SpanFormatter.convertKVtoProto("value", 10, schema).get(0);
     assertThat(kv.getFieldType()).isEqualTo(Schema.SchemaFieldType.INTEGER);
     assertThat(kv.getVInt32()).isEqualTo(10);
+    assertThat(kv.getIndexSignal()).isEqualTo(Trace.IndexSignal.IN_SCHEMA_INDEX);
 
     kv = SpanFormatter.convertKVtoProto("count", "10", schema).get(0);
     assertThat(kv.getFieldType()).isEqualTo(Schema.SchemaFieldType.LONG);
@@ -326,26 +390,32 @@ public class SpanFormatterWithSchemaTest {
     kv = SpanFormatter.convertKVtoProto("count", 10, schema).get(0);
     assertThat(kv.getFieldType()).isEqualTo(Schema.SchemaFieldType.LONG);
     assertThat(kv.getVInt64()).isEqualTo(10L);
+    assertThat(kv.getIndexSignal()).isEqualTo(Trace.IndexSignal.IN_SCHEMA_INDEX);
 
     kv = SpanFormatter.convertKVtoProto("count_scaled_long", "10", schema).get(0);
     assertThat(kv.getFieldType()).isEqualTo(Schema.SchemaFieldType.SCALED_LONG);
     assertThat(kv.getVInt64()).isEqualTo(10);
+    assertThat(kv.getIndexSignal()).isEqualTo(Trace.IndexSignal.IN_SCHEMA_INDEX);
 
     kv = SpanFormatter.convertKVtoProto("count_scaled_long", 10, schema).get(0);
     assertThat(kv.getFieldType()).isEqualTo(Schema.SchemaFieldType.SCALED_LONG);
     assertThat(kv.getVInt64()).isEqualTo(10L);
+    assertThat(kv.getIndexSignal()).isEqualTo(Trace.IndexSignal.IN_SCHEMA_INDEX);
 
     kv = SpanFormatter.convertKVtoProto("count_short", "10", schema).get(0);
     assertThat(kv.getFieldType()).isEqualTo(Schema.SchemaFieldType.SHORT);
     assertThat(kv.getVInt32()).isEqualTo(10L);
+    assertThat(kv.getIndexSignal()).isEqualTo(Trace.IndexSignal.IN_SCHEMA_INDEX);
 
     kv = SpanFormatter.convertKVtoProto("count_short", 10, schema).get(0);
     assertThat(kv.getFieldType()).isEqualTo(Schema.SchemaFieldType.SHORT);
     assertThat(kv.getVInt32()).isEqualTo(10);
+    assertThat(kv.getIndexSignal()).isEqualTo(Trace.IndexSignal.IN_SCHEMA_INDEX);
 
     kv = SpanFormatter.convertKVtoProto("bucket", "e30=", schema).get(0);
     assertThat(kv.getFieldType()).isEqualTo(Schema.SchemaFieldType.BINARY);
     assertThat(kv.getVBinary().toStringUtf8()).isEqualTo("e30=");
+    assertThat(kv.getIndexSignal()).isEqualTo(Trace.IndexSignal.DO_NOT_INDEX);
   }
 
   @Test
@@ -397,45 +467,56 @@ public class SpanFormatterWithSchemaTest {
     Trace.KeyValue kv = SpanFormatter.convertKVtoProto("host", "host1", schema).get(0);
     assertThat(kv.getVStr()).isEqualTo("host1");
     assertThat(kv.getFieldType()).isEqualTo(Schema.SchemaFieldType.KEYWORD);
+    assertThat(kv.getIndexSignal()).isEqualTo(Trace.IndexSignal.DYNAMIC_INDEX);
 
     kv = SpanFormatter.convertKVtoProto("ip", "8.8.8.8", schema).get(0);
     assertThat(kv.getVStr()).isEqualTo("8.8.8.8");
     assertThat(kv.getFieldType()).isEqualTo(Schema.SchemaFieldType.KEYWORD);
+    assertThat(kv.getIndexSignal()).isEqualTo(Trace.IndexSignal.DYNAMIC_INDEX);
 
     kv = SpanFormatter.convertKVtoProto("myTimestamp", "2021-01-01T00:00:00Z", schema).get(0);
     assertThat(kv.getVStr()).isEqualTo("2021-01-01T00:00:00Z");
     assertThat(kv.getFieldType()).isEqualTo(Schema.SchemaFieldType.KEYWORD);
+    assertThat(kv.getIndexSignal()).isEqualTo(Trace.IndexSignal.DYNAMIC_INDEX);
 
     kv = SpanFormatter.convertKVtoProto("success", "true", schema).get(0);
     assertThat(kv.getFieldType()).isEqualTo(Schema.SchemaFieldType.KEYWORD);
     assertThat(kv.getVStr()).isEqualTo("true");
+    assertThat(kv.getIndexSignal()).isEqualTo(Trace.IndexSignal.DYNAMIC_INDEX);
 
     kv = SpanFormatter.convertKVtoProto("success", true, schema).get(0);
     assertThat(kv.getFieldType()).isEqualTo(Schema.SchemaFieldType.BOOLEAN);
     assertThat(kv.getVBool()).isEqualTo(true);
+    assertThat(kv.getIndexSignal()).isEqualTo(Trace.IndexSignal.DYNAMIC_INDEX);
 
     kv = SpanFormatter.convertKVtoProto("cost", "10.0", schema).get(0);
     assertThat(kv.getFieldType()).isEqualTo(Schema.SchemaFieldType.KEYWORD);
     assertThat(kv.getVStr()).isEqualTo("10.0");
+    assertThat(kv.getIndexSignal()).isEqualTo(Trace.IndexSignal.DYNAMIC_INDEX);
 
     kv = SpanFormatter.convertKVtoProto("amount", 10.0f, schema).get(0);
     assertThat(kv.getFieldType()).isEqualTo(Schema.SchemaFieldType.FLOAT);
     assertThat(kv.getVFloat32()).isEqualTo(10.0f);
+    assertThat(kv.getIndexSignal()).isEqualTo(Trace.IndexSignal.DYNAMIC_INDEX);
 
     kv = SpanFormatter.convertKVtoProto("cost", 10.0, schema).get(0);
     assertThat(kv.getFieldType()).isEqualTo(Schema.SchemaFieldType.DOUBLE);
     assertThat(kv.getVFloat64()).isEqualTo(10.0);
+    assertThat(kv.getIndexSignal()).isEqualTo(Trace.IndexSignal.DYNAMIC_INDEX);
 
     kv = SpanFormatter.convertKVtoProto("value", 10, schema).get(0);
     assertThat(kv.getFieldType()).isEqualTo(Schema.SchemaFieldType.INTEGER);
+    assertThat(kv.getIndexSignal()).isEqualTo(Trace.IndexSignal.DYNAMIC_INDEX);
 
     kv = SpanFormatter.convertKVtoProto("count", 10L, schema).get(0);
     assertThat(kv.getFieldType()).isEqualTo(Schema.SchemaFieldType.LONG);
     assertThat(kv.getVInt64()).isEqualTo(10L);
+    assertThat(kv.getIndexSignal()).isEqualTo(Trace.IndexSignal.DYNAMIC_INDEX);
 
     kv = SpanFormatter.convertKVtoProto("bucket", "e30=", schema).get(0);
     assertThat(kv.getFieldType()).isEqualTo(Schema.SchemaFieldType.KEYWORD);
     assertThat(kv.getVStr()).isEqualTo("e30=");
+    assertThat(kv.getIndexSignal()).isEqualTo(Trace.IndexSignal.DYNAMIC_INDEX);
   }
 
   @Test
@@ -603,8 +684,17 @@ public class SpanFormatterWithSchemaTest {
                   assertThat(field.binaryValue().utf8ToString()).isEqualTo(tag.getVStr());
                 } else if (fieldType == FieldType.IP) {
                   assertThat(tag.getFieldType()).isEqualTo(Schema.SchemaFieldType.IP);
-                  assertThat(InetAddressPoint.decode(field.binaryValue().bytes).getHostName())
-                      .isEqualTo(tag.getVStr());
+                  if (field instanceof StoredField) {
+                    assertThat(field.binaryValue().utf8ToString()).isEqualTo(tag.getVStr());
+                  } else {
+                    byte[] encodedAddress =
+                        Arrays.copyOfRange(
+                            field.binaryValue().bytes,
+                            field.binaryValue().offset,
+                            field.binaryValue().offset + field.binaryValue().length);
+                    assertThat(InetAddressPoint.decode(encodedAddress).getHostAddress())
+                        .isEqualTo(tag.getVStr());
+                  }
                 } else if (fieldType == FieldType.BYTE) {
                   assertThat(tag.getFieldType()).isEqualTo(Schema.SchemaFieldType.BYTE);
                   assertThat(field.numericValue().byteValue()).isEqualTo((byte) tag.getVInt32());

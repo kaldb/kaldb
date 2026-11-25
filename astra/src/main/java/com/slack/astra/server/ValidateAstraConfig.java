@@ -24,6 +24,9 @@ public class ValidateAstraConfig {
     if (AstraConfig.getNodeRolesList().contains(AstraConfigs.NodeRole.CACHE)) {
       validateCacheConfig(AstraConfig.getCacheConfig());
     }
+    if (AstraConfig.getNodeRolesList().contains(AstraConfigs.NodeRole.MANAGER)) {
+      validateManagerConfig(AstraConfig.getManagerConfig());
+    }
   }
 
   private static void validateIndexConfig(AstraConfigs.IndexerConfig indexerConfig) {
@@ -50,6 +53,13 @@ public class ValidateAstraConfig {
         queryConfig.getServerConfig().getRequestTimeoutMs()
             > queryConfig.getDefaultQueryTimeoutMs(),
         "QueryConfig requestTimeoutMs must be higher than defaultQueryTimeoutMs");
+    checkArgument(
+        queryConfig.getZipkinDefaultMaxSpans() >= 1000,
+        "QueryConfig zipkinDefaultMaxSpans cannot less than 1000");
+
+    checkArgument(
+        queryConfig.getZipkinDefaultLookbackMins() >= 1440,
+        "QueryConfig zipkinDefaultLookbackMins cannot less than 1440");
   }
 
   private static void validateCacheConfig(AstraConfigs.CacheConfig cacheConfig) {
@@ -63,6 +73,12 @@ public class ValidateAstraConfig {
         cacheConfig.getServerConfig().getRequestTimeoutMs()
             > cacheConfig.getDefaultQueryTimeoutMs(),
         "CacheConfig requestTimeoutMs must be higher than defaultQueryTimeoutMs");
+  }
+
+  private static void validateManagerConfig(AstraConfigs.ManagerConfig managerConfig) {
+    checkArgument(
+        managerConfig.getPartitionAssignmentConfig().getMinNumberOfPartitions() > 0,
+        "ManagerConfig partitionAssignmentConfig.minNumberOfPartitions must be greater than 0");
   }
 
   public static void validateNodeRoles(List<AstraConfigs.NodeRole> nodeRoleList) {

@@ -23,6 +23,8 @@ import com.slack.astra.clusterManager.ReplicaEvictionService;
 import com.slack.astra.clusterManager.ReplicaRestoreService;
 import com.slack.astra.clusterManager.SnapshotDeletionService;
 import com.slack.astra.elasticsearchApi.ElasticsearchApiService;
+import com.slack.astra.graphApi.GraphConfig;
+import com.slack.astra.graphApi.GraphService;
 import com.slack.astra.logstore.LogMessage;
 import com.slack.astra.logstore.schema.ReservedFields;
 import com.slack.astra.logstore.search.AstraDistributedQueryService;
@@ -35,6 +37,7 @@ import com.slack.astra.metadata.core.CuratorBuilder;
 import com.slack.astra.metadata.dataset.DatasetMetadataStore;
 import com.slack.astra.metadata.fieldredaction.FieldRedactionMetadataStore;
 import com.slack.astra.metadata.hpa.HpaMetricMetadataStore;
+import com.slack.astra.metadata.partition.PartitionMetadataStore;
 import com.slack.astra.metadata.preprocessor.PreprocessorMetadataStore;
 import com.slack.astra.metadata.recovery.RecoveryNodeMetadataStore;
 import com.slack.astra.metadata.recovery.RecoveryTaskMetadataStore;
@@ -47,6 +50,7 @@ import com.slack.astra.proto.metadata.Metadata;
 import com.slack.astra.proto.schema.Schema;
 import com.slack.astra.recovery.RecoveryService;
 import com.slack.astra.util.RuntimeHalterImpl;
+import com.slack.astra.zipkinApi.TraceFetcher;
 import com.slack.astra.zipkinApi.ZipkinService;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Metrics;
@@ -143,7 +147,11 @@ public class Astra {
     curatorFramework =
         CuratorBuilder.build(
             prometheusMeterRegistry, astraConfig.getMetadataStoreConfig().getZookeeperConfig());
-    BlobStore blobStore = new BlobStore(s3Client, astraConfig.getS3Config().getS3Bucket());
+    BlobStore blobStore =
+        new BlobStore(
+            s3Client,
+            astraConfig.getS3Config().getS3Bucket(),
+            astraConfig.getS3Config().getS3PathPrefix());
 
     Set<Service> services =
         getServices(curatorFramework, astraConfig, blobStore, prometheusMeterRegistry);
@@ -239,12 +247,37 @@ public class Astra {
       // https://github.com/slackhq/astra/pull/564)
       final int serverPort = astraConfig.getQueryConfig().getServerConfig().getServerPort();
 
+      GraphConfig graphConfig = GraphConfig.DEFAULT;
+      String depGraphConfigFile = astraConfig.getQueryConfig().getDepGraphConfigFile();
+
+      if (!depGraphConfigFile.isEmpty()) {
+        LOG.info("Loading dependency graph config file: {}", depGraphConfigFile);
+        graphConfig = GraphConfig.load(Path.of(depGraphConfigFile));
+      } else {
+        LOG.info("No dependency graph config file provided, using empty config");
+      }
+
+      TraceFetcher tf =
+          new TraceFetcher(
+              astraDistributedQueryService,
+              blobStore,
+              astraConfig.getQueryConfig().getZipkinDefaultMaxSpans(),
+              astraConfig.getQueryConfig().getZipkinDefaultLookbackMins(),
+              astraConfig.getQueryConfig().getZipkinDefaultDataFreshnessSecs());
+
       ArmeriaService armeriaService =
           new ArmeriaService.Builder(serverPort, "astraQuery", meterRegistry)
               .withRequestTimeout(requestTimeout)
               .withTracing(astraConfig.getTracingConfig())
-              .withAnnotatedService(new ElasticsearchApiService(astraDistributedQueryService))
-              .withAnnotatedService(new ZipkinService(astraDistributedQueryService))
+              .withAnnotatedService(
+                  new ElasticsearchApiService(
+                      astraDistributedQueryService,
+                      astraConfig.getClusterConfig().getClusterName(),
+                      astraConfig.getQueryConfig().getServerConfig().getServerAddress(),
+                      astraConfig.getQueryConfig().getServerConfig().getServerPort(),
+                      datasetMetadataStore))
+              .withAnnotatedService(new ZipkinService(tf))
+              .withAnnotatedService(new GraphService(tf, graphConfig, meterRegistry))
               .withGrpcService(astraDistributedQueryService)
               .build();
       services.add(armeriaService);
@@ -318,6 +351,9 @@ public class Astra {
       DatasetMetadataStore datasetMetadataStore =
           new DatasetMetadataStore(
               curatorFramework, astraConfig.getMetadataStoreConfig(), meterRegistry, true);
+      PartitionMetadataStore partitionMetadataStore =
+          new PartitionMetadataStore(
+              curatorFramework, astraConfig.getMetadataStoreConfig(), meterRegistry, true);
       HpaMetricMetadataStore hpaMetricMetadataStore =
           new HpaMetricMetadataStore(
               curatorFramework, astraConfig.getMetadataStoreConfig(), meterRegistry, true);
@@ -338,9 +374,12 @@ public class Astra {
               .withGrpcService(
                   new ManagerApiGrpc(
                       datasetMetadataStore,
+                      partitionMetadataStore,
                       snapshotMetadataStore,
                       replicaRestoreService,
-                      fieldRedactionMetadataStore))
+                      fieldRedactionMetadataStore,
+                      managerConfig.getPartitionAssignmentConfig().getMinNumberOfPartitions()))
+              .withStaticFiles("/admin", "admin-ui/")
               .build();
       services.add(armeriaService);
 
@@ -354,6 +393,7 @@ public class Astra {
                   recoveryNodeMetadataStore,
                   cacheSlotMetadataStore,
                   datasetMetadataStore,
+                  partitionMetadataStore,
                   hpaMetricMetadataStore)));
 
       ReplicaCreationService replicaCreationService =

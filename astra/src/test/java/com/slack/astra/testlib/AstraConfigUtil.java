@@ -3,7 +3,6 @@ package com.slack.astra.testlib;
 import com.slack.astra.proto.config.AstraConfigs;
 
 public class AstraConfigUtil {
-
   public static AstraConfigs.AstraConfig makeAstraConfig(
       String bootstrapServers,
       int indexerPort,
@@ -82,6 +81,7 @@ public class AstraConfigUtil {
                     .setRequestTimeoutMs(5000)
                     .build())
             .setDefaultQueryTimeoutMs(3000)
+            .setZipkinDefaultMaxSpans(20000)
             .build();
 
     AstraConfigs.RecoveryConfig recoveryConfig =

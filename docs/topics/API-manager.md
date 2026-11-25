@@ -2,6 +2,11 @@
 
 API definitions for manager nodes, accessed via manager Docs service and admin tools.
 
+For unframed JSON requests and responses, this service follows the protobuf JSON encoding used by
+Armeria. Default-valued proto3 fields may be omitted from responses. In practice, that means:
+- `usingDedicatedPartitions` may be absent when it is `false`
+- `provisionedCapacity` may be absent when it is `0`
+
 <api-doc openapi-path="../api/manager_api.yaml">
     <api-endpoint endpoint="/slack.proto.astra.ManagerApiService/CreateDatasetMetadata" method="POST">
         <request>
@@ -159,20 +164,29 @@ API definitions for manager nodes, accessed via manager Docs service and admin t
     </api-endpoint>
     <api-endpoint endpoint="/slack.proto.astra.ManagerApiService/UpdatePartitionAssignment" method="POST">
         <request>
-            <sample lang="JSON" title="Complete update">
+            <sample lang="JSON" title="Manual assignment">
                 {
                   "name": "example",
                   "throughputBytes": "4000000",
                   "partitionIds": [
-                    "0"
+                    "0",
+                    "1"
                   ]
                 }
             </sample>
-            <sample lang="JSON" title="Throughput only">
+            <sample lang="JSON" title="Auto-assignment on shared partitions">
                 {
                   "name": "example",
                   "throughputBytes": "4000000",
                   "partitionIds": []
+                }
+            </sample>
+            <sample lang="JSON" title="Auto-assignment on dedicated partitions">
+                {
+                  "name": "payments",
+                  "throughputBytes": "12000000",
+                  "partitionIds": [],
+                  "requireDedicatedPartition": true
                 }
             </sample>
         </request>
@@ -180,10 +194,78 @@ API definitions for manager nodes, accessed via manager Docs service and admin t
             <sample lang="JSON">
                 {
                   "assignedPartitionIds": [
-                    "0"
+                    "0",
+                    "1"
                   ]
                 }
             </sample>
         </response>
     </api-endpoint>
-</api-doc> 
+    <api-endpoint endpoint="/slack.proto.astra.ManagerApiService/CreatePartition" method="POST">
+        <request>
+            <sample lang="JSON">
+                {
+                  "partitionId": "3",
+                  "maxCapacity": "250"
+                }
+            </sample>
+        </request>
+        <response type="200">
+            <sample lang="JSON">
+                {
+                  "partitionId": "3",
+                  "maxCapacity": "250"
+                }
+            </sample>
+        </response>
+    </api-endpoint>
+    <api-endpoint endpoint="/slack.proto.astra.ManagerApiService/ListPartitionMetadata" method="POST">
+        <response type="200">
+            <sample lang="JSON">
+                {
+                  "partitionMetadata": [
+                    {
+                      "partitionId": "1",
+                      "maxCapacity": "250",
+                      "provisionedCapacity": "100",
+                      "shared": {
+                        "datasets": [
+                          "example"
+                        ]
+                      }
+                    },
+                    {
+                      "partitionId": "2",
+                      "maxCapacity": "250",
+                      "provisionedCapacity": "120",
+                      "dedicated": {
+                        "dataset": "payments"
+                      }
+                    },
+                    {
+                      "partitionId": "3",
+                      "maxCapacity": "250",
+                      "empty": {}
+                    }
+                  ]
+                }
+            </sample>
+        </response>
+    </api-endpoint>
+    <api-endpoint endpoint="/slack.proto.astra.ManagerApiService/DeletePartition" method="POST">
+        <request>
+            <sample lang="JSON">
+                {
+                  "partitionId": "3"
+                }
+            </sample>
+        </request>
+        <response type="200">
+            <sample lang="JSON">
+                {
+                  "status": "Deleted partition 3 successfully"
+                }
+            </sample>
+        </response>
+    </api-endpoint>
+</api-doc>
