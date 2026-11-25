@@ -10,7 +10,15 @@ record GatewayConfig(
     String listenHost,
     int listenPort,
     Duration requestTimeout,
-    int maxRequestBytes) {
+    int maxRequestBytes,
+    String traceAnalyticsDataset) {
+
+  GatewayConfig {
+    if (!traceAnalyticsDataset.isEmpty()
+        && !traceAnalyticsDataset.matches("[a-zA-Z0-9][a-zA-Z0-9_.-]*")) {
+      throw new IllegalArgumentException("TRACE_ANALYTICS_DATASET must be an exact dataset name");
+    }
+  }
 
   static GatewayConfig fromEnvironment() {
     Map<String, String> environment = System.getenv();
@@ -20,7 +28,8 @@ record GatewayConfig(
         environment.getOrDefault("LISTEN_HOST", "0.0.0.0"),
         parseIntEnv(environment, "LISTEN_PORT", 9200),
         Duration.ofSeconds(parseLongEnv(environment, "REQUEST_TIMEOUT_SEC", 30L)),
-        parseIntEnv(environment, "MAX_REQUEST_BYTES", 10485760));
+        parseIntEnv(environment, "MAX_REQUEST_BYTES", 10485760),
+        environment.getOrDefault("TRACE_ANALYTICS_DATASET", ""));
   }
 
   URI uriFor(Upstream upstream) {
