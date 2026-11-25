@@ -13,7 +13,7 @@
 
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <javac.target>21</javac.target>
+    <javac.target>25</javac.target>
     <uberjar.name>tools-loadgen</uberjar.name>
 
     <!-- align with root project conventions -->
@@ -31,7 +31,7 @@
   </licenses>
 
   <dependencies>
-    <!-- No runtime deps required: using JDK 21 HttpClient -->
+    <!-- No runtime deps required: using the JDK HttpClient -->
     <!-- Test deps -->
     <dependency>
       <groupId>org.junit.jupiter</groupId>
