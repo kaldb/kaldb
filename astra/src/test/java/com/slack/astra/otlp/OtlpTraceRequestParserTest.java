@@ -208,6 +208,23 @@ class OtlpTraceRequestParserTest {
   }
 
   @Test
+  void trimsConfiguredDatasetNameBeforeRoutingSpans() throws Exception {
+    Map<String, List<Trace.Span>> spansByDataset =
+        OtlpTraceRequestParser.parseProtobuf(
+            requestWithSpan("frontend", "GET /api").toByteArray(),
+            " \totel-demo-traces \n",
+            Schema.IngestSchema.getDefaultInstance());
+
+    assertThat(spansByDataset.keySet()).containsExactly("otel-demo-traces");
+    assertThat(
+            tag(
+                    spansByDataset.get("otel-demo-traces").getFirst(),
+                    LogMessage.ReservedField.SERVICE_NAME.fieldName)
+                .getVStr())
+        .isEqualTo("otel-demo-traces");
+  }
+
+  @Test
   void usesDefaultDatasetNameWhenConfiguredNameIsBlank() throws Exception {
     Map<String, List<Trace.Span>> spansByDataset =
         OtlpTraceRequestParser.parseProtobuf(

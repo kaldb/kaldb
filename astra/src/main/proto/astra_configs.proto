@@ -308,8 +308,11 @@ message PreprocessorConfig {
   // has triggered it
   int32 dataset_rate_limit_period_secs = 14;
 
-  // Logical dataset name used by the OTLP/HTTP /v1/traces endpoint.
-  // All spans received through OTLP traces are written using this dataset key.
-  // Provision this dataset with serviceNamePattern: _all so it can accept spans from every service.
+  // Destination KalDB dataset for all spans received at POST /v1/traces.
+  // OTLP carries no KalDB dataset name, so set preprocessorConfig.otlpTraceDatasetName
+  // (ASTRA_PREPROCESSOR_OTLP_TRACE_DATASET_NAME in config.yaml) to the provisioned dataset.
+  // Defaults to otel_traces when unset or blank; surrounding whitespace is removed.
+  // Span service_name is set to this dataset key; resource.service.name preserves the producer.
+  // Provision the dataset with serviceNamePattern equal to this key, or _all.
   string otlp_trace_dataset_name = 15;
 }

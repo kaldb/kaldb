@@ -72,7 +72,9 @@ public class OtlpTraceIngestApi {
     this.otlpTraceTimer = meterRegistry.timer(OTLP_TRACE_TIMER);
   }
 
-  /** Handles OTLP/HTTP trace export requests. */
+  /**
+   * Handles OTLP/HTTP trace exports on Armeria's shared blocking executor while waiting for Kafka.
+   */
   @Blocking
   @Post("/v1/traces")
   public HttpResponse ingestTraces(AggregatedHttpRequest request) {

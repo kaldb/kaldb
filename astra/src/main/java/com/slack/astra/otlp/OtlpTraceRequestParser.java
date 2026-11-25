@@ -41,8 +41,6 @@ public final class OtlpTraceRequestParser {
   private static final String SCOPE_PREFIX = "scope.";
   private static final String SERVICE_NAME = LogMessage.ReservedField.SERVICE_NAME.fieldName;
 
-  private OtlpTraceRequestParser() {}
-
   /**
    * Parses an OTLP protobuf trace export request into spans keyed by the configured trace dataset.
    */
@@ -63,10 +61,8 @@ public final class OtlpTraceRequestParser {
 
   /** Returns the configured trace dataset name, falling back to the default when unset. */
   public static String normalizeTraceDatasetName(String traceDatasetName) {
-    if (traceDatasetName == null || traceDatasetName.isBlank()) {
-      return DEFAULT_TRACE_DATASET_NAME;
-    }
-    return traceDatasetName;
+    String normalized = traceDatasetName == null ? "" : traceDatasetName.strip();
+    return normalized.isEmpty() ? DEFAULT_TRACE_DATASET_NAME : normalized;
   }
 
   private static String normalizeJsonTraceIds(String postBody)
@@ -291,4 +287,6 @@ public final class OtlpTraceRequestParser {
       target.addAll(tags);
     }
   }
+
+  private OtlpTraceRequestParser() {}
 }

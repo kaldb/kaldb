@@ -795,5 +795,12 @@ preprocessorConfig:
   otlpTraceDatasetName: otel_traces
 ```
 
-Logical dataset name used by the OTLP/HTTP `/v1/traces` endpoint. The dataset must be provisioned
-with `serviceNamePattern: _all`.
+Destination KalDB dataset for all spans received at `POST /v1/traces`. OTLP export requests do not
+contain a KalDB dataset name, so this setting supplies the key used for dataset rate limiting and
+Kafka routing. It defaults to `otel_traces` when omitted or blank; surrounding whitespace is removed.
+The sample config exposes it as `ASTRA_PREPROCESSOR_OTLP_TRACE_DATASET_NAME`. For example, the
+OpenTelemetry demo sets it to `otel-demo-traces` to match its provisioned trace dataset.
+
+The parser sets each span's routing `service_name` to this dataset key and preserves the producing
+service separately as `resource.service.name`. Provision the dataset with `serviceNamePattern`
+equal to the configured key, or `_all`; different producing services can then share the trace dataset.

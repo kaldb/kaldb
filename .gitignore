@@ -12,6 +12,10 @@ dependency-reduced-pom.xml
 .vscode/
 tmp/
 
+# Local Superpowers planning and execution artifacts
+/.superpowers/
+/docs/superpowers/
+
 # Mac
 .DS_STORE
 
