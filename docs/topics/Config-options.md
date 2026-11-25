@@ -787,3 +787,53 @@ preprocessorConfig:
 Error code to return when the rate limit of the preprocessor is exceeded. If using OpenSearch 
 [Data Prepper](https://opensearch.org/docs/latest/data-prepper/) a return code of `400` or `404` would mark the request 
 as unable to be retried and sent to the dead letter queue.
+
+### otlpTraceDatasetName
+
+```yaml
+preprocessorConfig:
+  otlpTraceDatasetName: otel_traces
+```
+
+Fallback KalDB dataset for `POST /v1/traces` when the request has no `X-KalDB-Dataset` header.
+OTLP export requests do not contain a standard KalDB dataset name. Routing uses the request header
+first, then this configuration value, then `otel_traces` when the config is omitted or blank.
+Surrounding whitespace is removed. Most users can provision `otel_traces` and leave this setting unset.
+The sample config exposes it as `ASTRA_PREPROCESSOR_OTLP_TRACE_DATASET_NAME`. For example, the
+OpenTelemetry demo sets it to `otel-demo-traces` to match its provisioned trace dataset.
+
+The parser sets each span's routing `service_name` to the selected dataset key and preserves the
+producing service separately as `resource.service.name`. Provision the dataset with `serviceNamePattern`
+equal to the selected key, or `_all`; different producing services can then share the trace dataset.
+Routing follows the matching precedence described below, including when the configured default is used.
+
+#### Request header override
+
+Set `X-KalDB-Dataset` to choose one routing key for the entire request. The same key is used for
+rate limiting and Kafka routing. Both select the first matching dataset in descending throughput
+order, comparing the key with each dataset's `serviceNamePattern`. A wildcard pattern (`_all` or `*`)
+with higher throughput can take precedence over an exact-match dataset with lower throughput.
+The header does not look up a dataset by name or give exact matches priority. Use nonoverlapping
+patterns when a routing key must reach a dedicated dataset.
+
+Header values must contain 1–256 letters, digits,
+underscores, or hyphens, following the dataset-name rules. Blank, invalid, or repeated headers return
+HTTP 400 without writing spans; an explicit invalid override never falls back to another dataset.
+Dataset provisioning and existing rate limits still apply.
+
+For example, configure the Collector's OTLP/HTTP exporter (named `otlphttp` in older Collectors):
+
+```yaml
+exporters:
+  otlp_http/kaldb:
+    endpoint: http://kaldb:8086
+    encoding: proto
+    compression: gzip
+    headers:
+      X-KalDB-Dataset: application-traces
+```
+
+The exporter appends `/v1/traces` to the base endpoint. KalDB supports its default gzip request
+compression. See
+[Sending traces with OpenTelemetry Collector](Traces.md#sending-traces-with-opentelemetry-collector)
+for a complete receiver, processor, exporter, and service pipeline configuration.

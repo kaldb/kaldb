@@ -307,4 +307,13 @@ message PreprocessorConfig {
   // refresh of the dataset rate limits, whether or not a ZK event
   // has triggered it
   int32 dataset_rate_limit_period_secs = 14;
+
+  // Fallback KalDB dataset for POST /v1/traces requests without X-KalDB-Dataset.
+  // OTLP carries no KalDB dataset name, so set preprocessorConfig.otlpTraceDatasetName
+  // (ASTRA_PREPROCESSOR_OTLP_TRACE_DATASET_NAME in config.yaml) to the provisioned dataset.
+  // Defaults to otel_traces when unset or blank; surrounding whitespace is removed.
+  // X-KalDB-Dataset overrides this value for one request; the same provisioning rules apply.
+  // Span service_name is set to the selected key; resource.service.name preserves the producer.
+  // Provision the dataset with serviceNamePattern equal to the selected key, or _all.
+  string otlp_trace_dataset_name = 15;
 }

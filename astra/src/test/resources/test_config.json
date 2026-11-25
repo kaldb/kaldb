@@ -165,7 +165,8 @@
     "bootstrapServers": "localhost:9092",
     "useBulkApi": false,
     "rateLimitExceededErrorCode": 400,
-    "schemaFile": "schema/test_schema.yaml"
+    "schemaFile": "schema/test_schema.yaml",
+    "otlpTraceDatasetName": "custom_otel_traces"
   },
   "clusterConfig": {
     "clusterName": "test_astra_json_cluster",

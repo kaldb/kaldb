@@ -304,6 +304,7 @@ public class AstraConfigTest {
     assertThat(preprocessorConfig.getRateLimiterMaxBurstSeconds()).isEqualTo(2);
     assertThat(preprocessorConfig.getRateLimitExceededErrorCode()).isEqualTo(400);
     assertThat(preprocessorConfig.getSchemaFile()).isEqualTo("schema/test_schema.yaml");
+    assertThat(preprocessorConfig.getOtlpTraceDatasetName()).isEqualTo("custom_otel_traces");
 
     final AstraConfigs.KafkaConfig preprocessorKafkaConfig =
         config.getPreprocessorConfig().getKafkaConfig();
@@ -355,6 +356,7 @@ public class AstraConfigTest {
             readProjectFile("config/config.yaml"), Map.of("S3_PATH_PREFIX", "tenant-a/astra")::get);
 
     assertThat(config.getS3Config().getS3PathPrefix()).isEqualTo("tenant-a/astra");
+    assertThat(config.getPreprocessorConfig().getOtlpTraceDatasetName()).isEqualTo("otel_traces");
   }
 
   @Test
@@ -524,6 +526,7 @@ public class AstraConfigTest {
     final AstraConfigs.PreprocessorConfig preprocessorConfig = config.getPreprocessorConfig();
     assertThat(preprocessorConfig.getPreprocessorInstanceCount()).isEqualTo(1);
     assertThat(preprocessorConfig.getRateLimiterMaxBurstSeconds()).isEqualTo(2);
+    assertThat(preprocessorConfig.getOtlpTraceDatasetName()).isEqualTo("custom_otel_traces");
 
     final AstraConfigs.KafkaConfig preprocessorKafkaConfig =
         config.getPreprocessorConfig().getKafkaConfig();

@@ -131,8 +131,11 @@ public class PreprocessorRateLimiter {
     }
   }
 
+  /** Returns the rate limit byte cost with a one-byte floor for each span. */
   public static int getSpanBytes(List<Trace.Span> spans) {
-    return spans.stream().mapToInt(Trace.Span::getSerializedSize).sum();
+    // Empty protobuf spans serialize to zero bytes, but should still count per span so large
+    // empty batches cannot bypass rate limiting.
+    return spans.stream().mapToInt(span -> Math.max(1, span.getSerializedSize())).sum();
   }
 
   public BiPredicate<String, List<Trace.Span>> createBulkIngestRateLimiter(
