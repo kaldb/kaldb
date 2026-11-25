@@ -50,6 +50,7 @@ import com.slack.astra.proto.service.AstraSearch;
 import com.slack.astra.proto.service.AstraServiceGrpc;
 import com.slack.astra.testlib.MessageUtil;
 import com.slack.astra.testlib.SpanUtil;
+import com.slack.astra.util.JsonUtil;
 import com.slack.service.murron.trace.Trace;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -1223,7 +1224,8 @@ public class AstraDistributedQueryServiceTest {
 
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
-  void testSearchAndSchemaRetainSuccessfulResultsWhenPeerFailsOrTimesOut(boolean timesOut) {
+  void testSearchAndSchemaRetainSuccessfulResultsWhenPeerFailsOrTimesOut(boolean timesOut)
+      throws IOException {
     SearchMetadataStore searchStore = mock(SearchMetadataStore.class);
     when(searchStore.listSync())
         .thenReturn(
@@ -1252,10 +1254,16 @@ public class AstraDistributedQueryServiceTest {
     when(successfulStub.withDeadlineAfter(anyLong(), any(TimeUnit.class)))
         .thenReturn(successfulStub);
     when(successfulStub.withInterceptors(any())).thenReturn(successfulStub);
+    LogMessage successfulMessage =
+        MessageUtil.makeMessageWithIndexAndTimestamp(
+            1, "successful peer hit", "foo", Instant.ofEpochMilli(150));
     when(successfulStub.search(any()))
         .thenReturn(
             Futures.immediateFuture(
                 AstraSearch.SearchResult.newBuilder()
+                    .addHits(
+                        AstraSearch.SearchResult.Hit.newBuilder()
+                            .setMessage(JsonUtil.writeAsString(successfulMessage)))
                     .setTotalNodes(1)
                     .setRequestedSnapshots(1)
                     .setFulfilledSnapshots(1)
@@ -1307,6 +1315,9 @@ public class AstraDistributedQueryServiceTest {
       assertThat(result.getFailedNodes()).isEqualTo(1);
       assertThat(result.getRequestedSnapshots()).isEqualTo(2);
       assertThat(result.getFulfilledSnapshots()).isEqualTo(1);
+      assertThat(SearchResultUtils.fromSearchResultProto(result).hits)
+          .extracting(hit -> hit.message().getId())
+          .containsExactly(successfulMessage.getId());
 
       AstraSearch.SchemaResult schema =
           service.getSchema(

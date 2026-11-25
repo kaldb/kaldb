@@ -988,11 +988,20 @@ public class IndexingChunkManagerTest {
   @Test
   @SuppressWarnings("unchecked")
   void testQueryRetainsCompletedChunkWhenAnotherTimesOut() throws Exception {
-    initChunkManager(
-        new MessageSizeOrCountBasedRolloverStrategy(
-            metricsRegistry, Long.MAX_VALUE, Long.MAX_VALUE),
-        blobStore,
-        MoreExecutors.newDirectExecutorService());
+    String previousConcurrency = System.setProperty("astra.concurrent.query", "2");
+    try {
+      initChunkManager(
+          new MessageSizeOrCountBasedRolloverStrategy(
+              metricsRegistry, Long.MAX_VALUE, Long.MAX_VALUE),
+          blobStore,
+          MoreExecutors.newDirectExecutorService());
+    } finally {
+      if (previousConcurrency == null) {
+        System.clearProperty("astra.concurrent.query");
+      } else {
+        System.setProperty("astra.concurrent.query", previousConcurrency);
+      }
+    }
     SearchQuery query =
         new SearchQuery(
             MessageUtil.TEST_DATASET_NAME,
