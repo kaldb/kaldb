@@ -27,6 +27,8 @@ import static org.assertj.core.api.AssertionsForClassTypes.assertThatExceptionOf
 import static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;
 import static org.assertj.core.api.AssertionsForClassTypes.catchThrowable;
 import static org.awaitility.Awaitility.await;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import brave.Tracing;
 import com.adobe.testing.s3mock.junit5.S3MockExtension;
@@ -79,6 +81,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -980,6 +983,49 @@ public class IndexingChunkManagerTest {
     testChunkManagerSearch(chunkManager, "Message18", 0, 3, 2, 1);
     testChunkManagerSearch(chunkManager, "Message1", 1, 3, 2, 1);
     testChunkManagerSearch(chunkManager, "Message25", 1, 3, 2, 1);
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void testQueryRetainsCompletedChunkWhenAnotherTimesOut() throws Exception {
+    initChunkManager(
+        new MessageSizeOrCountBasedRolloverStrategy(
+            metricsRegistry, Long.MAX_VALUE, Long.MAX_VALUE),
+        blobStore,
+        MoreExecutors.newDirectExecutorService());
+    SearchQuery query =
+        new SearchQuery(
+            MessageUtil.TEST_DATASET_NAME,
+            0,
+            MAX_TIME,
+            10,
+            0,
+            List.of("completed", "blocked"),
+            QueryBuilderUtil.generateQueryBuilder("*", 0L, MAX_TIME),
+            null,
+            null);
+    Chunk<LogMessage> completedChunk = mock(Chunk.class);
+    when(completedChunk.id()).thenReturn("completed");
+    when(completedChunk.query(query))
+        .thenReturn(new SearchResult<>(List.of(), 0, 0, 0, 1, 1, null));
+    Chunk<LogMessage> blockedChunk = mock(Chunk.class);
+    when(blockedChunk.id()).thenReturn("blocked");
+    when(blockedChunk.query(query))
+        .thenAnswer(
+            invocation -> {
+              new CountDownLatch(1).await();
+              return SearchResult.empty();
+            });
+    chunkManager.chunkMap.put("completed", completedChunk);
+    chunkManager.chunkMap.put("blocked", blockedChunk);
+    try {
+      SearchResult<LogMessage> result = chunkManager.query(query, Duration.ofSeconds(1));
+      assertThat(result.requestedSnapshots).isEqualTo(2);
+      assertThat(result.fulfilledSnapshots).isEqualTo(1);
+      assertThat(result.failedNodes).isEqualTo(1);
+    } finally {
+      chunkManager.chunkMap.clear();
+    }
   }
 
   @Test

@@ -42,7 +42,6 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.StructuredTaskScope;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
@@ -504,16 +503,6 @@ public class AstraDistributedQueryService extends AstraQueryServiceBase implemen
     }
   }
 
-  private void awaitDistributedSearchSubtasks(StructuredTaskScope<SearchResult<LogMessage>> scope)
-      throws InterruptedException {
-    try {
-      scope.joinUntil(Instant.now().plus(defaultQueryTimeout));
-    } catch (TimeoutException timeoutException) {
-      scope.shutdown();
-      scope.join();
-    }
-  }
-
   private static int getFulfilledSnapshotCount(List<SearchResult<LogMessage>> searchResults) {
     return searchResults.stream().mapToInt(searchResult -> searchResult.fulfilledSnapshots).sum();
   }
@@ -541,7 +530,7 @@ public class AstraDistributedQueryService extends AstraQueryServiceBase implemen
 
   private Map<String, StructuredTaskScope.Subtask<SearchResult<LogMessage>>>
       forkDistributedSearchSubtasks(
-          StructuredTaskScope<SearchResult<LogMessage>> scope,
+          StructuredTaskScope<SearchResult<LogMessage>, ?> scope,
           CurrentTraceContext currentTraceContext,
           Map<String, List<String>> assignedSnapshotsByNode,
           AstraSearch.SearchRequest distributedSearchRequest) {
@@ -600,11 +589,21 @@ public class AstraDistributedQueryService extends AstraQueryServiceBase implemen
 
     CurrentTraceContext currentTraceContext = Tracing.current().currentTraceContext();
     int fulfilledSnapshots = 0;
-    try (var scope = new StructuredTaskScope<SearchResult<LogMessage>>()) {
-      Map<String, StructuredTaskScope.Subtask<SearchResult<LogMessage>>> subtasks =
-          forkDistributedSearchSubtasks(
-              scope, currentTraceContext, searchPlan.assignedSnapshotsByNode(), distribSearchReq);
-      awaitDistributedSearchSubtasks(scope);
+    try {
+      Map<String, StructuredTaskScope.Subtask<SearchResult<LogMessage>>> subtasks;
+      try (var scope =
+          StructuredTaskScope.open(
+              StructuredTaskScope.Joiner.<SearchResult<LogMessage>>awaitAll(),
+              config -> config.withTimeout(defaultQueryTimeout))) {
+        subtasks =
+            forkDistributedSearchSubtasks(
+                scope, currentTraceContext, searchPlan.assignedSnapshotsByNode(), distribSearchReq);
+        try {
+          scope.join();
+        } catch (StructuredTaskScope.TimeoutException timeoutException) {
+          // Close the cancelled scope before reading completed results.
+        }
+      }
 
       List<SearchResult<LogMessage>> coverageResults =
           collectDistributedSearchResults(
@@ -703,8 +702,12 @@ public class AstraDistributedQueryService extends AstraQueryServiceBase implemen
 
     CurrentTraceContext currentTraceContext = Tracing.current().currentTraceContext();
     try {
-      try (var scope = new StructuredTaskScope<AstraSearch.SchemaResult>()) {
-        List<StructuredTaskScope.Subtask<AstraSearch.SchemaResult>> searchSubtasks =
+      List<StructuredTaskScope.Subtask<AstraSearch.SchemaResult>> searchSubtasks;
+      try (var scope =
+          StructuredTaskScope.open(
+              StructuredTaskScope.Joiner.<AstraSearch.SchemaResult>awaitAll(),
+              config -> config.withTimeout(Duration.ofMillis(SCHEMA_TIMEOUT_MS)))) {
+        searchSubtasks =
             nodesAndSnapshotsToQuery.entrySet().stream()
                 .limit(LIMIT_SCHEMA_NODES_TO_QUERY)
                 .map(
@@ -736,30 +739,29 @@ public class AstraDistributedQueryService extends AstraQueryServiceBase implemen
                 .toList();
 
         try {
-          scope.joinUntil(Instant.now().plusMillis(SCHEMA_TIMEOUT_MS));
-        } catch (TimeoutException timeoutException) {
-          scope.shutdown();
           scope.join();
+        } catch (StructuredTaskScope.TimeoutException timeoutException) {
+          // Close the cancelled scope before reading completed schemas.
         }
-
-        AstraSearch.SchemaResult.Builder schemaBuilder = AstraSearch.SchemaResult.newBuilder();
-        for (StructuredTaskScope.Subtask<AstraSearch.SchemaResult> schemaResult : searchSubtasks) {
-          try {
-            if (schemaResult.state().equals(StructuredTaskScope.Subtask.State.SUCCESS)) {
-              if (schemaResult.get() != null) {
-                schemaBuilder.putAllFieldDefinition(schemaResult.get().getFieldDefinitionMap());
-              } else {
-                LOG.error("Schema result was unexpectedly null {}", schemaResult);
-              }
-            } else {
-              LOG.error("Schema query result state was not success {}", schemaResult);
-            }
-          } catch (Exception e) {
-            LOG.error("Error fetching search result", e);
-          }
-        }
-        return schemaBuilder.build();
       }
+
+      AstraSearch.SchemaResult.Builder schemaBuilder = AstraSearch.SchemaResult.newBuilder();
+      for (StructuredTaskScope.Subtask<AstraSearch.SchemaResult> schemaResult : searchSubtasks) {
+        try {
+          if (schemaResult.state().equals(StructuredTaskScope.Subtask.State.SUCCESS)) {
+            if (schemaResult.get() != null) {
+              schemaBuilder.putAllFieldDefinition(schemaResult.get().getFieldDefinitionMap());
+            } else {
+              LOG.error("Schema result was unexpectedly null {}", schemaResult);
+            }
+          } else {
+            LOG.error("Schema query result state was not success {}", schemaResult);
+          }
+        } catch (Exception e) {
+          LOG.error("Error fetching search result", e);
+        }
+      }
+      return schemaBuilder.build();
     } catch (Exception e) {
       LOG.error("Schema failed with ", e);
       span.error(e);
