@@ -1,7 +1,7 @@
 # ADR 0000: Short Title
 
 > Copy this file to `docs/adr/NNNN-short-title.md` and replace the placeholders.
-> If the proposal needs deep implementation detail, keep this ADR focused on the decision and link to a separate design doc.
+> This ADR is the design document. Keep the proposed design here; do not create separate design or implementation-plan documents.
 
 ## Status
 

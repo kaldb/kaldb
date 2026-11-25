@@ -10,8 +10,11 @@ benchmarks/jmh-output/
 dependency-reduced-pom.xml
 .venv/
 .vscode/
-docs/superpowers/
 tmp/
+
+# Local Superpowers planning and execution artifacts
+/.superpowers/
+/docs/superpowers/
 
 # Mac
 .DS_STORE

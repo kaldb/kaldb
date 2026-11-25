@@ -97,7 +97,9 @@ KalDB exposes OpenSearch-compatible APIs for query and ingest workflows, which h
 - Import the repository as a Maven project in IntelliJ.
 - The `.run/` directory contains run configurations for each node role.
 - Shared runtime defaults live in `config/config.yaml`.
-- CI builds with JDK 21.
+- Install JDK 25 LTS (Amazon Corretto is used in CI and Docker) and set `JAVA_HOME` to it.
+- Building and running KalDB requires Java 25; structured concurrency uses preview features,
+  so launch the server with `java --enable-preview -jar astra/target/astra.jar config/config.yaml`.
 
 ### Common commands
 

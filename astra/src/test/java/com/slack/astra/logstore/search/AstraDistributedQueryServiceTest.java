@@ -22,6 +22,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.io.Files;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.SettableFuture;
 import com.linecorp.armeria.common.AggregatedHttpResponse;
 import com.linecorp.armeria.common.HttpResponse;
 import com.slack.astra.chunk.ChunkInfo;
@@ -49,6 +50,7 @@ import com.slack.astra.proto.service.AstraSearch;
 import com.slack.astra.proto.service.AstraServiceGrpc;
 import com.slack.astra.testlib.MessageUtil;
 import com.slack.astra.testlib.SpanUtil;
+import com.slack.astra.util.JsonUtil;
 import com.slack.service.murron.trace.Trace;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -71,6 +73,8 @@ import org.apache.curator.x.async.AsyncCuratorFramework;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 public class AstraDistributedQueryServiceTest {
 
@@ -1216,6 +1220,114 @@ public class AstraDistributedQueryServiceTest {
         .isZero();
 
     distributedQueryService.close();
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void testSearchAndSchemaRetainSuccessfulResultsWhenPeerFailsOrTimesOut(boolean timesOut)
+      throws IOException {
+    SearchMetadataStore searchStore = mock(SearchMetadataStore.class);
+    when(searchStore.listSync())
+        .thenReturn(
+            List.of(
+                new SearchMetadata("node1", "snapshot1", "127.0.0.1:1", true),
+                new SearchMetadata("node2", "snapshot2", "127.0.0.1:2", true)));
+    SnapshotMetadataStore snapshotStore = mock(SnapshotMetadataStore.class);
+    when(snapshotStore.listSync())
+        .thenReturn(
+            List.of(
+                new SnapshotMetadata("snapshot1", 100, 200, 10, "1", 0),
+                new SnapshotMetadata("snapshot2", 100, 200, 10, "1", 0)));
+    DatasetMetadataStore datasetStore = mock(DatasetMetadataStore.class);
+    when(datasetStore.listSync())
+        .thenReturn(
+            List.of(
+                new DatasetMetadata(
+                    "foo",
+                    "foo",
+                    10,
+                    List.of(new DatasetPartitionMetadata(1, Long.MAX_VALUE, List.of("1"))),
+                    "foo")));
+
+    AstraServiceGrpc.AstraServiceFutureStub successfulStub =
+        mock(AstraServiceGrpc.AstraServiceFutureStub.class);
+    when(successfulStub.withDeadlineAfter(anyLong(), any(TimeUnit.class)))
+        .thenReturn(successfulStub);
+    when(successfulStub.withInterceptors(any())).thenReturn(successfulStub);
+    LogMessage successfulMessage =
+        MessageUtil.makeMessageWithIndexAndTimestamp(
+            1, "successful peer hit", "foo", Instant.ofEpochMilli(150));
+    when(successfulStub.search(any()))
+        .thenReturn(
+            Futures.immediateFuture(
+                AstraSearch.SearchResult.newBuilder()
+                    .addHits(
+                        AstraSearch.SearchResult.Hit.newBuilder()
+                            .setMessage(JsonUtil.writeAsString(successfulMessage)))
+                    .setTotalNodes(1)
+                    .setRequestedSnapshots(1)
+                    .setFulfilledSnapshots(1)
+                    .build()));
+    AstraSearch.SchemaDefinition field =
+        AstraSearch.SchemaDefinition.newBuilder().setType(Schema.SchemaFieldType.TEXT).build();
+    when(successfulStub.schema(any()))
+        .thenReturn(
+            Futures.immediateFuture(
+                AstraSearch.SchemaResult.newBuilder()
+                    .putFieldDefinition("message", field)
+                    .build()));
+
+    AstraServiceGrpc.AstraServiceFutureStub failingStub =
+        mock(AstraServiceGrpc.AstraServiceFutureStub.class);
+    when(failingStub.withDeadlineAfter(anyLong(), any(TimeUnit.class))).thenReturn(failingStub);
+    when(failingStub.withInterceptors(any())).thenReturn(failingStub);
+    when(failingStub.search(any()))
+        .thenReturn(
+            timesOut
+                ? SettableFuture.create()
+                : Futures.immediateFailedFuture(new IOException("unavailable")));
+    when(failingStub.schema(any()))
+        .thenReturn(
+            timesOut
+                ? SettableFuture.create()
+                : Futures.immediateFailedFuture(new IOException("unavailable")));
+
+    try (AstraDistributedQueryService service =
+        new AstraDistributedQueryService(
+            searchStore,
+            snapshotStore,
+            datasetStore,
+            metricsRegistry,
+            Duration.ofSeconds(1),
+            Duration.ofSeconds(1))) {
+      service.stubs.put("127.0.0.1:1", successfulStub);
+      service.stubs.put("127.0.0.1:2", failingStub);
+      AstraSearch.SearchResult result =
+          service.doSearch(
+              AstraSearch.SearchRequest.newBuilder()
+                  .setDataset("foo")
+                  .setStartTimeEpochMs(100)
+                  .setEndTimeEpochMs(200)
+                  .setHowMany(10)
+                  .setQuery("{\"match_all\":{}}")
+                  .build());
+      assertThat(result.getTotalNodes()).isEqualTo(2);
+      assertThat(result.getFailedNodes()).isEqualTo(1);
+      assertThat(result.getRequestedSnapshots()).isEqualTo(2);
+      assertThat(result.getFulfilledSnapshots()).isEqualTo(1);
+      assertThat(SearchResultUtils.fromSearchResultProto(result).hits)
+          .extracting(hit -> hit.message().getId())
+          .containsExactly(successfulMessage.getId());
+
+      AstraSearch.SchemaResult schema =
+          service.getSchema(
+              AstraSearch.SchemaRequest.newBuilder()
+                  .setDataset("foo")
+                  .setStartTimeEpochMs(100)
+                  .setEndTimeEpochMs(200)
+                  .build());
+      assertThat(schema.getFieldDefinitionMap()).containsExactlyEntriesOf(Map.of("message", field));
+    }
   }
 
   @Test

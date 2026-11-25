@@ -23,10 +23,10 @@ jobs:
     if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'benchmark')
     steps:
       - uses: actions/checkout@v3
-      - name: Set up JDK 21
+      - name: Set up JDK 25
         uses: actions/setup-java@v3
         with:
-          java-version: '21'
+          java-version: '25'
           distribution: 'corretto'
           cache: 'maven'
       # - name: Download benchmark data
@@ -37,7 +37,7 @@ jobs:
       - name: Run benchmark
         run: |
           mvn clean package -B -Dstyle.color=always -DskipTests=true --file pom.xml
-          java -Dlog4j.configurationFile=benchmarks/log4j2.xml -Xms8g -Xmx8g -jar benchmarks/target/benchmarks.jar -wi 5 -i 5 -f 1 -rf json
+          java --enable-preview -Dlog4j.configurationFile=benchmarks/log4j2.xml -Xms8g -Xmx8g -jar benchmarks/target/benchmarks.jar -wi 5 -i 5 -f 1 -rf json
       - name: Upload JHM results
         uses: actions/upload-artifact@v3
         with:
