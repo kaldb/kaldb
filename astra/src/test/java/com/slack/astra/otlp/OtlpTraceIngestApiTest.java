@@ -4,7 +4,6 @@ import static com.linecorp.armeria.common.HttpStatus.BAD_REQUEST;
 import static com.linecorp.armeria.common.HttpStatus.OK;
 import static com.linecorp.armeria.common.HttpStatus.TOO_MANY_REQUESTS;
 import static com.linecorp.armeria.common.HttpStatus.UNSUPPORTED_MEDIA_TYPE;
-import static com.slack.astra.metadata.dataset.DatasetMetadata.MATCH_ALL_SERVICE;
 import static com.slack.astra.server.AstraConfig.DEFAULT_START_STOP_DURATION;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
@@ -15,8 +14,11 @@ import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.util.JsonFormat;
 import com.linecorp.armeria.common.AggregatedHttpRequest;
 import com.linecorp.armeria.common.AggregatedHttpResponse;
+import com.linecorp.armeria.common.HttpData;
 import com.linecorp.armeria.common.HttpMethod;
 import com.linecorp.armeria.common.MediaType;
+import com.linecorp.armeria.common.RequestHeaders;
+import com.linecorp.armeria.common.RequestHeadersBuilder;
 import com.slack.astra.bulkIngestApi.BulkIngestKafkaProducer;
 import com.slack.astra.bulkIngestApi.BulkIngestResponse;
 import com.slack.astra.bulkIngestApi.DatasetRateLimitingService;
@@ -61,6 +63,7 @@ import org.junit.jupiter.api.Test;
 
 class OtlpTraceIngestApiTest {
   private static final String TRACE_DATASET = "otel_traces";
+  private static final String OVERRIDE_DATASET = "application-traces";
   private static final String DOWNSTREAM_TOPIC = "otlp-traces-test-topic";
   private static final byte[] TRACE_ID =
       new byte[] {
@@ -167,7 +170,8 @@ class OtlpTraceIngestApiTest {
             .build();
     datasetMetadataStore =
         new DatasetMetadataStore(curatorFramework, metadataStoreConfig, meterRegistry, true);
-    datasetMetadataStore.createSync(datasetMetadata(1_000_000));
+    datasetMetadataStore.createSync(datasetMetadata(TRACE_DATASET, 1_000_000));
+    datasetMetadataStore.createSync(datasetMetadata(OVERRIDE_DATASET, 1_000_000));
 
     preprocessorMetadataStore =
         new PreprocessorMetadataStore(curatorFramework, metadataStoreConfig, meterRegistry, true);
@@ -265,6 +269,114 @@ class OtlpTraceIngestApiTest {
   }
 
   @Test
+  void headerOverridesConfiguredDatasetForProtobufAndJson() throws Exception {
+    try (KafkaConsumer<String, byte[]> kafkaConsumer = getTestKafkaConsumer()) {
+      ExportTraceServiceRequest request = traceRequest("frontend", "GET /api");
+      AggregatedHttpResponse protobufResponse =
+          ingest(MediaType.X_PROTOBUF, request.toByteArray(), " application-traces ");
+      AggregatedHttpResponse jsonResponse =
+          ingest(
+              MediaType.JSON,
+              JsonFormat.printer().print(request).getBytes(StandardCharsets.UTF_8),
+              OVERRIDE_DATASET);
+
+      assertSuccessfulOtlpResponse(protobufResponse, MediaType.X_PROTOBUF);
+      assertSuccessfulOtlpResponse(jsonResponse, MediaType.JSON);
+      validateOffset(kafkaConsumer, 2);
+      ConsumerRecords<String, byte[]> records = kafkaConsumer.poll(Duration.ofSeconds(10));
+      assertThat(records.count()).isEqualTo(2);
+      assertThat(records)
+          .allSatisfy(
+              record -> {
+                Trace.Span span = parseSpan(record.value());
+                assertThat(record.key()).isEqualTo("application-traces");
+                assertThat(tag(span, LogMessage.ReservedField.SERVICE_NAME.fieldName).getVStr())
+                    .isEqualTo("application-traces");
+                assertThat(tag(span, "resource.service.name").getVStr()).isEqualTo("frontend");
+              });
+    }
+  }
+
+  @Test
+  void rejectsInvalidOrRepeatedDatasetHeadersWithoutIngesting() throws Exception {
+    byte[] request = traceRequest("frontend", "GET /api").toByteArray();
+    for (String invalid :
+        List.of(
+            "", " ", "bad name", "bad/name", "bad.name", "traces,other", "*", "a".repeat(257))) {
+      assertResponse(
+          ingest(MediaType.X_PROTOBUF, request, invalid),
+          BAD_REQUEST.code(),
+          0,
+          0,
+          "Invalid X-KalDB-Dataset header");
+    }
+    assertResponse(
+        ingest(MediaType.X_PROTOBUF, request, TRACE_DATASET, OVERRIDE_DATASET),
+        BAD_REQUEST.code(),
+        0,
+        0,
+        "Invalid X-KalDB-Dataset header");
+    try (KafkaConsumer<String, byte[]> kafkaConsumer = getTestKafkaConsumer()) {
+      validateOffset(kafkaConsumer, 0);
+    }
+  }
+
+  @Test
+  void missingHeaderUsesConfiguredDatasetOrBuiltInDefault() throws Exception {
+    try (KafkaConsumer<String, byte[]> kafkaConsumer = getTestKafkaConsumer()) {
+      for (String configuredDataset : List.of("", OVERRIDE_DATASET)) {
+        otlpTraceIngestApi =
+            new OtlpTraceIngestApi(
+                bulkIngestKafkaProducer,
+                datasetRateLimitingService,
+                meterRegistry,
+                TOO_MANY_REQUESTS.code(),
+                configuredDataset,
+                Schema.IngestSchema.getDefaultInstance());
+        assertSuccessfulOtlpResponse(
+            ingest(MediaType.X_PROTOBUF, traceRequest("frontend", "GET /api").toByteArray()),
+            MediaType.X_PROTOBUF);
+      }
+
+      validateOffset(kafkaConsumer, 2);
+      ConsumerRecords<String, byte[]> records = kafkaConsumer.poll(Duration.ofSeconds(10));
+      assertThat(records)
+          .extracting(record -> record.key())
+          .containsExactlyInAnyOrder("otel_traces", "application-traces");
+      assertThat(records)
+          .allSatisfy(
+              record ->
+                  assertThat(
+                          tag(
+                                  parseSpan(record.value()),
+                                  LogMessage.ReservedField.SERVICE_NAME.fieldName)
+                              .getVStr())
+                      .isEqualTo(record.key()));
+    }
+  }
+
+  @Test
+  void appliesRateLimitToHeaderSelectedDataset() throws Exception {
+    byte[] request = traceRequest("frontend", "GET /api").toByteArray();
+    int spanBytes =
+        PreprocessorRateLimiter.getSpanBytes(
+            OtlpTraceRequestParser.parseProtobuf(
+                    request, OVERRIDE_DATASET, Schema.IngestSchema.getDefaultInstance())
+                .get(OVERRIDE_DATASET));
+    updateDatasetThroughput(OVERRIDE_DATASET, spanBytes / 2);
+
+    assertSuccessfulOtlpResponse(
+        ingest(MediaType.X_PROTOBUF, request, OVERRIDE_DATASET), MediaType.X_PROTOBUF);
+    assertResponse(
+        ingest(MediaType.X_PROTOBUF, request, OVERRIDE_DATASET),
+        TOO_MANY_REQUESTS.code(),
+        0,
+        0,
+        "rate limit exceeded");
+    assertSuccessfulOtlpResponse(ingest(MediaType.X_PROTOBUF, request), MediaType.X_PROTOBUF);
+  }
+
+  @Test
   void rejectsMalformedTraceRequest() throws Exception {
     AggregatedHttpResponse response =
         ingest(MediaType.X_PROTOBUF, "not protobuf".getBytes(StandardCharsets.UTF_8));
@@ -288,7 +400,7 @@ class OtlpTraceIngestApiTest {
             OtlpTraceRequestParser.parseProtobuf(
                     request, TRACE_DATASET, Schema.IngestSchema.getDefaultInstance())
                 .get(TRACE_DATASET));
-    updateDatasetThroughput(spanBytes / 2);
+    updateDatasetThroughput(TRACE_DATASET, spanBytes / 2);
 
     AggregatedHttpResponse firstResponse = ingest(MediaType.X_PROTOBUF, request);
     AggregatedHttpResponse secondResponse = ingest(MediaType.X_PROTOBUF, request);
@@ -297,9 +409,15 @@ class OtlpTraceIngestApiTest {
     assertResponse(secondResponse, TOO_MANY_REQUESTS.code(), 0, 0, "rate limit exceeded");
   }
 
-  private AggregatedHttpResponse ingest(MediaType contentType, byte[] body) {
+  private AggregatedHttpResponse ingest(
+      MediaType contentType, byte[] body, String... datasetHeaders) {
+    RequestHeadersBuilder headers =
+        RequestHeaders.builder(HttpMethod.POST, "/v1/traces").contentType(contentType);
+    for (String dataset : datasetHeaders) {
+      headers.add("X-KalDB-Dataset", dataset);
+    }
     return otlpTraceIngestApi
-        .ingestTraces(AggregatedHttpRequest.of(HttpMethod.POST, "/v1/traces", contentType, body))
+        .ingestTraces(AggregatedHttpRequest.of(headers.build(), HttpData.wrap(body)))
         .aggregate()
         .join();
   }
@@ -333,12 +451,12 @@ class OtlpTraceIngestApiTest {
     }
   }
 
-  private void updateDatasetThroughput(int throughputBytes) {
+  private void updateDatasetThroughput(String datasetName, int throughputBytes) {
     double timerCount =
         MetricsUtil.getTimerCount(
             DatasetRateLimitingService.RATE_LIMIT_RELOAD_TIMER, meterRegistry);
 
-    datasetMetadataStore.updateSync(datasetMetadata(throughputBytes));
+    datasetMetadataStore.updateSync(datasetMetadata(datasetName, throughputBytes));
 
     await()
         .until(
@@ -348,13 +466,13 @@ class OtlpTraceIngestApiTest {
                     > timerCount);
   }
 
-  private DatasetMetadata datasetMetadata(int throughputBytes) {
+  private DatasetMetadata datasetMetadata(String datasetName, int throughputBytes) {
     return new DatasetMetadata(
-        TRACE_DATASET,
+        datasetName,
         "owner",
         throughputBytes,
         List.of(new DatasetPartitionMetadata(1, Long.MAX_VALUE, List.of("0"))),
-        MATCH_ALL_SERVICE);
+        datasetName);
   }
 
   private KafkaConsumer<String, byte[]> getTestKafkaConsumer() {

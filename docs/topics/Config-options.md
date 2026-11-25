@@ -795,12 +795,31 @@ preprocessorConfig:
   otlpTraceDatasetName: otel_traces
 ```
 
-Destination KalDB dataset for all spans received at `POST /v1/traces`. OTLP export requests do not
-contain a KalDB dataset name, so this setting supplies the key used for dataset rate limiting and
-Kafka routing. It defaults to `otel_traces` when omitted or blank; surrounding whitespace is removed.
+Fallback KalDB dataset for `POST /v1/traces` when the request has no `X-KalDB-Dataset` header.
+OTLP export requests do not contain a standard KalDB dataset name. Routing uses the request header
+first, then this configuration value, then `otel_traces` when the config is omitted or blank.
+Surrounding whitespace is removed. Most users can provision `otel_traces` and leave this setting unset.
 The sample config exposes it as `ASTRA_PREPROCESSOR_OTLP_TRACE_DATASET_NAME`. For example, the
 OpenTelemetry demo sets it to `otel-demo-traces` to match its provisioned trace dataset.
 
-The parser sets each span's routing `service_name` to this dataset key and preserves the producing
-service separately as `resource.service.name`. Provision the dataset with `serviceNamePattern`
-equal to the configured key, or `_all`; different producing services can then share the trace dataset.
+The parser sets each span's routing `service_name` to the selected dataset key and preserves the
+producing service separately as `resource.service.name`. Provision the dataset with `serviceNamePattern`
+equal to the selected key, or `_all`; different producing services can then share the trace dataset.
+
+#### Request header override
+
+Set `X-KalDB-Dataset` to choose one existing dataset routing key for the entire request. The same
+key is used for rate limiting and Kafka routing. Header values must contain 1–256 letters, digits,
+underscores, or hyphens, following the dataset-name rules. Blank, invalid, or repeated headers return
+HTTP 400 without writing spans; an explicit invalid override never falls back to another dataset.
+Dataset provisioning and existing rate limits still apply.
+
+For example, configure the Collector's OTLP/HTTP exporter:
+
+```yaml
+exporters:
+  otlphttp/kaldb:
+    endpoint: http://kaldb:8086
+    headers:
+      X-KalDB-Dataset: application-traces
+```
