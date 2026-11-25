@@ -16,6 +16,16 @@ What is portable and repeatable from a clean checkout:
 
 ## Native OpenTelemetry trace demo
 
+The gateway adapter is an imported demo prototype. Remaining query translation,
+sort, completeness, and end-to-end verification work is tracked in
+[issue #76](https://github.com/kaldb/kaldb/issues/76).
+The application, Collector exports, dataset/indexer setup, and Grafana provisioning
+already live in the `kaldb_support` branch of
+[kaldb/opentelemetry-demo](https://github.com/kaldb/opentelemetry-demo/tree/kaldb_support/local/kaldb).
+Use that setup rather than duplicating it in this repository. The separate
+[OTLP receiver PR #55](https://github.com/kaldb/kaldb/pull/55) supplies `/v1/traces`;
+this gateway branch does not include that receiver implementation.
+
 The optional gateway adapter enables the **Trace analytics → Traces** list and native
 trace detail page, including the span timeline, service timing breakdown, payload,
 and span inspection. Searches and aggregations run against the existing KalDB
