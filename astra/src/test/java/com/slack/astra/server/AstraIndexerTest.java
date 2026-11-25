@@ -649,6 +649,7 @@ public class AstraIndexerTest {
                 chunk1StartTimeMs,
                 chunk1StartTimeMs + (100 * 1000),
                 10,
+                0,
                 Collections.emptyList(),
                 QueryBuilderUtil.generateQueryBuilder(
                     "Message100", chunk1StartTimeMs, chunk1StartTimeMs + (100 * 1000)),
@@ -661,7 +662,7 @@ public class AstraIndexerTest {
     assertThat(searchResult.tookMicros).isNotZero();
     assertThat(searchResult.failedNodes).isZero();
     assertThat(searchResult.totalNodes).isEqualTo(1);
-    assertThat(searchResult.totalSnapshots).isEqualTo(1);
-    assertThat(searchResult.snapshotsWithReplicas).isEqualTo(1);
+    assertThat(searchResult.requestedSnapshots).isEqualTo(1);
+    assertThat(searchResult.fulfilledSnapshots).isEqualTo(1);
   }
 }

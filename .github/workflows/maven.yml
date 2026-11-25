@@ -14,6 +14,24 @@ on:
       - "**"
 
 jobs:
+  dashboards-gateway:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+    - uses: actions/checkout@v4
+    - name: Build gateway image
+      run: docker build --pull -f contrib/dashboards-gateway.Dockerfile -t kaldb/dashboards-gateway:ci .
+    - name: Verify gateway startup and HTTP healthcheck
+      run: |
+        docker run -d --name dashboards-gateway-check -p 127.0.0.1:19200:9200 kaldb/dashboards-gateway:ci
+        curl --fail --retry 20 --retry-all-errors --retry-delay 1 --max-time 5 http://127.0.0.1:19200/_astra/gateway/health
+        docker exec dashboards-gateway-check curl --fail http://localhost:9200/_astra/gateway/health
+    - name: Show gateway logs and remove test container
+      if: always()
+      run: |
+        docker logs dashboards-gateway-check || true
+        docker rm -f dashboards-gateway-check || true
+
   build:
     runs-on: ubuntu-22.04
     timeout-minutes: 15
@@ -29,13 +47,14 @@ jobs:
             - 'benchmarks/**'
             - 'config/**'
             - 'pom.xml'
-    - name: Set up JDK 21
+            - 'contrib/dashboards-gateway/**'
+            - 'tools/loadgen/**'
+            - '.github/workflows/maven.yml'
+    - name: Set up JDK 25
       if: steps.filter.outputs.java == 'true'
       uses: actions/setup-java@v3
       with:
-        java-version: '21'
-        #  Currently, LTS versions of Eclipse Temurin (temurin) are cached on the GitHub Hosted Runners.
-        #  When temurin releases Java 21 we can start using that again
+        java-version: '25'
         distribution: 'corretto'
         cache: 'maven'
     - name: Ensure code is formatted

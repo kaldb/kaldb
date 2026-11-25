@@ -44,6 +44,7 @@ import org.opensearch.search.aggregations.bucket.filter.FiltersAggregationBuilde
 import org.opensearch.search.aggregations.bucket.histogram.AutoDateHistogramAggregationBuilder;
 import org.opensearch.search.aggregations.bucket.histogram.DateHistogramAggregationBuilder;
 import org.opensearch.search.aggregations.bucket.histogram.HistogramAggregationBuilder;
+import org.opensearch.search.aggregations.bucket.terms.MultiTermsAggregationFactory;
 import org.opensearch.search.aggregations.bucket.terms.TermsAggregationBuilder;
 import org.opensearch.search.aggregations.metrics.AvgAggregationBuilder;
 import org.opensearch.search.aggregations.metrics.CardinalityAggregationBuilder;
@@ -258,6 +259,7 @@ public class OpenSearchAdapter {
     DateHistogramAggregationBuilder.registerAggregators(valuesSourceRegistryBuilder);
     HistogramAggregationBuilder.registerAggregators(valuesSourceRegistryBuilder);
     TermsAggregationBuilder.registerAggregators(valuesSourceRegistryBuilder);
+    MultiTermsAggregationFactory.registerAggregators(valuesSourceRegistryBuilder);
     AvgAggregationBuilder.registerAggregators(valuesSourceRegistryBuilder);
     SumAggregationBuilder.registerAggregators(valuesSourceRegistryBuilder);
     MinAggregationBuilder.registerAggregators(valuesSourceRegistryBuilder);

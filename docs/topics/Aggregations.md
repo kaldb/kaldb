@@ -591,10 +591,216 @@ response.</def>
 </tab>
 </tabs>
 
+### Multi terms
+
+The `multi_terms` aggregation groups results by a compound key made from multiple fields. It is useful for
+OpenSearch-compatible analytics queries that map to SQL-style `GROUP BY field_a, field_b` shapes, including
+ClickBench grouped queries.
+
+<deflist type="medium">
+<def title="terms (required)">List of field definitions to use for the compound bucket key.</def>
+<def title="size (required)">Indicates how many compound term buckets should be returned.</def>
+<def title="order (required)">Sets the order in which the buckets will be returned.</def>
+</deflist>
+
+<tabs>
+<tab title="Example JSON Request">
+
+```json
+
+{
+  "aggs": {
+    "dimensions": {
+      "multi_terms": {
+        "terms": [
+          {
+            "field": "country"
+          },
+          {
+            "field": "browser"
+          }
+        ],
+        "size": 10,
+        "order": {
+          "_count": "desc"
+        }
+      },
+      "aggs": {
+        "max_latency": {
+          "max": {
+            "field": "latency"
+          }
+        }
+      }
+    }
+  }
+}
+```
+</tab>
+<tab title="Example JSON Response">
+
+```json
+
+{
+  "aggregations": {
+    "dimensions": {
+      "buckets": [
+        {
+          "key": ["US", "Chrome"],
+          "doc_count": 2,
+          "max_latency": {
+            "value": 30.0
+          }
+        },
+        {
+          "key": ["CA", "Chrome"],
+          "doc_count": 1,
+          "max_latency": {
+            "value": 40.0
+          }
+        }
+      ]
+    }
+  }
+}
+```
+</tab>
+</tabs>
+
 ## Pipeline aggregations
 
 Pipeline aggregations enable nesting multiple aggregations together, feeding the results of one aggregation as the 
 input to another aggregation. 
+
+### Bucket sort
+
+The `bucket_sort` pipeline aggregation sorts and paginates buckets returned by a parent bucket aggregation. This maps
+to SQL-style `ORDER BY`, `OFFSET`, and `LIMIT` behavior for grouped analytics queries.
+
+<deflist type="medium">
+<def title="sort (required)">List of bucket sort definitions, such as `_count` or a sub-aggregation metric.</def>
+<def title="from (optional)">Number of buckets to skip before returning results.</def>
+<def title="size (optional)">Maximum number of buckets to return.</def>
+</deflist>
+
+<tabs>
+<tab title="Example JSON Request">
+
+```json
+
+{
+  "aggs": {
+    "by_host": {
+      "terms": {
+        "field": "host",
+        "size": 10,
+        "min_doc_count": 1
+      },
+      "aggs": {
+        "page": {
+          "bucket_sort": {
+            "sort": [
+              {
+                "_count": {
+                  "order": "desc"
+                }
+              }
+            ],
+            "from": 1,
+            "size": 2
+          }
+        }
+      }
+    }
+  }
+}
+```
+</tab>
+<tab title="Example JSON Response">
+
+```json
+
+{
+  "aggregations": {
+    "by_host": {
+      "buckets": [
+        {
+          "key": "host-2",
+          "doc_count": 42
+        },
+        {
+          "key": "host-3",
+          "doc_count": 39
+        }
+      ]
+    }
+  }
+}
+```
+</tab>
+</tabs>
+
+### Bucket selector
+
+The `bucket_selector` pipeline aggregation filters parent buckets with a script. This maps to SQL-style `HAVING`
+filters for grouped analytics queries.
+
+<deflist type="medium">
+<def title="buckets_path (required)">Map of script parameter names to bucket metric paths.</def>
+<def title="script (required)">Script that returns whether the bucket should be kept.</def>
+</deflist>
+
+<tabs>
+<tab title="Example JSON Request">
+
+```json
+
+{
+  "aggs": {
+    "by_host": {
+      "terms": {
+        "field": "host",
+        "size": 10,
+        "min_doc_count": 1
+      },
+      "aggs": {
+        "having": {
+          "bucket_selector": {
+            "buckets_path": {
+              "c": "_count"
+            },
+            "script": "params.c > 1"
+          }
+        }
+      }
+    }
+  }
+}
+```
+</tab>
+<tab title="Example JSON Response">
+
+```json
+
+{
+  "aggregations": {
+    "by_host": {
+      "buckets": [
+        {
+          "key": "host-1",
+          "doc_count": 3
+        },
+        {
+          "key": "host-2",
+          "doc_count": 2
+        }
+      ]
+    }
+  }
+}
+```
+</tab>
+</tabs>
 
 ### Cumulative sum
 

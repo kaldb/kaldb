@@ -22,6 +22,9 @@ import com.slack.astra.elasticsearchApi.searchResponse.HitsMetadata;
 import com.slack.astra.elasticsearchApi.searchResponse.SearchResponseHit;
 import com.slack.astra.elasticsearchApi.searchResponse.SearchResponseMetadata;
 import com.slack.astra.logstore.opensearch.OpenSearchInternalAggregation;
+import com.slack.astra.logstore.search.HitSortValue;
+import com.slack.astra.logstore.search.SearchResult;
+import com.slack.astra.logstore.search.SearchResultUtils;
 import com.slack.astra.metadata.dataset.DatasetMetadata;
 import com.slack.astra.metadata.dataset.DatasetMetadataStore;
 import com.slack.astra.proto.service.AstraSearch;
@@ -150,7 +153,8 @@ public class ElasticsearchApiService {
     LOG.debug("Search request: {}", postBody);
 
     CurrentTraceContext currentTraceContext = Tracing.current().currentTraceContext();
-    try (var scope = new StructuredTaskScope<EsSearchResponse>()) {
+    try (var scope =
+        StructuredTaskScope.open(StructuredTaskScope.Joiner.<EsSearchResponse>awaitAll())) {
       List<StructuredTaskScope.Subtask<EsSearchResponse>> requestSubtasks =
           openSearchRequest.parseMultiSearchRequest(postBody).stream()
               .map((request) -> scope.fork(currentTraceContext.wrap(() -> doSearch(request))))
@@ -204,8 +208,11 @@ public class ElasticsearchApiService {
   }
 
   private EsSearchResponse doSearch(AstraSearch.SearchRequest searchRequest) {
+    int responseSortValueCount =
+        SearchResultUtils.responseSortValueCount(searchRequest.getSortJson());
     ScopedSpan span = Tracing.currentTracer().startScopedSpan("ElasticsearchApiService.doSearch");
     AstraSearch.SearchResult searchResult = searcher.doSearch(searchRequest);
+    int failedSnapshots = SearchResult.failedSnapshots(searchResult);
 
     span.tag("requestDataset", searchRequest.getDataset());
     span.tag("requestHowMany", String.valueOf(searchRequest.getHowMany()));
@@ -213,17 +220,16 @@ public class ElasticsearchApiService {
     span.tag("resultTookMicros", String.valueOf(searchResult.getTookMicros()));
     span.tag("resultFailedNodes", String.valueOf(searchResult.getFailedNodes()));
     span.tag("resultTotalNodes", String.valueOf(searchResult.getTotalNodes()));
-    span.tag("resultTotalSnapshots", String.valueOf(searchResult.getTotalNodes()));
-    span.tag(
-        "resultSnapshotsWithReplicas", String.valueOf(searchResult.getSnapshotsWithReplicas()));
+    span.tag("resultRequestedSnapshots", String.valueOf(searchResult.getRequestedSnapshots()));
+    span.tag("resultFulfilledSnapshots", String.valueOf(searchResult.getFulfilledSnapshots()));
 
     try {
-      HitsMetadata hits = getHits(searchResult);
+      HitsMetadata hits = getHits(searchResult, responseSortValueCount);
       return new EsSearchResponse.Builder()
           .hits(hits)
           .aggregations(parseAggregations(searchResult.getInternalAggregations()))
           .took(Duration.of(searchResult.getTookMicros(), ChronoUnit.MICROS).toMillis())
-          .shardsMetadata(searchResult.getTotalNodes(), searchResult.getFailedNodes())
+          .shardsMetadata(searchResult.getRequestedSnapshots(), failedSnapshots)
           .debugMetadata(Map.of())
           .status(200)
           .build();
@@ -232,7 +238,7 @@ public class ElasticsearchApiService {
       span.error(e);
       return new EsSearchResponse.Builder()
           .took(Duration.of(searchResult.getTookMicros(), ChronoUnit.MICROS).toMillis())
-          .shardsMetadata(searchResult.getTotalNodes(), searchResult.getFailedNodes())
+          .shardsMetadata(searchResult.getRequestedSnapshots(), failedSnapshots)
           .status(500)
           .build();
     } finally {
@@ -261,11 +267,19 @@ public class ElasticsearchApiService {
     return "";
   }
 
-  private HitsMetadata getHits(AstraSearch.SearchResult searchResult) throws IOException {
-    List<ByteString> hitsByteList = searchResult.getHitsList().asByteStringList();
-    List<SearchResponseHit> responseHits = new ArrayList<>(hitsByteList.size());
-    for (ByteString bytes : hitsByteList) {
-      responseHits.add(SearchResponseHit.fromByteString(bytes));
+  private HitsMetadata getHits(AstraSearch.SearchResult searchResult, int responseSortValueCount)
+      throws IOException {
+    List<SearchResponseHit> responseHits = new ArrayList<>(searchResult.getHitsCount());
+    for (AstraSearch.SearchResult.Hit hit : searchResult.getHitsList()) {
+      List<Object> sortValues =
+          responseSortValueCount > 0
+              ? hit.getSortValuesList().stream()
+                  .limit(responseSortValueCount)
+                  .map(SearchResultUtils::fromHitSortValueProto)
+                  .map(HitSortValue::responseValue)
+                  .toList()
+              : null;
+      responseHits.add(SearchResponseHit.fromJsonString(hit.getMessage(), sortValues));
     }
 
     return new HitsMetadata.Builder()

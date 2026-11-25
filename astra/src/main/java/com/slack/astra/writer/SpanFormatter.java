@@ -139,7 +139,13 @@ public class SpanFormatter {
 
   public static List<Trace.KeyValue> convertKVtoProto(
       String key, Object value, Schema.IngestSchema schema) {
-    if (value == null || value.toString().isEmpty()) {
+    // A null (or absent) value has no field to index. An empty string, however, is a real
+    // value for keyword-style fields in OpenSearch: it must be indexed so that term, exists,
+    // cardinality, terms/multi_terms, sort, and `must_not term ""` all see it the same way
+    // OpenSearch would. Empty strings for numeric and date fields fall through to makeTraceKV,
+    // which routes their parse failure to a non-indexed failed_<key> field rather than crashing
+    // the document.
+    if (value == null) {
       return null;
     }
 

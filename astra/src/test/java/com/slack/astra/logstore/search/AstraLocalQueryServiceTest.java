@@ -7,15 +7,19 @@ import static com.slack.astra.testlib.ChunkManagerUtil.makeChunkManagerUtil;
 import static com.slack.astra.testlib.MetricsUtil.getCount;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.AssertionsForClassTypes.assertThatExceptionOfType;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import brave.Tracing;
 import com.adobe.testing.s3mock.junit5.S3MockExtension;
-import com.google.protobuf.ByteString;
+import com.slack.astra.chunkManager.ChunkManager;
 import com.slack.astra.chunkManager.IndexingChunkManager;
 import com.slack.astra.chunkManager.RollOverChunkTask;
 import com.slack.astra.logstore.LogMessage;
 import com.slack.astra.logstore.LogWireMessage;
 import com.slack.astra.logstore.opensearch.OpenSearchInternalAggregation;
+import com.slack.astra.proto.schema.Schema;
 import com.slack.astra.proto.service.AstraSearch;
 import com.slack.astra.proto.service.AstraServiceGrpc;
 import com.slack.astra.testlib.AstraConfigUtil;
@@ -33,13 +37,17 @@ import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeoutException;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
 import org.opensearch.search.aggregations.InternalAggregations;
 import org.opensearch.search.aggregations.bucket.histogram.InternalDateHistogram;
+import org.opensearch.search.aggregations.bucket.terms.InternalMultiTerms;
+import org.opensearch.search.aggregations.metrics.InternalMax;
 
 public class AstraLocalQueryServiceTest {
   private static final String TEST_KAFKA_PARITION_ID = "10";
@@ -103,6 +111,30 @@ public class AstraLocalQueryServiceTest {
         .formatted(startTime, endTime, queryString);
   }
 
+  private static Trace.Span makeDimensionSpan(
+      int id, Instant timestamp, String country, String browser, long latency) {
+    return SpanUtil.makeSpan(
+        id,
+        "dimension-message-" + id,
+        timestamp,
+        List.of(
+            Trace.KeyValue.newBuilder()
+                .setKey("country")
+                .setFieldType(Schema.SchemaFieldType.KEYWORD)
+                .setVStr(country)
+                .build(),
+            Trace.KeyValue.newBuilder()
+                .setKey("browser")
+                .setFieldType(Schema.SchemaFieldType.KEYWORD)
+                .setVStr(browser)
+                .build(),
+            Trace.KeyValue.newBuilder()
+                .setKey("latency")
+                .setFieldType(Schema.SchemaFieldType.LONG)
+                .setVInt64(latency)
+                .build()));
+  }
+
   @Test
   public void testAstraSearch() throws IOException {
     IndexingChunkManager<LogMessage> chunkManager = chunkManagerUtil.chunkManager;
@@ -144,14 +176,14 @@ public class AstraLocalQueryServiceTest {
     assertThat(response.getTookMicros()).isNotZero();
     assertThat(response.getFailedNodes()).isZero();
     assertThat(response.getTotalNodes()).isEqualTo(1);
-    assertThat(response.getTotalSnapshots()).isEqualTo(1);
-    assertThat(response.getSnapshotsWithReplicas()).isEqualTo(1);
+    assertThat(response.getRequestedSnapshots()).isEqualTo(1);
+    assertThat(response.getFulfilledSnapshots()).isEqualTo(1);
 
     // Test hit contents
-    assertThat(response.getHits(0)).contains("Message100");
-    List<ByteString> hits = response.getHitsList().asByteStringList();
+    assertThat(response.getHits(0).getMessage()).contains("Message100");
+    List<AstraSearch.SearchResult.Hit> hits = response.getHitsList();
     assertThat(hits.size()).isEqualTo(1);
-    LogWireMessage hit = JsonUtil.read(hits.get(0).toStringUtf8(), LogWireMessage.class);
+    LogWireMessage hit = JsonUtil.read(hits.get(0).getMessage(), LogWireMessage.class);
     LogMessage m = LogMessage.fromWireMessage(hit);
     assertThat(m.getType()).isEqualTo(MessageUtil.TEST_MESSAGE_TYPE);
     assertThat(m.getIndex()).isEqualTo(MessageUtil.TEST_DATASET_NAME);
@@ -204,11 +236,11 @@ public class AstraLocalQueryServiceTest {
 
     assertThat(response.getHitsCount()).isZero();
     assertThat(response.getTookMicros()).isNotZero();
-    assertThat(response.getHitsList().asByteStringList().size()).isZero();
+    assertThat(response.getHitsList().size()).isZero();
     assertThat(response.getFailedNodes()).isZero();
     assertThat(response.getTotalNodes()).isEqualTo(1);
-    assertThat(response.getTotalSnapshots()).isEqualTo(1);
-    assertThat(response.getSnapshotsWithReplicas()).isEqualTo(1);
+    assertThat(response.getRequestedSnapshots()).isEqualTo(1);
+    assertThat(response.getFulfilledSnapshots()).isEqualTo(1);
 
     // Test histogram buckets
     InternalAggregations internalAggregations =
@@ -253,9 +285,9 @@ public class AstraLocalQueryServiceTest {
     assertThat(response.getTookMicros()).isNotZero();
     assertThat(response.getFailedNodes()).isZero();
     assertThat(response.getTotalNodes()).isEqualTo(1);
-    assertThat(response.getTotalSnapshots()).isEqualTo(1);
-    assertThat(response.getSnapshotsWithReplicas()).isEqualTo(1);
-    assertThat(response.getHitsList().asByteStringList().size()).isZero();
+    assertThat(response.getRequestedSnapshots()).isEqualTo(1);
+    assertThat(response.getFulfilledSnapshots()).isEqualTo(1);
+    assertThat(response.getHitsList().size()).isZero();
 
     // Test histogram buckets
     InternalAggregations internalAggregations =
@@ -299,15 +331,15 @@ public class AstraLocalQueryServiceTest {
     assertThat(response.getTookMicros()).isNotZero();
     assertThat(response.getFailedNodes()).isZero();
     assertThat(response.getTotalNodes()).isEqualTo(1);
-    assertThat(response.getTotalSnapshots()).isEqualTo(1);
-    assertThat(response.getSnapshotsWithReplicas()).isEqualTo(1);
+    assertThat(response.getRequestedSnapshots()).isEqualTo(1);
+    assertThat(response.getFulfilledSnapshots()).isEqualTo(1);
 
     // Test hit contents
-    assertThat(response.getHitsList().asByteStringList().size()).isEqualTo(1);
-    assertThat(response.getHits(0)).contains("Message1");
-    List<ByteString> hits = response.getHitsList().asByteStringList();
+    assertThat(response.getHitsList().size()).isEqualTo(1);
+    assertThat(response.getHits(0).getMessage()).contains("Message1");
+    List<AstraSearch.SearchResult.Hit> hits = response.getHitsList();
     assertThat(hits.size()).isEqualTo(1);
-    LogWireMessage hit = JsonUtil.read(hits.get(0).toStringUtf8(), LogWireMessage.class);
+    LogWireMessage hit = JsonUtil.read(hits.get(0).getMessage(), LogWireMessage.class);
     LogMessage m = LogMessage.fromWireMessage(hit);
     assertThat(m.getType()).isEqualTo(MessageUtil.TEST_MESSAGE_TYPE);
     assertThat(m.getIndex()).isEqualTo(MessageUtil.TEST_DATASET_NAME);
@@ -319,6 +351,92 @@ public class AstraLocalQueryServiceTest {
 
     // Test histogram buckets
     assertThat(response.getInternalAggregations().size()).isEqualTo(0);
+  }
+
+  /** Verifies local multi_terms produces compound buckets and nested metric aggregations. */
+  @Test
+  public void testAstraSearchWithMultiTermsAndSubAggregation() throws IOException {
+    Instant startTime = Instant.now().minusSeconds(10);
+    List<Trace.Span> rows =
+        List.of(
+            makeDimensionSpan(1, startTime.plusMillis(1), "US", "Chrome", 12),
+            makeDimensionSpan(2, startTime.plusMillis(2), "US", "Chrome", 30),
+            makeDimensionSpan(3, startTime.plusMillis(3), "US", "Safari", 20),
+            makeDimensionSpan(4, startTime.plusMillis(4), "CA", "Chrome", 40));
+    Map<List<Object>, Long> expectedCounts =
+        Map.of(
+            List.of("US", "Chrome"), 2L,
+            List.of("US", "Safari"), 1L,
+            List.of("CA", "Chrome"), 1L);
+    Map<List<Object>, Double> expectedMaximumLatency =
+        Map.of(
+            List.of("US", "Chrome"), 30.0,
+            List.of("US", "Safari"), 20.0,
+            List.of("CA", "Chrome"), 40.0);
+
+    IndexingChunkManager<LogMessage> chunkManager = chunkManagerUtil.chunkManager;
+    int offset = 1;
+    for (Trace.Span row : rows) {
+      chunkManager.addMessage(row, row.toString().length(), TEST_KAFKA_PARITION_ID, offset++);
+    }
+    chunkManager.getActiveChunk().commit();
+
+    AstraSearch.SearchResult response =
+        astraLocalQueryService.doSearch(
+            AstraSearch.SearchRequest.newBuilder()
+                .setDataset(MessageUtil.TEST_DATASET_NAME)
+                .setStartTimeEpochMs(startTime.toEpochMilli())
+                .setEndTimeEpochMs(startTime.plusSeconds(1).toEpochMilli())
+                .setHowMany(0)
+                .setAggregationJson(
+                    """
+                    {
+                      "dimensions": {
+                        "multi_terms": {
+                          "terms": [
+                            {
+                              "field": "country"
+                            },
+                            {
+                              "field": "browser"
+                            }
+                          ],
+                          "size": 10,
+                          "order": {
+                            "_count": "desc"
+                          }
+                        },
+                        "aggs": {
+                          "max_latency": {
+                            "max": {
+                              "field": "latency"
+                            }
+                          }
+                        }
+                      }
+                    }
+                    """)
+                .build());
+
+    InternalAggregations aggregations =
+        OpenSearchInternalAggregation.fromByteArray(
+            response.getInternalAggregations().toByteArray());
+    InternalMultiTerms dimensions = (InternalMultiTerms) aggregations.get("dimensions");
+    Map<List<Object>, Long> actualCounts =
+        dimensions.getBuckets().stream()
+            .collect(
+                Collectors.toMap(
+                    InternalMultiTerms.Bucket::getKey, InternalMultiTerms.Bucket::getDocCount));
+    Map<List<Object>, Double> actualMaximumLatency =
+        dimensions.getBuckets().stream()
+            .collect(
+                Collectors.toMap(
+                    InternalMultiTerms.Bucket::getKey,
+                    bucket ->
+                        ((InternalMax) bucket.getAggregations().get("max_latency")).getValue()));
+
+    assertThat(actualCounts).isEqualTo(expectedCounts);
+    assertThat(actualMaximumLatency).isEqualTo(expectedMaximumLatency);
   }
 
   @Test
@@ -353,6 +471,34 @@ public class AstraLocalQueryServiceTest {
                         .setHowMany(0)
                         .setAggregationJson("")
                         .build()));
+  }
+
+  /** Verifies local soft errors are propagated as shard failures in the search response. */
+  @Test
+  public void testAstraSearchPropagatesSoftErrorAsShardFailure() {
+    @SuppressWarnings("unchecked")
+    ChunkManager<LogMessage> chunkManager = mock(ChunkManager.class);
+    when(chunkManager.query(any(), any())).thenReturn(SearchResult.localSoftFailure());
+
+    AstraLocalQueryService<LogMessage> serviceUnderTest =
+        new AstraLocalQueryService<>(chunkManager, Duration.ofSeconds(3));
+
+    Instant now = Instant.now();
+    AstraSearch.SearchResult response =
+        serviceUnderTest.doSearch(
+            AstraSearch.SearchRequest.newBuilder()
+                .setDataset(MessageUtil.TEST_DATASET_NAME)
+                .setQuery(
+                    buildQueryFromQueryString("Message1", now.toEpochMilli(), now.toEpochMilli()))
+                .setStartTimeEpochMs(now.toEpochMilli())
+                .setEndTimeEpochMs(now.toEpochMilli())
+                .setHowMany(10)
+                .build());
+
+    assertThat(response.getFailedNodes()).isZero();
+    assertThat(response.getTotalNodes()).isZero();
+    assertThat(response.getRequestedSnapshots()).isEqualTo(1);
+    assertThat(response.getFulfilledSnapshots()).isZero();
   }
 
   @Test
@@ -408,14 +554,14 @@ public class AstraLocalQueryServiceTest {
     assertThat(response.getTookMicros()).isNotZero();
     assertThat(response.getFailedNodes()).isZero();
     assertThat(response.getTotalNodes()).isEqualTo(1);
-    assertThat(response.getTotalSnapshots()).isEqualTo(1);
-    assertThat(response.getSnapshotsWithReplicas()).isEqualTo(1);
+    assertThat(response.getRequestedSnapshots()).isEqualTo(1);
+    assertThat(response.getFulfilledSnapshots()).isEqualTo(1);
 
     // Test hit contents
-    assertThat(response.getHits(0)).contains("Message1");
-    List<ByteString> hits = response.getHitsList().asByteStringList();
+    assertThat(response.getHits(0).getMessage()).contains("Message1");
+    List<AstraSearch.SearchResult.Hit> hits = response.getHitsList();
     assertThat(hits.size()).isEqualTo(1);
-    LogWireMessage hit = JsonUtil.read(hits.get(0).toStringUtf8(), LogWireMessage.class);
+    LogWireMessage hit = JsonUtil.read(hits.get(0).getMessage(), LogWireMessage.class);
     LogMessage m = LogMessage.fromWireMessage(hit);
     assertThat(m.getType()).isEqualTo(MessageUtil.TEST_MESSAGE_TYPE);
     assertThat(m.getIndex()).isEqualTo(MessageUtil.TEST_DATASET_NAME);

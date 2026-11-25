@@ -304,12 +304,7 @@ public abstract class ReadWriteChunk<T> implements Chunk<T> {
 
   @Override
   public SearchResult<T> query(SearchQuery query) {
-    return logSearcher.search(
-        query.dataset,
-        query.howMany,
-        query.queryBuilder,
-        query.sourceFieldFilter,
-        query.aggregatorFactoriesBuilder);
+    return logSearcher.search(query);
   }
 
   @Override

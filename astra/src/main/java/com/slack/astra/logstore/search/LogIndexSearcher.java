@@ -1,14 +1,11 @@
 package com.slack.astra.logstore.search;
 
 import java.io.Closeable;
-import org.opensearch.index.query.QueryBuilder;
-import org.opensearch.search.aggregations.AggregatorFactories;
 
 public interface LogIndexSearcher<T> extends Closeable {
-  SearchResult<T> search(
-      String dataset,
-      int howMany,
-      QueryBuilder queryBuilder,
-      SourceFieldFilter sourceFieldFilter,
-      AggregatorFactories.Builder aggregatorFactoriesBuilder);
+  /**
+   * Executes a search for the supplied query, applying the query's requested sort fields when
+   * present and the deterministic internal ordering otherwise.
+   */
+  SearchResult<T> search(SearchQuery query);
 }

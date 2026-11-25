@@ -24,6 +24,7 @@ import static org.assertj.core.api.AssertionsForClassTypes.assertThatExceptionOf
 import static org.awaitility.Awaitility.await;
 
 import brave.Tracing;
+import com.google.protobuf.ByteString;
 import com.slack.astra.clusterManager.RedactionUpdateService;
 import com.slack.astra.logstore.LogMessage;
 import com.slack.astra.metadata.core.AstraMetadataTestUtils;
@@ -36,6 +37,7 @@ import com.slack.astra.proto.service.AstraSearch;
 import com.slack.astra.testlib.SpanUtil;
 import com.slack.astra.testlib.TemporaryLogStoreAndSearcherExtension;
 import com.slack.astra.util.QueryBuilderUtil;
+import com.slack.astra.writer.SpanFormatter;
 import com.slack.service.murron.trace.Trace;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -50,6 +52,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import org.apache.curator.test.TestingServer;
 import org.apache.curator.x.async.AsyncCuratorFramework;
+import org.apache.lucene.document.InetAddressPoint;
+import org.apache.lucene.util.BytesRef;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -57,17 +61,80 @@ import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
+import org.opensearch.common.network.InetAddresses;
+import org.opensearch.index.mapper.Uid;
+import org.opensearch.index.query.BoolQueryBuilder;
+import org.opensearch.index.query.QueryBuilder;
+import org.opensearch.index.query.TermQueryBuilder;
+import org.opensearch.search.aggregations.AggregatorFactories;
 import org.opensearch.search.aggregations.bucket.filter.InternalFilters;
 import org.opensearch.search.aggregations.bucket.histogram.InternalAutoDateHistogram;
 import org.opensearch.search.aggregations.bucket.histogram.InternalDateHistogram;
 import org.opensearch.search.aggregations.bucket.terms.StringTerms;
+import org.opensearch.search.aggregations.metrics.CardinalityAggregationBuilder;
 import org.opensearch.search.aggregations.metrics.InternalAvg;
+import org.opensearch.search.aggregations.metrics.InternalCardinality;
 import org.opensearch.search.aggregations.metrics.InternalExtendedStats;
 import org.opensearch.search.aggregations.metrics.InternalMax;
 import org.opensearch.search.aggregations.metrics.InternalMin;
 import org.opensearch.search.aggregations.metrics.InternalSum;
 
 public class LogIndexSearcherImplTest {
+
+  private static ByteString encodedIdSortValue(String id) {
+    BytesRef encodedId = Uid.encodeId(id);
+    return ByteString.copyFrom(encodedId.bytes, encodedId.offset, encodedId.length);
+  }
+
+  private static ByteString encodedIpSortValue(String ip) {
+    return ByteString.copyFrom(InetAddressPoint.encode(InetAddresses.forString(ip)));
+  }
+
+  private static SearchResult<LogMessage> search(
+      LogIndexSearcherImpl searcher,
+      String dataset,
+      int howMany,
+      QueryBuilder queryBuilder,
+      SourceFieldFilter sourceFieldFilter,
+      AggregatorFactories.Builder aggregatorFactoriesBuilder) {
+    return searcher.search(
+        new SearchQuery(
+            dataset,
+            0L,
+            MAX_TIME,
+            howMany,
+            0,
+            List.of(),
+            queryBuilder,
+            sourceFieldFilter,
+            aggregatorFactoriesBuilder));
+  }
+
+  private static SearchResult<LogMessage> search(
+      LogIndexSearcherImpl searcher,
+      String dataset,
+      int howMany,
+      List<SearchQuery.SortFieldSpec> requestedSortFieldSpecs,
+      QueryBuilder queryBuilder,
+      SourceFieldFilter sourceFieldFilter,
+      AggregatorFactories.Builder aggregatorFactoriesBuilder) {
+    return searcher.search(
+        new SearchQuery(
+            dataset,
+            0L,
+            MAX_TIME,
+            howMany,
+            0,
+            requestedSortFieldSpecs,
+            List.of(),
+            queryBuilder,
+            sourceFieldFilter,
+            aggregatorFactoriesBuilder));
+  }
+
+  private static List<HitSortValue> sortValues(Object... values) {
+    return Arrays.stream(values).map(HitSortValue::of).toList();
+  }
 
   @Nested
   public class RedactionTests {
@@ -175,14 +242,15 @@ public class LogIndexSearcherImplTest {
       Thread.sleep(redactionUpdateServiceConfig.getRedactionUpdatePeriodSecs() * 1000);
 
       List<LogMessage> messages =
-          featureFlagEnabledStrictLogStore.logSearcher.search(
+          search(
+                  featureFlagEnabledStrictLogStore.logSearcher,
                   TEST_DATASET_NAME,
                   1000,
                   QueryBuilderUtil.generateQueryBuilder(
                       "Message1", time.toEpochMilli(), time.plusSeconds(10).toEpochMilli()),
                   SourceFieldFilter.fromProto(sourceFieldFilter),
                   createGenericDateHistogramAggregatorFactoriesBuilder())
-              .hits;
+              .messages();
       assertThat(messages).hasSize(1);
       assertThat(messages.get(0).getSource()).hasSize(1);
       assertThat(messages.get(0).getSource().containsKey("message")).isTrue();
@@ -232,14 +300,15 @@ public class LogIndexSearcherImplTest {
               .build();
 
       List<LogMessage> messages =
-          featureFlagEnabledStrictLogStore.logSearcher.search(
+          search(
+                  featureFlagEnabledStrictLogStore.logSearcher,
                   TEST_DATASET_NAME,
                   1000,
                   QueryBuilderUtil.generateQueryBuilder(
                       "Message1", time.toEpochMilli(), time.plusSeconds(10).toEpochMilli()),
                   SourceFieldFilter.fromProto(sourceFieldFilter),
                   createGenericDateHistogramAggregatorFactoriesBuilder())
-              .hits;
+              .messages();
       assertThat(messages).hasSize(1);
       assertThat(messages.get(0).getSource()).hasSize(1);
       assertThat(messages.get(0).getSource().containsKey("message")).isTrue();
@@ -290,7 +359,8 @@ public class LogIndexSearcherImplTest {
               .build();
 
       List<LogMessage> messages =
-          featureFlagEnabledStrictLogStore.logSearcher.search(
+          search(
+                  featureFlagEnabledStrictLogStore.logSearcher,
                   TEST_DATASET_NAME,
                   1000,
                   QueryBuilderUtil.generateQueryBuilder(
@@ -299,7 +369,7 @@ public class LogIndexSearcherImplTest {
                       time.plusSeconds(10).toEpochMilli()),
                   SourceFieldFilter.fromProto(sourceFieldFilter),
                   createGenericDateHistogramAggregatorFactoriesBuilder())
-              .hits;
+              .messages();
       assertThat(messages).hasSize(2);
       assertThat(messages.get(0).getSource().containsKey("message")).isTrue();
       assertThat(messages.get(0).getSource().get("message"))
@@ -351,14 +421,15 @@ public class LogIndexSearcherImplTest {
           AstraSearch.SearchRequest.SourceFieldFilter.newBuilder().setIncludeAll(true).build();
 
       List<LogMessage> messages =
-          featureFlagEnabledStrictLogStore.logSearcher.search(
+          search(
+                  featureFlagEnabledStrictLogStore.logSearcher,
                   TEST_DATASET_NAME,
                   1000,
                   QueryBuilderUtil.generateQueryBuilder(
                       "Message1", time.toEpochMilli(), time.plusSeconds(10).toEpochMilli()),
                   SourceFieldFilter.fromProto(sourceFieldFilter),
                   createGenericDateHistogramAggregatorFactoriesBuilder())
-              .hits;
+              .messages();
 
       assertThat(messages).hasSize(1);
       assertThat(messages.get(0).getSource().containsKey("message")).isTrue();
@@ -409,14 +480,15 @@ public class LogIndexSearcherImplTest {
               .build();
 
       List<LogMessage> messages =
-          featureFlagEnabledStrictLogStore.logSearcher.search(
+          search(
+                  featureFlagEnabledStrictLogStore.logSearcher,
                   TEST_DATASET_NAME,
                   1000,
                   QueryBuilderUtil.generateQueryBuilder(
                       "Message1", time.toEpochMilli(), time.plusSeconds(10).toEpochMilli()),
                   SourceFieldFilter.fromProto(sourceFieldFilter),
                   createGenericDateHistogramAggregatorFactoriesBuilder())
-              .hits;
+              .messages();
       assertThat(messages).hasSize(1);
       assertThat(messages.get(0).getSource()).hasSize(1);
       assertThat(messages.get(0).getSource().containsKey("message")).isTrue();
@@ -455,7 +527,8 @@ public class LogIndexSearcherImplTest {
       featureFlagEnabledStrictLogStore.logStore.refresh();
 
       SearchResult<LogMessage> scriptNull =
-          featureFlagEnabledStrictLogStore.logSearcher.search(
+          search(
+              featureFlagEnabledStrictLogStore.logSearcher,
               TEST_DATASET_NAME,
               1000,
               QueryBuilderUtil.generateQueryBuilder("", 0L, MAX_TIME),
@@ -546,14 +619,15 @@ public class LogIndexSearcherImplTest {
             .build();
 
     List<LogMessage> messages =
-        featureFlagEnabledStrictLogStore.logSearcher.search(
+        search(
+                featureFlagEnabledStrictLogStore.logSearcher,
                 TEST_DATASET_NAME,
                 1000,
                 QueryBuilderUtil.generateQueryBuilder(
                     "Message1", time.toEpochMilli(), time.plusSeconds(10).toEpochMilli()),
                 SourceFieldFilter.fromProto(sourceFieldFilter),
                 createGenericDateHistogramAggregatorFactoriesBuilder())
-            .hits;
+            .messages();
     assertThat(messages).hasSize(1);
     assertThat(messages.get(0).getSource()).hasSize(1);
     assertThat(messages.get(0).getSource().containsKey("message")).isTrue();
@@ -587,14 +661,15 @@ public class LogIndexSearcherImplTest {
             .build();
 
     List<LogMessage> messages =
-        featureFlagEnabledStrictLogStore.logSearcher.search(
+        search(
+                featureFlagEnabledStrictLogStore.logSearcher,
                 TEST_DATASET_NAME,
                 1000,
                 QueryBuilderUtil.generateQueryBuilder(
                     "Message1", time.toEpochMilli(), time.plusSeconds(10).toEpochMilli()),
                 SourceFieldFilter.fromProto(sourceFieldFilter),
                 createGenericDateHistogramAggregatorFactoriesBuilder())
-            .hits;
+            .messages();
     assertThat(messages).hasSize(1);
     assertThat(messages.get(0).getSource()).hasSize(1);
     assertThat(messages.get(0).getSource().containsKey("message")).isTrue();
@@ -628,14 +703,15 @@ public class LogIndexSearcherImplTest {
             .build();
 
     List<LogMessage> messages =
-        featureFlagEnabledStrictLogStore.logSearcher.search(
+        search(
+                featureFlagEnabledStrictLogStore.logSearcher,
                 TEST_DATASET_NAME,
                 1000,
                 QueryBuilderUtil.generateQueryBuilder(
                     "Message1", time.toEpochMilli(), time.plusSeconds(10).toEpochMilli()),
                 SourceFieldFilter.fromProto(sourceFieldFilter),
                 createGenericDateHistogramAggregatorFactoriesBuilder())
-            .hits;
+            .messages();
     assertThat(messages).hasSize(1);
     assertThat(messages.get(0).getSource()).hasSize(1);
     assertThat(messages.get(0).getSource().containsKey("message")).isTrue();
@@ -667,14 +743,15 @@ public class LogIndexSearcherImplTest {
         AstraSearch.SearchRequest.SourceFieldFilter.newBuilder().setIncludeAll(true).build();
 
     List<LogMessage> messages =
-        featureFlagEnabledStrictLogStore.logSearcher.search(
+        search(
+                featureFlagEnabledStrictLogStore.logSearcher,
                 TEST_DATASET_NAME,
                 1000,
                 QueryBuilderUtil.generateQueryBuilder(
                     "Message1", time.toEpochMilli(), time.plusSeconds(10).toEpochMilli()),
                 SourceFieldFilter.fromProto(sourceFieldFilter),
                 createGenericDateHistogramAggregatorFactoriesBuilder())
-            .hits;
+            .messages();
     assertThat(messages).hasSize(1);
     assertThat(messages.get(0).getSource().size()).isGreaterThan(1);
   }
@@ -703,14 +780,15 @@ public class LogIndexSearcherImplTest {
         AstraSearch.SearchRequest.SourceFieldFilter.newBuilder().setIncludeAll(false).build();
 
     List<LogMessage> messages =
-        featureFlagEnabledStrictLogStore.logSearcher.search(
+        search(
+                featureFlagEnabledStrictLogStore.logSearcher,
                 TEST_DATASET_NAME,
                 1000,
                 QueryBuilderUtil.generateQueryBuilder(
                     "Message1", time.toEpochMilli(), time.plusSeconds(10).toEpochMilli()),
                 SourceFieldFilter.fromProto(sourceFieldFilter),
                 createGenericDateHistogramAggregatorFactoriesBuilder())
-            .hits;
+            .messages();
     assertThat(messages).hasSize(1);
     assertThat(messages.get(0).getSource().size()).isEqualTo(0);
   }
@@ -741,14 +819,15 @@ public class LogIndexSearcherImplTest {
             .build();
 
     List<LogMessage> messages =
-        featureFlagEnabledStrictLogStore.logSearcher.search(
+        search(
+                featureFlagEnabledStrictLogStore.logSearcher,
                 TEST_DATASET_NAME,
                 1000,
                 QueryBuilderUtil.generateQueryBuilder(
                     "Message1", time.toEpochMilli(), time.plusSeconds(10).toEpochMilli()),
                 SourceFieldFilter.fromProto(sourceFieldFilter),
                 createGenericDateHistogramAggregatorFactoriesBuilder())
-            .hits;
+            .messages();
     assertThat(messages).hasSize(1);
     assertThat(messages.get(0).getSource().size()).isGreaterThan(1);
     assertThat(messages.get(0).getSource().containsKey("message")).isFalse();
@@ -780,14 +859,15 @@ public class LogIndexSearcherImplTest {
             .build();
 
     List<LogMessage> messages =
-        featureFlagEnabledStrictLogStore.logSearcher.search(
+        search(
+                featureFlagEnabledStrictLogStore.logSearcher,
                 TEST_DATASET_NAME,
                 1000,
                 QueryBuilderUtil.generateQueryBuilder(
                     "Message1", time.toEpochMilli(), time.plusSeconds(10).toEpochMilli()),
                 SourceFieldFilter.fromProto(sourceFieldFilter),
                 createGenericDateHistogramAggregatorFactoriesBuilder())
-            .hits;
+            .messages();
     assertThat(messages).hasSize(1);
     assertThat(messages.get(0).getSource().size()).isGreaterThan(1);
     assertThat(messages.get(0).getSource().containsKey("message")).isFalse();
@@ -819,14 +899,15 @@ public class LogIndexSearcherImplTest {
             .build();
 
     List<LogMessage> messages =
-        featureFlagEnabledStrictLogStore.logSearcher.search(
+        search(
+                featureFlagEnabledStrictLogStore.logSearcher,
                 TEST_DATASET_NAME,
                 1000,
                 QueryBuilderUtil.generateQueryBuilder(
                     "Message1", time.toEpochMilli(), time.plusSeconds(10).toEpochMilli()),
                 SourceFieldFilter.fromProto(sourceFieldFilter),
                 createGenericDateHistogramAggregatorFactoriesBuilder())
-            .hits;
+            .messages();
     assertThat(messages).hasSize(1);
     assertThat(messages.get(0).getSource().size()).isGreaterThan(1);
     assertThat(messages.get(0).getSource().containsKey("message")).isFalse();
@@ -856,14 +937,15 @@ public class LogIndexSearcherImplTest {
         AstraSearch.SearchRequest.SourceFieldFilter.newBuilder().setExcludeAll(true).build();
 
     List<LogMessage> messages =
-        featureFlagEnabledStrictLogStore.logSearcher.search(
+        search(
+                featureFlagEnabledStrictLogStore.logSearcher,
                 TEST_DATASET_NAME,
                 1000,
                 QueryBuilderUtil.generateQueryBuilder(
                     "Message1", time.toEpochMilli(), time.plusSeconds(10).toEpochMilli()),
                 SourceFieldFilter.fromProto(sourceFieldFilter),
                 createGenericDateHistogramAggregatorFactoriesBuilder())
-            .hits;
+            .messages();
     assertThat(messages).hasSize(1);
     assertThat(messages.get(0).getSource().size()).isEqualTo(0);
   }
@@ -892,14 +974,15 @@ public class LogIndexSearcherImplTest {
         AstraSearch.SearchRequest.SourceFieldFilter.newBuilder().setExcludeAll(false).build();
 
     List<LogMessage> messages =
-        featureFlagEnabledStrictLogStore.logSearcher.search(
+        search(
+                featureFlagEnabledStrictLogStore.logSearcher,
                 TEST_DATASET_NAME,
                 1000,
                 QueryBuilderUtil.generateQueryBuilder(
                     "Message1", time.toEpochMilli(), time.plusSeconds(10).toEpochMilli()),
                 SourceFieldFilter.fromProto(sourceFieldFilter),
                 createGenericDateHistogramAggregatorFactoriesBuilder())
-            .hits;
+            .messages();
     assertThat(messages).hasSize(1);
     assertThat(messages.get(0).getSource().size()).isGreaterThan(0);
   }
@@ -918,9 +1001,8 @@ public class LogIndexSearcherImplTest {
 
     // Start inclusive.
     assertThat(
-            strictLogStore
-                .logSearcher
-                .search(
+            search(
+                    strictLogStore.logSearcher,
                     TEST_DATASET_NAME,
                     1000,
                     QueryBuilderUtil.generateQueryBuilder(
@@ -933,9 +1015,8 @@ public class LogIndexSearcherImplTest {
 
     // Extended range still only picking one element.
     assertThat(
-            strictLogStore
-                .logSearcher
-                .search(
+            search(
+                    strictLogStore.logSearcher,
                     TEST_DATASET_NAME,
                     1000,
                     QueryBuilderUtil.generateQueryBuilder(
@@ -950,9 +1031,8 @@ public class LogIndexSearcherImplTest {
 
     // Both ranges are inclusive.
     assertThat(
-            strictLogStore
-                .logSearcher
-                .search(
+            search(
+                    strictLogStore.logSearcher,
                     TEST_DATASET_NAME,
                     1000,
                     QueryBuilderUtil.generateQueryBuilder(
@@ -967,9 +1047,8 @@ public class LogIndexSearcherImplTest {
 
     // Extended range to pick up both events
     assertThat(
-            strictLogStore
-                .logSearcher
-                .search(
+            search(
+                    strictLogStore.logSearcher,
                     TEST_DATASET_NAME,
                     1000,
                     QueryBuilderUtil.generateQueryBuilder(
@@ -997,9 +1076,8 @@ public class LogIndexSearcherImplTest {
     assertThat(getTimerCount(REFRESHES_TIMER, strictLogStore.metricsRegistry)).isEqualTo(1);
 
     assertThat(
-            strictLogStore
-                .logSearcher
-                .search(
+            search(
+                    strictLogStore.logSearcher,
                     "idx",
                     100,
                     QueryBuilderUtil.generateQueryBuilder(
@@ -1013,9 +1091,8 @@ public class LogIndexSearcherImplTest {
         .isEqualTo(1);
 
     assertThat(
-            strictLogStore
-                .logSearcher
-                .search(
+            search(
+                    strictLogStore.logSearcher,
                     "idx1",
                     100,
                     QueryBuilderUtil.generateQueryBuilder(
@@ -1027,9 +1104,8 @@ public class LogIndexSearcherImplTest {
         .isEqualTo(1);
 
     assertThat(
-            strictLogStore
-                .logSearcher
-                .search(
+            search(
+                    strictLogStore.logSearcher,
                     "idx12",
                     100,
                     QueryBuilderUtil.generateQueryBuilder(
@@ -1041,9 +1117,8 @@ public class LogIndexSearcherImplTest {
         .isEqualTo(0);
 
     assertThat(
-            strictLogStore
-                .logSearcher
-                .search(
+            search(
+                    strictLogStore.logSearcher,
                     "idx1",
                     100,
                     QueryBuilderUtil.generateQueryBuilder(
@@ -1060,7 +1135,8 @@ public class LogIndexSearcherImplTest {
     Instant time = Instant.now();
     loadTestData(time);
     SearchResult<LogMessage> babies =
-        strictLogStore.logSearcher.search(
+        search(
+            strictLogStore.logSearcher,
             TEST_DATASET_NAME,
             10,
             QueryBuilderUtil.generateQueryBuilder(
@@ -1091,7 +1167,8 @@ public class LogIndexSearcherImplTest {
     strictLogStore.logStore.refresh();
 
     SearchResult<LogMessage> termQuery =
-        strictLogStore.logSearcher.search(
+        search(
+            strictLogStore.logSearcher,
             TEST_DATASET_NAME,
             10,
             QueryBuilderUtil.generateQueryBuilder(
@@ -1101,7 +1178,8 @@ public class LogIndexSearcherImplTest {
     assertThat(termQuery.hits.size()).isEqualTo(1);
 
     SearchResult<LogMessage> noTermStrQuery =
-        strictLogStore.logSearcher.search(
+        search(
+            strictLogStore.logSearcher,
             TEST_DATASET_NAME,
             10,
             QueryBuilderUtil.generateQueryBuilder(
@@ -1111,7 +1189,8 @@ public class LogIndexSearcherImplTest {
     assertThat(noTermStrQuery.hits.size()).isEqualTo(1);
 
     SearchResult<LogMessage> noTermNumericQuery =
-        strictLogStore.logSearcher.search(
+        search(
+            strictLogStore.logSearcher,
             TEST_DATASET_NAME,
             10,
             QueryBuilderUtil.generateQueryBuilder(
@@ -1136,7 +1215,8 @@ public class LogIndexSearcherImplTest {
     strictLogStoreWithoutFts.logStore.refresh();
 
     SearchResult<LogMessage> termQuery =
-        strictLogStoreWithoutFts.logSearcher.search(
+        search(
+            strictLogStoreWithoutFts.logSearcher,
             TEST_DATASET_NAME,
             10,
             QueryBuilderUtil.generateQueryBuilder(
@@ -1167,7 +1247,8 @@ public class LogIndexSearcherImplTest {
     strictLogStore.logStore.refresh();
 
     SearchResult<LogMessage> exists =
-        strictLogStore.logSearcher.search(
+        search(
+            strictLogStore.logSearcher,
             TEST_DATASET_NAME,
             10,
             QueryBuilderUtil.generateQueryBuilder(
@@ -1177,7 +1258,8 @@ public class LogIndexSearcherImplTest {
     assertThat(exists.hits.size()).isEqualTo(1);
 
     SearchResult<LogMessage> termQuery =
-        strictLogStore.logSearcher.search(
+        search(
+            strictLogStore.logSearcher,
             TEST_DATASET_NAME,
             10,
             QueryBuilderUtil.generateQueryBuilder(
@@ -1187,7 +1269,8 @@ public class LogIndexSearcherImplTest {
     assertThat(termQuery.hits.size()).isEqualTo(1);
 
     SearchResult<LogMessage> notExists =
-        strictLogStore.logSearcher.search(
+        search(
+            strictLogStore.logSearcher,
             TEST_DATASET_NAME,
             10,
             QueryBuilderUtil.generateQueryBuilder(
@@ -1226,7 +1309,8 @@ public class LogIndexSearcherImplTest {
     strictLogStore.logStore.refresh();
 
     SearchResult<LogMessage> rangeBoundInclusive =
-        strictLogStore.logSearcher.search(
+        search(
+            strictLogStore.logSearcher,
             TEST_DATASET_NAME,
             10,
             QueryBuilderUtil.generateQueryBuilder(
@@ -1236,7 +1320,8 @@ public class LogIndexSearcherImplTest {
     assertThat(rangeBoundInclusive.hits.size()).isEqualTo(3);
 
     SearchResult<LogMessage> rangeBoundExclusive =
-        strictLogStore.logSearcher.search(
+        search(
+            strictLogStore.logSearcher,
             TEST_DATASET_NAME,
             10,
             QueryBuilderUtil.generateQueryBuilder(
@@ -1292,7 +1377,8 @@ public class LogIndexSearcherImplTest {
     strictLogStore.logStore.refresh();
 
     SearchResult<LogMessage> boolquery =
-        strictLogStore.logSearcher.search(
+        search(
+            strictLogStore.logSearcher,
             TEST_DATASET_NAME,
             10,
             QueryBuilderUtil.generateQueryBuilder(
@@ -1302,7 +1388,8 @@ public class LogIndexSearcherImplTest {
     assertThat(boolquery.hits.size()).isEqualTo(1);
 
     SearchResult<LogMessage> intquery =
-        strictLogStore.logSearcher.search(
+        search(
+            strictLogStore.logSearcher,
             TEST_DATASET_NAME,
             10,
             QueryBuilderUtil.generateQueryBuilder(
@@ -1312,7 +1399,8 @@ public class LogIndexSearcherImplTest {
     assertThat(intquery.hits.size()).isEqualTo(1);
 
     SearchResult<LogMessage> longquery =
-        strictLogStore.logSearcher.search(
+        search(
+            strictLogStore.logSearcher,
             TEST_DATASET_NAME,
             10,
             QueryBuilderUtil.generateQueryBuilder(
@@ -1322,7 +1410,8 @@ public class LogIndexSearcherImplTest {
     assertThat(longquery.hits.size()).isEqualTo(1);
 
     SearchResult<LogMessage> floatquery =
-        strictLogStore.logSearcher.search(
+        search(
+            strictLogStore.logSearcher,
             TEST_DATASET_NAME,
             10,
             QueryBuilderUtil.generateQueryBuilder(
@@ -1332,7 +1421,8 @@ public class LogIndexSearcherImplTest {
     assertThat(floatquery.hits.size()).isEqualTo(1);
 
     SearchResult<LogMessage> doublequery =
-        strictLogStore.logSearcher.search(
+        search(
+            strictLogStore.logSearcher,
             TEST_DATASET_NAME,
             10,
             QueryBuilderUtil.generateQueryBuilder(
@@ -1342,20 +1432,346 @@ public class LogIndexSearcherImplTest {
     assertThat(doublequery.hits.size()).isEqualTo(1);
   }
 
+  /** Verifies descending numeric sort places missing numeric values after present values. */
+  @Test
+  void testDescendingSortPlacesMissingNumericValuesLast() throws IOException {
+    Instant time = Instant.ofEpochSecond(1593365471);
+    Trace.KeyValue rankTen =
+        Trace.KeyValue.newBuilder()
+            .setVInt32(10)
+            .setKey("rank")
+            .setFieldType(Schema.SchemaFieldType.INTEGER)
+            .build();
+    Trace.KeyValue rankTwenty =
+        Trace.KeyValue.newBuilder()
+            .setVInt32(20)
+            .setKey("rank")
+            .setFieldType(Schema.SchemaFieldType.INTEGER)
+            .build();
+
+    strictLogStore.logStore.addMessage(SpanUtil.makeSpan(1, "rank-10", time, List.of(rankTen)));
+    strictLogStore.logStore.addMessage(SpanUtil.makeSpan(2, "rank-missing", time.plusSeconds(1)));
+    strictLogStore.logStore.addMessage(
+        SpanUtil.makeSpan(3, "rank-20", time.plusSeconds(2), List.of(rankTwenty)));
+    strictLogStore.logStore.commit();
+    strictLogStore.logStore.refresh();
+
+    SearchResult<LogMessage> results =
+        search(
+            strictLogStore.logSearcher,
+            TEST_DATASET_NAME,
+            3,
+            List.of(new SearchQuery.SortFieldSpec("rank", SearchQuery.SortDirection.DESC)),
+            QueryBuilderUtil.generateQueryBuilder("", 0L, MAX_TIME),
+            null,
+            null);
+
+    assertThat(results.hits.stream().map(SearchResultHit::message).map(LogMessage::getId))
+        .containsExactly("Message3", "Message1", "Message2");
+    assertThat(results.hits.stream().map(hit -> hit.sortValues().get(0)).toList())
+        .containsExactly(
+            HitSortValue.intValue(20),
+            HitSortValue.intValue(10),
+            HitSortValue.intValue(Integer.MIN_VALUE));
+  }
+
+  /** Verifies worker string sort values represent missing keyword fields as null values. */
+  @Test
+  void testStringSortCarriesMissingKeywordValuesAsNullSortValues() throws IOException {
+    Instant time = Instant.ofEpochSecond(1593365471);
+    Trace.KeyValue serviceZeta =
+        Trace.KeyValue.newBuilder()
+            .setVStr("zeta")
+            .setKey("service")
+            .setFieldType(Schema.SchemaFieldType.KEYWORD)
+            .build();
+
+    strictLogStore.logStore.addMessage(
+        SpanUtil.makeSpan(1, "service-zeta", time, List.of(serviceZeta)));
+    strictLogStore.logStore.addMessage(
+        SpanUtil.makeSpan(2, "service-missing", time.plusSeconds(1)));
+    strictLogStore.logStore.commit();
+    strictLogStore.logStore.refresh();
+
+    SearchResult<LogMessage> results =
+        search(
+            strictLogStore.logSearcher,
+            TEST_DATASET_NAME,
+            2,
+            List.of(new SearchQuery.SortFieldSpec("service", SearchQuery.SortDirection.DESC)),
+            QueryBuilderUtil.generateQueryBuilder("", 0L, MAX_TIME),
+            null,
+            null);
+
+    assertThat(results.hits.stream().map(SearchResultHit::message).map(LogMessage::getId))
+        .containsExactly("Message1", "Message2");
+    assertThat(results.hits.stream().map(hit -> hit.sortValues().get(0)).toList())
+        .containsExactly(HitSortValue.stringValue("zeta"), HitSortValue.nullValue());
+  }
+
+  /** Verifies IP field sorting carries encoded IP sort values from the worker. */
+  @Test
+  void testSortingByIpFieldUsesEncodedIpSortValues() throws IOException {
+    Instant time = Instant.ofEpochSecond(1593365471);
+    Trace.KeyValue ip192 =
+        Trace.KeyValue.newBuilder()
+            .setVStr("192.168.0.1")
+            .setKey("client.ip")
+            .setFieldType(Schema.SchemaFieldType.IP)
+            .build();
+    Trace.KeyValue ip10Dot2 =
+        Trace.KeyValue.newBuilder()
+            .setVStr("10.0.0.2")
+            .setKey("client.ip")
+            .setFieldType(Schema.SchemaFieldType.IP)
+            .build();
+    Trace.KeyValue ip10Dot1 =
+        Trace.KeyValue.newBuilder()
+            .setVStr("10.0.0.1")
+            .setKey("client.ip")
+            .setFieldType(Schema.SchemaFieldType.IP)
+            .build();
+
+    strictLogStore.logStore.addMessage(SpanUtil.makeSpan(1, "ip-192", time, List.of(ip192)));
+    strictLogStore.logStore.addMessage(
+        SpanUtil.makeSpan(2, "ip-10-dot-2", time.plusSeconds(1), List.of(ip10Dot2)));
+    strictLogStore.logStore.addMessage(
+        SpanUtil.makeSpan(3, "ip-10-dot-1", time.plusSeconds(2), List.of(ip10Dot1)));
+    strictLogStore.logStore.commit();
+    strictLogStore.logStore.refresh();
+
+    SearchResult<LogMessage> results =
+        search(
+            strictLogStore.logSearcher,
+            TEST_DATASET_NAME,
+            3,
+            List.of(new SearchQuery.SortFieldSpec("client.ip", SearchQuery.SortDirection.ASC)),
+            QueryBuilderUtil.generateQueryBuilder("", 0L, MAX_TIME),
+            null,
+            null);
+
+    assertThat(results.hits.stream().map(SearchResultHit::message).map(LogMessage::getId))
+        .containsExactly("Message3", "Message2", "Message1");
+    assertThat(results.hits.stream().map(hit -> hit.sortValues().get(0)).toList())
+        .containsExactly(
+            HitSortValue.ipAddress(encodedIpSortValue("10.0.0.1")),
+            HitSortValue.ipAddress(encodedIpSortValue("10.0.0.2")),
+            HitSortValue.ipAddress(encodedIpSortValue("192.168.0.1")));
+  }
+
+  /** Verifies worker and coordinator tie-breakers produce the same order for equal sort values. */
+  @Test
+  void testWorkerAndCoordinatorUseSameTieBreakerOrderForEqualSortValues() throws IOException {
+    Instant time = Instant.now();
+    Trace.KeyValue rank =
+        Trace.KeyValue.newBuilder()
+            .setVInt32(100)
+            .setKey("rank")
+            .setFieldType(Schema.SchemaFieldType.INTEGER)
+            .build();
+    List<SearchQuery.SortFieldSpec> sortFieldSpecs =
+        List.of(new SearchQuery.SortFieldSpec("rank", SearchQuery.SortDirection.ASC));
+
+    strictLogStore.logStore.addMessage(SpanUtil.makeSpan(2, "rank-100", time, List.of(rank)));
+    strictLogStore.logStore.addMessage(SpanUtil.makeSpan(1, "rank-100", time, List.of(rank)));
+    strictLogStore.logStore.addMessage(
+        SpanUtil.makeSpan(3, "rank-100", time.plusSeconds(1), List.of(rank)));
+    strictLogStore.logStore.commit();
+    strictLogStore.logStore.refresh();
+
+    SearchResult<LogMessage> workerResult =
+        search(
+            strictLogStore.logSearcher,
+            TEST_DATASET_NAME,
+            3,
+            sortFieldSpecs,
+            QueryBuilderUtil.generateQueryBuilder("", 0L, MAX_TIME),
+            null,
+            null);
+
+    assertThat(workerResult.hits.stream().map(SearchResultHit::sortValues).toList())
+        .containsExactly(
+            sortValues(100, time.plusSeconds(1).toEpochMilli(), encodedIdSortValue("Message3")),
+            sortValues(100, time.toEpochMilli(), encodedIdSortValue("Message1")),
+            sortValues(100, time.toEpochMilli(), encodedIdSortValue("Message2")));
+    assertThat(workerResult.hits.stream().map(SearchResultHit::message).map(LogMessage::getId))
+        .containsExactly("Message3", "Message1", "Message2");
+
+    SearchQuery searchQuery =
+        new SearchQuery(
+            TEST_DATASET_NAME, 0L, MAX_TIME, 3, 0, sortFieldSpecs, List.of(), null, null, null);
+    SearchResult<LogMessage> firstPartialResult =
+        new SearchResult<>(
+            List.of(workerResult.hits.get(0), workerResult.hits.get(2)), 10, 0, 1, 1, 0, null);
+    SearchResult<LogMessage> secondPartialResult =
+        new SearchResult<>(List.of(workerResult.hits.get(1)), 11, 0, 1, 1, 0, null);
+
+    SearchResult<LogMessage> coordinatorResult =
+        new SearchResultAggregatorImpl<>(searchQuery)
+            .aggregate(List.of(firstPartialResult, secondPartialResult), true);
+
+    assertThat(coordinatorResult.hits.stream().map(SearchResultHit::message).map(LogMessage::getId))
+        .containsExactly("Message3", "Message1", "Message2");
+  }
+
+  /** Verifies worker sort values survive proto round trips with requested sort fields. */
+  @Test
+  void testWorkerSortValuesRoundTripWithRequestedSortFields() throws IOException {
+    Instant time = Instant.ofEpochSecond(1593365471);
+    Trace.KeyValue lowRank =
+        Trace.KeyValue.newBuilder()
+            .setVInt32(10)
+            .setKey("rank")
+            .setFieldType(Schema.SchemaFieldType.INTEGER)
+            .build();
+    Trace.KeyValue highRank =
+        Trace.KeyValue.newBuilder()
+            .setVInt32(20)
+            .setKey("rank")
+            .setFieldType(Schema.SchemaFieldType.INTEGER)
+            .build();
+    Trace.KeyValue lowScore =
+        Trace.KeyValue.newBuilder()
+            .setVInt32(100)
+            .setKey("score")
+            .setFieldType(Schema.SchemaFieldType.INTEGER)
+            .build();
+    Trace.KeyValue highScore =
+        Trace.KeyValue.newBuilder()
+            .setVInt32(200)
+            .setKey("score")
+            .setFieldType(Schema.SchemaFieldType.INTEGER)
+            .build();
+    List<SearchQuery.SortFieldSpec> sortFieldSpecs =
+        List.of(
+            new SearchQuery.SortFieldSpec("rank", SearchQuery.SortDirection.ASC),
+            new SearchQuery.SortFieldSpec("score", SearchQuery.SortDirection.DESC));
+
+    strictLogStore.logStore.addMessage(
+        SpanUtil.makeSpan(1, "rank-10-score-100", time, List.of(lowRank, lowScore)));
+    strictLogStore.logStore.addMessage(
+        SpanUtil.makeSpan(2, "rank-10-score-200", time, List.of(lowRank, highScore)));
+    strictLogStore.logStore.addMessage(
+        SpanUtil.makeSpan(3, "rank-20-score-200", time, List.of(highRank, highScore)));
+    strictLogStore.logStore.commit();
+    strictLogStore.logStore.refresh();
+
+    SearchResult<LogMessage> workerResult =
+        search(
+            strictLogStore.logSearcher,
+            TEST_DATASET_NAME,
+            3,
+            sortFieldSpecs,
+            QueryBuilderUtil.generateQueryBuilder("", 0L, MAX_TIME),
+            null,
+            null);
+
+    assertThat(workerResult.hits.stream().map(hit -> hit.sortValues().subList(0, 2)).toList())
+        .containsExactly(sortValues(10, 200), sortValues(10, 100), sortValues(20, 200));
+    assertThat(workerResult.hits)
+        .allSatisfy(
+            hit -> {
+              assertThat(hit.sortValues()).hasSize(4);
+              assertThat(hit.sortValues().get(2))
+                  .isEqualTo(HitSortValue.of(hit.message().getTimestamp().toEpochMilli()));
+              assertThat(hit.sortValues().get(3))
+                  .isEqualTo(HitSortValue.bytes(encodedIdSortValue(hit.message().getId())));
+            });
+
+    SearchResult<LogMessage> roundTrippedResult =
+        SearchResultUtils.fromSearchResultProto(
+            SearchResultUtils.toSearchResultProto(workerResult));
+
+    assertThat(roundTrippedResult.hits.stream().map(SearchResultHit::sortValues).toList())
+        .containsExactlyElementsOf(
+            workerResult.hits.stream().map(SearchResultHit::sortValues).toList());
+  }
+
+  /** Verifies requested sort is applied after a query filter chooses matching hits. */
+  @Test
+  void testSortWithBooleanQueryFiltersMatchingHits() throws IOException {
+    Instant time = Instant.ofEpochSecond(1593365471);
+    Trace.KeyValue rankThree =
+        Trace.KeyValue.newBuilder()
+            .setVInt32(3)
+            .setKey("rank")
+            .setFieldType(Schema.SchemaFieldType.INTEGER)
+            .build();
+    Trace.KeyValue rankOne =
+        Trace.KeyValue.newBuilder()
+            .setVInt32(1)
+            .setKey("rank")
+            .setFieldType(Schema.SchemaFieldType.INTEGER)
+            .build();
+    Trace.KeyValue rankTwo =
+        Trace.KeyValue.newBuilder()
+            .setVInt32(2)
+            .setKey("rank")
+            .setFieldType(Schema.SchemaFieldType.INTEGER)
+            .build();
+    Trace.KeyValue includeGroup =
+        Trace.KeyValue.newBuilder()
+            .setVStr("include")
+            .setKey("group")
+            .setFieldType(Schema.SchemaFieldType.KEYWORD)
+            .build();
+    Trace.KeyValue excludeGroup =
+        Trace.KeyValue.newBuilder()
+            .setVStr("exclude")
+            .setKey("group")
+            .setFieldType(Schema.SchemaFieldType.KEYWORD)
+            .build();
+
+    strictLogStore.logStore.addMessage(
+        SpanUtil.makeSpan(1, "include-rank-3", time, List.of(rankThree, includeGroup)));
+    strictLogStore.logStore.addMessage(
+        SpanUtil.makeSpan(
+            2, "exclude-rank-1", time.plusSeconds(1), List.of(rankOne, excludeGroup)));
+    strictLogStore.logStore.addMessage(
+        SpanUtil.makeSpan(
+            3, "include-rank-1", time.plusSeconds(2), List.of(rankOne, includeGroup)));
+    strictLogStore.logStore.addMessage(
+        SpanUtil.makeSpan(
+            4, "include-rank-2", time.plusSeconds(3), List.of(rankTwo, includeGroup)));
+    strictLogStore.logStore.commit();
+    strictLogStore.logStore.refresh();
+
+    SearchResult<LogMessage> results =
+        search(
+            strictLogStore.logSearcher,
+            TEST_DATASET_NAME,
+            10,
+            List.of(new SearchQuery.SortFieldSpec("rank", SearchQuery.SortDirection.ASC)),
+            new TermQueryBuilder("group", "include"),
+            null,
+            null);
+
+    assertThat(results.hits.stream().map(SearchResultHit::message).map(LogMessage::getId))
+        .containsExactly("Message3", "Message4", "Message1");
+    assertThat(results.hits.stream().map(hit -> hit.sortValues().get(0)).toList())
+        .containsExactly(
+            HitSortValue.intValue(1), HitSortValue.intValue(2), HitSortValue.intValue(3));
+  }
+
   @Test
   public void testTopKQuery() throws IOException {
     Instant time = Instant.now();
     loadTestData(time);
 
     SearchResult<LogMessage> apples =
-        strictLogStore.logSearcher.search(
+        search(
+            strictLogStore.logSearcher,
             TEST_DATASET_NAME,
             2,
             QueryBuilderUtil.generateQueryBuilder(
                 "apple", time.toEpochMilli(), time.plusSeconds(100).toEpochMilli()),
             null,
             createGenericDateHistogramAggregatorFactoriesBuilder());
-    assertThat(apples.hits.stream().map(m -> m.getId()).collect(Collectors.toList()))
+    assertThat(
+            apples.hits.stream()
+                .map(SearchResultHit::message)
+                .map(m -> m.getId())
+                .collect(Collectors.toList()))
         .isEqualTo(Arrays.asList("Message5", "Message3"));
     assertThat(apples.hits.size()).isEqualTo(2);
 
@@ -1378,7 +1794,8 @@ public class LogIndexSearcherImplTest {
     strictLogStore.logStore.refresh();
 
     SearchResult<LogMessage> baby =
-        strictLogStore.logSearcher.search(
+        search(
+            strictLogStore.logSearcher,
             TEST_DATASET_NAME,
             2,
             QueryBuilderUtil.generateQueryBuilder(
@@ -1386,7 +1803,7 @@ public class LogIndexSearcherImplTest {
             null,
             createGenericDateHistogramAggregatorFactoriesBuilder());
     assertThat(baby.hits.size()).isEqualTo(1);
-    assertThat(baby.hits.get(0).getId()).isEqualTo("Message2");
+    assertThat(baby.hits.get(0).message().getId()).isEqualTo("Message2");
     assertThat(getCount(MESSAGES_RECEIVED_COUNTER, strictLogStore.metricsRegistry)).isEqualTo(2);
     assertThat(getCount(MESSAGES_FAILED_COUNTER, strictLogStore.metricsRegistry)).isEqualTo(0);
     assertThat(getTimerCount(REFRESHES_TIMER, strictLogStore.metricsRegistry)).isEqualTo(1);
@@ -1400,7 +1817,8 @@ public class LogIndexSearcherImplTest {
     assertThat(getTimerCount(REFRESHES_TIMER, strictLogStore.metricsRegistry)).isEqualTo(1);
     assertThat(getTimerCount(COMMITS_TIMER, strictLogStore.metricsRegistry)).isEqualTo(1);
 
-    strictLogStore.logSearcher.search(
+    search(
+        strictLogStore.logSearcher,
         TEST_DATASET_NAME,
         2,
         QueryBuilderUtil.generateQueryBuilder(
@@ -1416,7 +1834,8 @@ public class LogIndexSearcherImplTest {
     assertThat(getTimerCount(REFRESHES_TIMER, strictLogStore.metricsRegistry)).isEqualTo(1);
     assertThat(getTimerCount(COMMITS_TIMER, strictLogStore.metricsRegistry)).isEqualTo(2);
 
-    strictLogStore.logSearcher.search(
+    search(
+        strictLogStore.logSearcher,
         TEST_DATASET_NAME,
         2,
         QueryBuilderUtil.generateQueryBuilder(
@@ -1432,7 +1851,8 @@ public class LogIndexSearcherImplTest {
     assertThat(getTimerCount(REFRESHES_TIMER, strictLogStore.metricsRegistry)).isEqualTo(2);
     assertThat(getTimerCount(COMMITS_TIMER, strictLogStore.metricsRegistry)).isEqualTo(2);
 
-    strictLogStore.logSearcher.search(
+    search(
+        strictLogStore.logSearcher,
         TEST_DATASET_NAME,
         2,
         QueryBuilderUtil.generateQueryBuilder(
@@ -1451,7 +1871,8 @@ public class LogIndexSearcherImplTest {
 
     // Item shows up in search without commit.
     SearchResult<LogMessage> babies =
-        strictLogStore.logSearcher.search(
+        search(
+            strictLogStore.logSearcher,
             TEST_DATASET_NAME,
             2,
             QueryBuilderUtil.generateQueryBuilder(
@@ -1459,7 +1880,11 @@ public class LogIndexSearcherImplTest {
             null,
             createGenericDateHistogramAggregatorFactoriesBuilder());
     assertThat(babies.hits.size()).isEqualTo(2);
-    assertThat(babies.hits.stream().map(m -> m.getId()).collect(Collectors.toList()))
+    assertThat(
+            babies.hits.stream()
+                .map(SearchResultHit::message)
+                .map(m -> m.getId())
+                .collect(Collectors.toList()))
         .isEqualTo(Arrays.asList("Message4", "Message2"));
 
     // Commit now
@@ -1475,7 +1900,8 @@ public class LogIndexSearcherImplTest {
     loadTestData(Instant.now());
 
     SearchResult<LogMessage> allIndexItems =
-        strictLogStore.logSearcher.search(
+        search(
+            strictLogStore.logSearcher,
             TEST_DATASET_NAME,
             1000,
             QueryBuilderUtil.generateQueryBuilder("", 0L, MAX_TIME),
@@ -1501,7 +1927,8 @@ public class LogIndexSearcherImplTest {
     loadTestData(time);
 
     SearchResult<LogMessage> scriptNull =
-        strictLogStore.logSearcher.search(
+        search(
+            strictLogStore.logSearcher,
             TEST_DATASET_NAME,
             1000,
             QueryBuilderUtil.generateQueryBuilder("", 0L, MAX_TIME),
@@ -1510,7 +1937,8 @@ public class LogIndexSearcherImplTest {
     assertThat(((InternalAvg) scriptNull.internalAggregations.get("1")).value()).isEqualTo(3.25);
 
     SearchResult<LogMessage> scriptEmpty =
-        strictLogStore.logSearcher.search(
+        search(
+            strictLogStore.logSearcher,
             TEST_DATASET_NAME,
             1000,
             QueryBuilderUtil.generateQueryBuilder("", 0L, MAX_TIME),
@@ -1519,7 +1947,8 @@ public class LogIndexSearcherImplTest {
     assertThat(((InternalAvg) scriptEmpty.internalAggregations.get("1")).value()).isEqualTo(3.25);
 
     SearchResult<LogMessage> scripted =
-        strictLogStore.logSearcher.search(
+        search(
+            strictLogStore.logSearcher,
             TEST_DATASET_NAME,
             1000,
             QueryBuilderUtil.generateQueryBuilder("", 0L, MAX_TIME),
@@ -1535,7 +1964,8 @@ public class LogIndexSearcherImplTest {
     loadTestData(time);
 
     SearchResult<LogMessage> scriptNull =
-        strictLogStore.logSearcher.search(
+        search(
+            strictLogStore.logSearcher,
             TEST_DATASET_NAME,
             1000,
             QueryBuilderUtil.generateQueryBuilder("", 0L, MAX_TIME),
@@ -1577,7 +2007,8 @@ public class LogIndexSearcherImplTest {
     loadTestData(time);
 
     SearchResult<LogMessage> allIndexItems =
-        strictLogStore.logSearcher.search(
+        search(
+            strictLogStore.logSearcher,
             TEST_DATASET_NAME,
             1000,
             QueryBuilderUtil.generateQueryBuilder("", 0L, MAX_TIME),
@@ -1599,7 +2030,8 @@ public class LogIndexSearcherImplTest {
     loadTestData(time);
 
     SearchResult<LogMessage> allIndexItems =
-        strictLogStore.logSearcher.search(
+        search(
+            strictLogStore.logSearcher,
             TEST_DATASET_NAME,
             1000,
             QueryBuilderUtil.generateQueryBuilder("", 0L, MAX_TIME),
@@ -1623,7 +2055,8 @@ public class LogIndexSearcherImplTest {
     loadTestData(time);
 
     SearchResult<LogMessage> allIndexItems =
-        strictLogStore.logSearcher.search(
+        search(
+            strictLogStore.logSearcher,
             TEST_DATASET_NAME,
             1000,
             QueryBuilderUtil.generateQueryBuilder("", 0L, MAX_TIME),
@@ -1645,7 +2078,8 @@ public class LogIndexSearcherImplTest {
     loadTestData(time);
 
     SearchResult<LogMessage> allIndexItems =
-        strictLogStore.logSearcher.search(
+        search(
+            strictLogStore.logSearcher,
             TEST_DATASET_NAME,
             1000,
             QueryBuilderUtil.generateQueryBuilder("", 0L, MAX_TIME),
@@ -1676,7 +2110,8 @@ public class LogIndexSearcherImplTest {
     loadTestData(time);
 
     SearchResult<LogMessage> allIndexItems =
-        strictLogStore.logSearcher.search(
+        search(
+            strictLogStore.logSearcher,
             TEST_DATASET_NAME,
             1000,
             QueryBuilderUtil.generateQueryBuilder("", 0L, MAX_TIME),
@@ -1709,7 +2144,8 @@ public class LogIndexSearcherImplTest {
     loadTestData(time);
 
     SearchResult<LogMessage> allIndexItems =
-        strictLogStore.logSearcher.search(
+        search(
+            strictLogStore.logSearcher,
             TEST_DATASET_NAME,
             1000,
             QueryBuilderUtil.generateQueryBuilder("", 0L, MAX_TIME),
@@ -1722,6 +2158,64 @@ public class LogIndexSearcherImplTest {
     StringTerms stringTerms = (StringTerms) allIndexItems.internalAggregations.get("1");
     assertThat(stringTerms.getBuckets().size()).isEqualTo(1);
     assertThat(stringTerms.getBuckets().get(0).getKey()).isEqualTo("foo");
+  }
+
+  @Test
+  public void testEmptyStringKeywordIsQueryableLikeOpenSearch() throws IOException {
+    // Ingest THROUGH SpanFormatter.convertKVtoProto (the ingest path the fix lives in) so this
+    // actually exercises the fix: with it, SearchPhrase "" is indexed as a real keyword value;
+    // without it, convertKVtoProto returns null and the "" doc carries no SearchPhrase at all.
+    Instant time = Instant.ofEpochSecond(1593365471);
+    Schema.IngestSchema schema = Schema.IngestSchema.getDefaultInstance();
+    List<String> phrases = List.of("alpha", "beta", "");
+    for (int i = 0; i < phrases.size(); i++) {
+      List<Trace.KeyValue> tags =
+          SpanFormatter.convertKVtoProto("SearchPhrase", phrases.get(i), schema);
+      strictLogStore.logStore.addMessage(
+          SpanUtil.makeSpan(i + 1, "msg", time, tags == null ? List.of() : tags));
+    }
+    strictLogStore.logStore.commit();
+    strictLogStore.logStore.refresh();
+
+    // terms(SearchPhrase): "" is a real bucket alongside the others (Q16/Q17).
+    StringTerms terms =
+        (StringTerms)
+            search(
+                    strictLogStore.logSearcher,
+                    TEST_DATASET_NAME,
+                    0,
+                    QueryBuilderUtil.generateQueryBuilder("", 0L, MAX_TIME),
+                    null,
+                    createTermsAggregatorFactoriesBuilder(
+                        "1", List.of(), "SearchPhrase", null, 10, 1, Map.of("_count", "asc")))
+                .internalAggregations
+                .get("1");
+    assertThat(terms.getBuckets().stream().map(b -> (String) b.getKey()).toList())
+        .containsExactlyInAnyOrder("alpha", "beta", "");
+
+    // cardinality(SearchPhrase): "" counts as one distinct value (Q5).
+    InternalCardinality cardinality =
+        (InternalCardinality)
+            search(
+                    strictLogStore.logSearcher,
+                    TEST_DATASET_NAME,
+                    0,
+                    QueryBuilderUtil.generateQueryBuilder("", 0L, MAX_TIME),
+                    null,
+                    new AggregatorFactories.Builder()
+                        .addAggregator(
+                            new CardinalityAggregationBuilder("1").field("SearchPhrase")))
+                .internalAggregations
+                .get("1");
+    assertThat(cardinality.getValue()).isEqualTo(3L);
+
+    // must_not term "" excludes the empty-string doc, matching OpenSearch `field <> ''` (Q30/Q31).
+    BoolQueryBuilder nonEmptyQuery =
+        (BoolQueryBuilder) QueryBuilderUtil.generateQueryBuilder("", 0L, MAX_TIME);
+    nonEmptyQuery.mustNot(new TermQueryBuilder("SearchPhrase", ""));
+    SearchResult<LogMessage> nonEmpty =
+        search(strictLogStore.logSearcher, TEST_DATASET_NAME, 1000, nonEmptyQuery, null, null);
+    assertThat(nonEmpty.hits.size()).isEqualTo(2);
   }
 
   @Test
@@ -1740,9 +2234,8 @@ public class LogIndexSearcherImplTest {
     strictLogStore.logStore.refresh();
     // Search using _all field.
     assertThat(
-            strictLogStore
-                .logSearcher
-                .search(
+            search(
+                    strictLogStore.logSearcher,
                     TEST_DATASET_NAME,
                     1000,
                     QueryBuilderUtil.generateQueryBuilder("_all:apple", 0L, MAX_TIME),
@@ -1753,9 +2246,8 @@ public class LogIndexSearcherImplTest {
         .isEqualTo(1);
     // Default all field search.
     assertThat(
-            strictLogStore
-                .logSearcher
-                .search(
+            search(
+                    strictLogStore.logSearcher,
                     TEST_DATASET_NAME,
                     1000,
                     QueryBuilderUtil.generateQueryBuilder("Message1", 0L, MAX_TIME),
@@ -1771,9 +2263,8 @@ public class LogIndexSearcherImplTest {
     strictLogStore.logStore.refresh();
     // Search using _all field.
     assertThat(
-            strictLogStore
-                .logSearcher
-                .search(
+            search(
+                    strictLogStore.logSearcher,
                     TEST_DATASET_NAME,
                     1000,
                     QueryBuilderUtil.generateQueryBuilder("_all:baby", 0L, MAX_TIME),
@@ -1783,9 +2274,8 @@ public class LogIndexSearcherImplTest {
                 .size())
         .isEqualTo(1);
     assertThat(
-            strictLogStore
-                .logSearcher
-                .search(
+            search(
+                    strictLogStore.logSearcher,
                     TEST_DATASET_NAME,
                     1000,
                     QueryBuilderUtil.generateQueryBuilder("_all:1234", 0L, MAX_TIME),
@@ -1796,9 +2286,8 @@ public class LogIndexSearcherImplTest {
         .isEqualTo(2);
     // Default all field search.
     assertThat(
-            strictLogStore
-                .logSearcher
-                .search(
+            search(
+                    strictLogStore.logSearcher,
                     TEST_DATASET_NAME,
                     1000,
                     QueryBuilderUtil.generateQueryBuilder("baby", 0L, MAX_TIME),
@@ -1808,9 +2297,8 @@ public class LogIndexSearcherImplTest {
                 .size())
         .isEqualTo(1);
     assertThat(
-            strictLogStore
-                .logSearcher
-                .search(
+            search(
+                    strictLogStore.logSearcher,
                     TEST_DATASET_NAME,
                     1000,
                     QueryBuilderUtil.generateQueryBuilder("1234", 0L, MAX_TIME),
@@ -1825,9 +2313,8 @@ public class LogIndexSearcherImplTest {
     strictLogStore.logStore.refresh();
     // Search using _all field.
     assertThat(
-            strictLogStore
-                .logSearcher
-                .search(
+            search(
+                    strictLogStore.logSearcher,
                     TEST_DATASET_NAME,
                     1000,
                     QueryBuilderUtil.generateQueryBuilder("_all:baby", 0L, MAX_TIME),
@@ -1837,9 +2324,8 @@ public class LogIndexSearcherImplTest {
                 .size())
         .isEqualTo(2);
     assertThat(
-            strictLogStore
-                .logSearcher
-                .search(
+            search(
+                    strictLogStore.logSearcher,
                     TEST_DATASET_NAME,
                     1000,
                     QueryBuilderUtil.generateQueryBuilder("_all:1234", 0L, MAX_TIME),
@@ -1850,9 +2336,8 @@ public class LogIndexSearcherImplTest {
         .isEqualTo(3);
     // Default all field search.
     assertThat(
-            strictLogStore
-                .logSearcher
-                .search(
+            search(
+                    strictLogStore.logSearcher,
                     TEST_DATASET_NAME,
                     1000,
                     QueryBuilderUtil.generateQueryBuilder("baby", 0L, MAX_TIME),
@@ -1862,9 +2347,8 @@ public class LogIndexSearcherImplTest {
                 .size())
         .isEqualTo(2);
     assertThat(
-            strictLogStore
-                .logSearcher
-                .search(
+            search(
+                    strictLogStore.logSearcher,
                     TEST_DATASET_NAME,
                     1000,
                     QueryBuilderUtil.generateQueryBuilder("1234", 0L, MAX_TIME),
@@ -1876,9 +2360,8 @@ public class LogIndexSearcherImplTest {
 
     // empty string
     assertThat(
-            strictLogStore
-                .logSearcher
-                .search(
+            search(
+                    strictLogStore.logSearcher,
                     TEST_DATASET_NAME,
                     1000,
                     QueryBuilderUtil.generateQueryBuilder("", 0L, MAX_TIME),
@@ -1889,9 +2372,8 @@ public class LogIndexSearcherImplTest {
         .isEqualTo(3);
 
     assertThat(
-            strictLogStore
-                .logSearcher
-                .search(
+            search(
+                    strictLogStore.logSearcher,
                     TEST_DATASET_NAME,
                     1000,
                     QueryBuilderUtil.generateQueryBuilder("app*", 0L, MAX_TIME),
@@ -1903,9 +2385,8 @@ public class LogIndexSearcherImplTest {
 
     // Returns baby or car, 2 messages.
     assertThat(
-            strictLogStore
-                .logSearcher
-                .search(
+            search(
+                    strictLogStore.logSearcher,
                     TEST_DATASET_NAME,
                     1000,
                     QueryBuilderUtil.generateQueryBuilder("baby car", 0L, MAX_TIME),
@@ -1917,9 +2398,8 @@ public class LogIndexSearcherImplTest {
 
     // Test numbers
     assertThat(
-            strictLogStore
-                .logSearcher
-                .search(
+            search(
+                    strictLogStore.logSearcher,
                     TEST_DATASET_NAME,
                     1000,
                     QueryBuilderUtil.generateQueryBuilder("apple 1234", 0L, MAX_TIME),
@@ -1930,9 +2410,8 @@ public class LogIndexSearcherImplTest {
         .isEqualTo(3);
 
     assertThat(
-            strictLogStore
-                .logSearcher
-                .search(
+            search(
+                    strictLogStore.logSearcher,
                     TEST_DATASET_NAME,
                     1000,
                     QueryBuilderUtil.generateQueryBuilder("123", 0L, MAX_TIME),
@@ -1965,9 +2444,8 @@ public class LogIndexSearcherImplTest {
     strictLogStoreWithoutFts.logStore.refresh();
 
     assertThat(
-            strictLogStoreWithoutFts
-                .logSearcher
-                .search(
+            search(
+                    strictLogStoreWithoutFts.logSearcher,
                     TEST_DATASET_NAME,
                     1000,
                     QueryBuilderUtil.generateQueryBuilder("_all:baby", 0L, MAX_TIME),
@@ -1978,9 +2456,8 @@ public class LogIndexSearcherImplTest {
         .isZero();
 
     assertThat(
-            strictLogStoreWithoutFts
-                .logSearcher
-                .search(
+            search(
+                    strictLogStoreWithoutFts.logSearcher,
                     TEST_DATASET_NAME,
                     1000,
                     QueryBuilderUtil.generateQueryBuilder("_all:1234", 0L, MAX_TIME),
@@ -1991,9 +2468,8 @@ public class LogIndexSearcherImplTest {
         .isZero();
 
     assertThat(
-            strictLogStoreWithoutFts
-                .logSearcher
-                .search(
+            search(
+                    strictLogStoreWithoutFts.logSearcher,
                     TEST_DATASET_NAME,
                     1000,
                     QueryBuilderUtil.generateQueryBuilder("baby", 0L, MAX_TIME),
@@ -2005,9 +2481,8 @@ public class LogIndexSearcherImplTest {
 
     // empty string
     assertThat(
-            strictLogStore
-                .logSearcher
-                .search(
+            search(
+                    strictLogStoreWithoutFts.logSearcher,
                     TEST_DATASET_NAME,
                     1000,
                     QueryBuilderUtil.generateQueryBuilder("", 0L, MAX_TIME),
@@ -2015,12 +2490,11 @@ public class LogIndexSearcherImplTest {
                     createGenericDateHistogramAggregatorFactoriesBuilder())
                 .hits
                 .size())
-        .isZero();
+        .isEqualTo(3);
 
     assertThat(
-            strictLogStore
-                .logSearcher
-                .search(
+            search(
+                    strictLogStoreWithoutFts.logSearcher,
                     TEST_DATASET_NAME,
                     1000,
                     QueryBuilderUtil.generateQueryBuilder("app*", 0L, MAX_TIME),
@@ -2032,9 +2506,8 @@ public class LogIndexSearcherImplTest {
 
     // Returns baby or car, 2 messages.
     assertThat(
-            strictLogStore
-                .logSearcher
-                .search(
+            search(
+                    strictLogStoreWithoutFts.logSearcher,
                     TEST_DATASET_NAME,
                     1000,
                     QueryBuilderUtil.generateQueryBuilder("baby car", 0L, MAX_TIME),
@@ -2046,9 +2519,8 @@ public class LogIndexSearcherImplTest {
 
     // Test numbers
     assertThat(
-            strictLogStore
-                .logSearcher
-                .search(
+            search(
+                    strictLogStoreWithoutFts.logSearcher,
                     TEST_DATASET_NAME,
                     1000,
                     QueryBuilderUtil.generateQueryBuilder("apple 1234", 0L, MAX_TIME),
@@ -2059,9 +2531,8 @@ public class LogIndexSearcherImplTest {
         .isZero();
 
     assertThat(
-            strictLogStore
-                .logSearcher
-                .search(
+            search(
+                    strictLogStoreWithoutFts.logSearcher,
                     TEST_DATASET_NAME,
                     1000,
                     QueryBuilderUtil.generateQueryBuilder("123", 0L, MAX_TIME),
@@ -2079,7 +2550,8 @@ public class LogIndexSearcherImplTest {
     loadTestData(time);
 
     SearchResult<LogMessage> allIndexItems =
-        strictLogStore.logSearcher.search(
+        search(
+            strictLogStore.logSearcher,
             TEST_DATASET_NAME + "miss",
             1000,
             QueryBuilderUtil.generateQueryBuilder("apple", 0L, MAX_TIME),
@@ -2106,7 +2578,8 @@ public class LogIndexSearcherImplTest {
     loadTestData(time);
 
     SearchResult<LogMessage> elephants =
-        strictLogStore.logSearcher.search(
+        search(
+            strictLogStore.logSearcher,
             TEST_DATASET_NAME,
             1000,
             QueryBuilderUtil.generateQueryBuilder("elephant", 0L, MAX_TIME),
@@ -2124,7 +2597,8 @@ public class LogIndexSearcherImplTest {
     Instant time = Instant.now();
     loadTestData(time);
     SearchResult<LogMessage> results =
-        strictLogStore.logSearcher.search(
+        search(
+            strictLogStore.logSearcher,
             TEST_DATASET_NAME,
             100,
             QueryBuilderUtil.generateQueryBuilder(
@@ -2142,7 +2616,8 @@ public class LogIndexSearcherImplTest {
     Instant time = Instant.now();
     loadTestData(time);
     SearchResult<LogMessage> babies =
-        strictLogStore.logSearcher.search(
+        search(
+            strictLogStore.logSearcher,
             TEST_DATASET_NAME,
             0,
             QueryBuilderUtil.generateQueryBuilder(
@@ -2176,7 +2651,8 @@ public class LogIndexSearcherImplTest {
     assertThatExceptionOfType(IllegalArgumentException.class)
         .isThrownBy(
             () ->
-                strictLogStore.logSearcher.search(
+                search(
+                    strictLogStore.logSearcher,
                     "",
                     1000,
                     QueryBuilderUtil.generateQueryBuilder("test", 0L, MAX_TIME),
@@ -2191,7 +2667,8 @@ public class LogIndexSearcherImplTest {
     assertThatExceptionOfType(IllegalArgumentException.class)
         .isThrownBy(
             () ->
-                strictLogStore.logSearcher.search(
+                search(
+                    strictLogStore.logSearcher,
                     null,
                     1000,
                     QueryBuilderUtil.generateQueryBuilder("test", 0L, MAX_TIME),
@@ -2206,13 +2683,39 @@ public class LogIndexSearcherImplTest {
     assertThatExceptionOfType(IllegalArgumentException.class)
         .isThrownBy(
             () ->
-                strictLogStore.logSearcher.search(
+                search(
+                    strictLogStore.logSearcher,
                     TEST_DATASET_NAME,
                     0,
                     QueryBuilderUtil.generateQueryBuilder(
                         "test", time.toEpochMilli(), time.plusSeconds(1).toEpochMilli()),
                     null,
                     null));
+  }
+
+  /** Verifies omitted requested sort still returns stable internal sort values. */
+  @Test
+  void testSearchUsesStableInternalSortFieldsWhenRequestOmitsSort() throws IOException {
+    Instant time = Instant.now();
+    loadTestData(time);
+
+    SearchResult<LogMessage> results =
+        search(
+            strictLogStore.logSearcher,
+            TEST_DATASET_NAME,
+            1,
+            List.of(),
+            QueryBuilderUtil.generateQueryBuilder(
+                "apple", time.toEpochMilli(), time.plusSeconds(10).toEpochMilli()),
+            null,
+            createGenericDateHistogramAggregatorFactoriesBuilder());
+
+    assertThat(results.hits.stream().map(SearchResultHit::message).map(LogMessage::getId))
+        .containsExactly("Message5");
+    assertThat(results.hits.get(0).sortValues())
+        .containsExactly(
+            HitSortValue.of(time.plusSeconds(4).toEpochMilli()),
+            HitSortValue.bytes(encodedIdSortValue(results.hits.get(0).message().getId())));
   }
 
   @Test
@@ -2222,7 +2725,8 @@ public class LogIndexSearcherImplTest {
     assertThatExceptionOfType(IllegalArgumentException.class)
         .isThrownBy(
             () ->
-                strictLogStore.logSearcher.search(
+                search(
+                    strictLogStore.logSearcher,
                     TEST_DATASET_NAME,
                     -1,
                     QueryBuilderUtil.generateQueryBuilder(
@@ -2238,7 +2742,8 @@ public class LogIndexSearcherImplTest {
     assertThatExceptionOfType(IllegalArgumentException.class)
         .isThrownBy(
             () ->
-                strictLogStore.logSearcher.search(
+                search(
+                    strictLogStore.logSearcher,
                     TEST_DATASET_NAME,
                     1,
                     QueryBuilderUtil.generateQueryBuilder(
@@ -2262,7 +2767,8 @@ public class LogIndexSearcherImplTest {
           for (int i = 0; i < 100; i++) {
             try {
               SearchResult<LogMessage> babies =
-                  strictLogStore.logSearcher.search(
+                  search(
+                      strictLogStore.logSearcher,
                       TEST_DATASET_NAME,
                       100,
                       QueryBuilderUtil.generateQueryBuilder(
@@ -2297,7 +2803,8 @@ public class LogIndexSearcherImplTest {
     Instant time = Instant.now();
     loadTestData(time);
     SearchResult<LogMessage> index =
-        strictLogStore.logSearcher.search(
+        search(
+            strictLogStore.logSearcher,
             TEST_DATASET_NAME,
             10,
             QueryBuilderUtil.generateQueryBuilder(

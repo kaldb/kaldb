@@ -2,13 +2,13 @@ package com.slack.astra.logstore.search;
 
 import brave.ScopedSpan;
 import brave.Tracing;
+import com.google.common.collect.Iterables;
+import com.google.common.collect.Streams;
 import com.slack.astra.logstore.LogMessage;
 import com.slack.astra.logstore.opensearch.AstraBigArrays;
 import com.slack.astra.logstore.opensearch.ScriptServiceProvider;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
-import java.util.stream.Collectors;
 import org.opensearch.search.aggregations.InternalAggregation;
 import org.opensearch.search.aggregations.InternalAggregations;
 import org.opensearch.search.aggregations.pipeline.PipelineAggregator;
@@ -19,6 +19,14 @@ import org.opensearch.search.aggregations.pipeline.PipelineAggregator;
  * merged using the histogram merge function.
  */
 public class SearchResultAggregatorImpl<T extends LogMessage> implements SearchResultAggregator<T> {
+
+  private static HitSortValue sortValueAt(List<HitSortValue> sortValues, int index) {
+    if (index >= sortValues.size()) {
+      return HitSortValue.nullValue();
+    }
+    HitSortValue sortValue = sortValues.get(index);
+    return sortValue == null ? HitSortValue.nullValue() : sortValue;
+  }
 
   private final SearchQuery searchQuery;
 
@@ -33,16 +41,16 @@ public class SearchResultAggregatorImpl<T extends LogMessage> implements SearchR
     long tookMicros = 0;
     int failedNodes = 0;
     int totalNodes = 0;
-    int totalSnapshots = 0;
-    int snapshpotReplicas = 0;
+    int requestedSnapshots = 0;
+    int fulfilledSnapshots = 0;
     List<InternalAggregations> internalAggregationList = new ArrayList<>();
 
     for (SearchResult<T> searchResult : searchResults) {
       tookMicros = Math.max(tookMicros, searchResult.tookMicros);
       failedNodes += searchResult.failedNodes;
       totalNodes += searchResult.totalNodes;
-      totalSnapshots += searchResult.totalSnapshots;
-      snapshpotReplicas += searchResult.snapshotsWithReplicas;
+      requestedSnapshots += searchResult.requestedSnapshots;
+      fulfilledSnapshots += searchResult.fulfilledSnapshots;
       if (searchResult.internalAggregations != null) {
         internalAggregationList.add(searchResult.internalAggregations);
       }
@@ -76,15 +84,15 @@ public class SearchResultAggregatorImpl<T extends LogMessage> implements SearchR
           InternalAggregations.topLevelReduce(internalAggregationList, reduceContext);
     }
 
-    // TODO: Instead of sorting all hits using a bounded priority queue of size k is more efficient.
-    List<T> resultHits =
-        searchResults.stream()
-            .flatMap(r -> r.hits.stream())
-            .sorted(
-                Comparator.comparing(
-                    (T m) -> m.getTimestamp().toEpochMilli(), Comparator.reverseOrder()))
+    List<List<SearchResultHit<T>>> sortedHitLists =
+        searchResults.stream().map(searchResult -> searchResult.hits).toList();
+    // TODO: Consider replacing this with an explicit bounded priority queue or Lucene TopDocs
+    // merge-style helper if coordinator hit merging shows up in profiles.
+    List<SearchResultHit<T>> resultHits =
+        Streams.stream(Iterables.mergeSorted(sortedHitLists, this::compareHits))
+            .skip(searchQuery.startFrom)
             .limit(searchQuery.howMany)
-            .collect(Collectors.toList());
+            .toList();
 
     span.tag("resultHits", String.valueOf(resultHits.size()));
     span.tag("finalAggregation", String.valueOf(finalAggregation));
@@ -95,8 +103,34 @@ public class SearchResultAggregatorImpl<T extends LogMessage> implements SearchR
         tookMicros,
         failedNodes,
         totalNodes,
-        totalSnapshots,
-        snapshpotReplicas,
+        requestedSnapshots,
+        fulfilledSnapshots,
         internalAggregations);
+  }
+
+  private int compareHits(SearchResultHit<T> left, SearchResultHit<T> right) {
+    List<SearchQuery.SortFieldSpec> sortFieldSpecs = searchQuery.hitSortPlan.effectiveSortFields();
+    for (int i = 0; i < sortFieldSpecs.size(); i++) {
+      int comparison =
+          compareSortValues(
+              sortValueAt(left.sortValues(), i),
+              sortValueAt(right.sortValues(), i),
+              sortFieldSpecs.get(i));
+      if (comparison != 0) {
+        return comparison;
+      }
+    }
+    return 0;
+  }
+
+  private static int compareSortValues(
+      HitSortValue left, HitSortValue right, SearchQuery.SortFieldSpec sortFieldSpec) {
+    int comparison = HitSortValue.compareAscending(left, right);
+    if (comparison == 0
+        || left.kind() == HitSortValue.Kind.NULL
+        || right.kind() == HitSortValue.Kind.NULL) {
+      return comparison;
+    }
+    return sortFieldSpec.descending() ? -comparison : comparison;
   }
 }

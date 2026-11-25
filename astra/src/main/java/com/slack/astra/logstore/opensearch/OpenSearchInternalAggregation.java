@@ -24,7 +24,9 @@ import org.opensearch.search.aggregations.bucket.histogram.InternalAutoDateHisto
 import org.opensearch.search.aggregations.bucket.histogram.InternalDateHistogram;
 import org.opensearch.search.aggregations.bucket.histogram.InternalHistogram;
 import org.opensearch.search.aggregations.bucket.terms.DoubleTerms;
+import org.opensearch.search.aggregations.bucket.terms.InternalMultiTerms;
 import org.opensearch.search.aggregations.bucket.terms.LongTerms;
+import org.opensearch.search.aggregations.bucket.terms.MultiTermsAggregationBuilder;
 import org.opensearch.search.aggregations.bucket.terms.StringTerms;
 import org.opensearch.search.aggregations.bucket.terms.TermsAggregationBuilder;
 import org.opensearch.search.aggregations.bucket.terms.UnmappedTerms;
@@ -71,6 +73,12 @@ public class OpenSearchInternalAggregation {
   private static final NamedWriteableRegistry NAMED_WRITEABLE_REGISTRY =
       new NamedWriteableRegistry(
           Arrays.asList(
+              // TODO: Evaluate whether the AggregationBuilder.class registrations are still needed.
+              // Those entries deserialize request-side aggregation builder objects, but Astra
+              // currently parses aggregation requests from JSON through XContent and only uses this
+              // registry to deserialize InternalAggregations returned over transport. If that
+              // remains true, the AggregationBuilder.class entries can likely be removed while
+              // keeping the InternalAggregation and supporting value-format registrations.
               new NamedWriteableRegistry.Entry(
                   AggregationBuilder.class,
                   DateHistogramAggregationBuilder.NAME,
@@ -113,6 +121,10 @@ public class OpenSearchInternalAggregation {
                   InternalAggregation.class, LongTerms.NAME, LongTerms::new),
               new NamedWriteableRegistry.Entry(
                   InternalAggregation.class, DoubleTerms.NAME, DoubleTerms::new),
+              new NamedWriteableRegistry.Entry(
+                  InternalAggregation.class,
+                  MultiTermsAggregationBuilder.NAME,
+                  InternalMultiTerms::new),
               new NamedWriteableRegistry.Entry(
                   AggregationBuilder.class, AvgAggregationBuilder.NAME, AvgAggregationBuilder::new),
               new NamedWriteableRegistry.Entry(

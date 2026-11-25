@@ -12,7 +12,6 @@ import com.slack.astra.logstore.search.SearchResultAggregator;
 import com.slack.astra.logstore.search.SearchResultAggregatorImpl;
 import com.slack.astra.metadata.schema.FieldType;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -22,7 +21,6 @@ import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.StructuredTaskScope;
-import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -84,8 +82,12 @@ public abstract class ChunkManagerBase<T> extends AbstractIdleService implements
     Collections.shuffle(chunksMatchingQuery);
 
     try {
-      try (var scope = new StructuredTaskScope<SearchResult<T>>()) {
-        List<StructuredTaskScope.Subtask<SearchResult<T>>> chunkSubtasks =
+      List<StructuredTaskScope.Subtask<SearchResult<T>>> chunkSubtasks;
+      try (var scope =
+          StructuredTaskScope.open(
+              StructuredTaskScope.Joiner.<SearchResult<T>>awaitAll(),
+              config -> config.withTimeout(queryTimeout))) {
+        chunkSubtasks =
             chunksMatchingQuery.stream()
                 .map(
                     (chunk) ->
@@ -106,62 +108,60 @@ public abstract class ChunkManagerBase<T> extends AbstractIdleService implements
                                 })))
                 .toList();
         try {
-          scope.joinUntil(Instant.now().plusSeconds(queryTimeout.toSeconds()));
-        } catch (TimeoutException timeoutException) {
-          scope.shutdown();
           scope.join();
+        } catch (StructuredTaskScope.TimeoutException timeoutException) {
+          // Close the cancelled scope before reading completed results.
         }
-
-        List<SearchResult<T>> searchResults =
-            chunkSubtasks.stream()
-                .map(
-                    searchResultSubtask -> {
-                      try {
-                        if (searchResultSubtask
-                            .state()
-                            .equals(StructuredTaskScope.Subtask.State.SUCCESS)) {
-                          return searchResultSubtask.get();
-                        } else if (searchResultSubtask
-                            .state()
-                            .equals(StructuredTaskScope.Subtask.State.FAILED)) {
-                          Throwable throwable = searchResultSubtask.exception();
-                          if (throwable instanceof IllegalArgumentException) {
-                            // We catch IllegalArgumentException ( and any other exception that
-                            // represents a parse failure ) and instead of returning an empty
-                            // result we throw back an error to the user
-                            throw new IllegalArgumentException(throwable);
-                          }
-                          LOG.warn("Chunk Query Exception", throwable);
-                        }
-                        // else UNAVAILABLE (ie, timedout), return 0 snapshots
-                        return (SearchResult<T>) SearchResult.error();
-                      } catch (Exception err) {
-                        if (err instanceof IllegalArgumentException) {
-                          throw err;
-                        }
-
-                        // Only log the exception message as warn, and not the entire trace
-                        // as this can cause performance issues if significant amounts of
-                        // invalid queries are received
-                        // return 1 snapshot, still searchable but user-side error cause
-                        LOG.warn("Chunk Query Exception: {}", err.getMessage());
-                        return (SearchResult<T>) SearchResult.soft_error();
-                      }
-                    })
-                .toList();
-
-        // check if all results are null, and if so return an error to the user
-        if (!searchResults.isEmpty() && searchResults.stream().allMatch(Objects::isNull)) {
-          throw new IllegalArgumentException(
-              "Chunk query error - all results returned null values");
-        }
-
-        //noinspection unchecked
-        SearchResult<T> aggregatedResults =
-            ((SearchResultAggregator<T>) new SearchResultAggregatorImpl<>(query))
-                .aggregate(searchResults, false);
-        return incrementNodeCount(aggregatedResults);
       }
+
+      List<SearchResult<T>> searchResults =
+          chunkSubtasks.stream()
+              .map(
+                  searchResultSubtask -> {
+                    try {
+                      if (searchResultSubtask
+                          .state()
+                          .equals(StructuredTaskScope.Subtask.State.SUCCESS)) {
+                        return searchResultSubtask.get();
+                      } else if (searchResultSubtask
+                          .state()
+                          .equals(StructuredTaskScope.Subtask.State.FAILED)) {
+                        Throwable throwable = searchResultSubtask.exception();
+                        if (throwable instanceof IllegalArgumentException) {
+                          // We catch IllegalArgumentException ( and any other exception that
+                          // represents a parse failure ) and instead of returning an empty
+                          // result we throw back an error to the user
+                          throw new IllegalArgumentException(throwable);
+                        }
+                        LOG.warn("Chunk Query Exception", throwable);
+                      }
+                      // else UNAVAILABLE (ie, timedout), return 0 snapshots
+                      return (SearchResult<T>) SearchResult.localHardFailure();
+                    } catch (Exception err) {
+                      if (err instanceof IllegalArgumentException) {
+                        throw err;
+                      }
+
+                      // Only log the exception message as warn, and not the entire trace
+                      // as this can cause performance issues if significant amounts of
+                      // invalid queries are received
+                      // return 1 snapshot, still searchable but user-side error cause
+                      LOG.warn("Chunk Query Exception: {}", err.getMessage());
+                      return (SearchResult<T>) SearchResult.localSoftFailure();
+                    }
+                  })
+              .toList();
+
+      // check if all results are null, and if so return an error to the user
+      if (!searchResults.isEmpty() && searchResults.stream().allMatch(Objects::isNull)) {
+        throw new IllegalArgumentException("Chunk query error - all results returned null values");
+      }
+
+      //noinspection unchecked
+      SearchResult<T> aggregatedResults =
+          ((SearchResultAggregator<T>) new SearchResultAggregatorImpl<>(query))
+              .aggregate(searchResults, false);
+      return incrementNodeCount(aggregatedResults);
     } catch (Exception e) {
       LOG.error("Error searching across chunks ", e);
       throw new RuntimeException(e);
@@ -174,8 +174,8 @@ public abstract class ChunkManagerBase<T> extends AbstractIdleService implements
         searchResult.tookMicros,
         searchResult.failedNodes,
         searchResult.totalNodes + 1,
-        searchResult.totalSnapshots,
-        searchResult.snapshotsWithReplicas,
+        searchResult.requestedSnapshots,
+        searchResult.fulfilledSnapshots,
         searchResult.internalAggregations);
   }
 

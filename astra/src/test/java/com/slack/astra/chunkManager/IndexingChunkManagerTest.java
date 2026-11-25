@@ -27,6 +27,8 @@ import static org.assertj.core.api.AssertionsForClassTypes.assertThatExceptionOf
 import static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;
 import static org.assertj.core.api.AssertionsForClassTypes.catchThrowable;
 import static org.awaitility.Awaitility.await;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import brave.Tracing;
 import com.adobe.testing.s3mock.junit5.S3MockExtension;
@@ -79,6 +81,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -421,6 +424,7 @@ public class IndexingChunkManagerTest {
             0,
             MAX_TIME,
             10,
+            0,
             Collections.emptyList(),
             QueryBuilderUtil.generateQueryBuilder("Message1", 0L, MAX_TIME),
             null,
@@ -480,6 +484,7 @@ public class IndexingChunkManagerTest {
                         0,
                         MAX_TIME,
                         10,
+                        0,
                         Collections.emptyList(),
                         QueryBuilderUtil.generateQueryBuilder("Message101", 0L, MAX_TIME),
                         null,
@@ -510,6 +515,7 @@ public class IndexingChunkManagerTest {
                         0,
                         MAX_TIME,
                         10,
+                        0,
                         Collections.emptyList(),
                         QueryBuilderUtil.generateQueryBuilder("Message102", 0L, MAX_TIME),
                         null,
@@ -536,8 +542,8 @@ public class IndexingChunkManagerTest {
       List<String> chunkIds,
       String searchString,
       int expectedHitCount,
-      int totalSnapshots,
-      int expectedSnapshotsWithReplicas,
+      int expectedRequestedSnapshots,
+      int expectedFulfilledSnapshots,
       int expectedFailedNodes) {
 
     AstraLocalQueryService<LogMessage> astraLocalQueryService =
@@ -558,8 +564,8 @@ public class IndexingChunkManagerTest {
                 .build());
 
     assertThat(response.getHitsList().size()).isEqualTo(expectedHitCount);
-    assertThat(response.getTotalSnapshots()).isEqualTo(totalSnapshots);
-    assertThat(response.getSnapshotsWithReplicas()).isEqualTo(expectedSnapshotsWithReplicas);
+    assertThat(response.getRequestedSnapshots()).isEqualTo(expectedRequestedSnapshots);
+    assertThat(response.getFulfilledSnapshots()).isEqualTo(expectedFulfilledSnapshots);
     assertThat(response.getFailedNodes()).isEqualTo(expectedFailedNodes);
   }
 
@@ -567,8 +573,8 @@ public class IndexingChunkManagerTest {
       ChunkManager<LogMessage> chunkManager,
       String searchString,
       int expectedHitCount,
-      int totalSnapshots,
-      int expectedSnapshotsWithReplicas,
+      int expectedRequestedSnapshots,
+      int expectedFulfilledSnapshots,
       int expectedFailedNodes) {
 
     testChunkManagerSearch(
@@ -576,8 +582,8 @@ public class IndexingChunkManagerTest {
         Collections.emptyList(),
         searchString,
         expectedHitCount,
-        totalSnapshots,
-        expectedSnapshotsWithReplicas,
+        expectedRequestedSnapshots,
+        expectedFulfilledSnapshots,
         expectedFailedNodes);
   }
 
@@ -593,6 +599,7 @@ public class IndexingChunkManagerTest {
             startTimeEpochMs,
             endTimeEpochMs,
             10,
+            0,
             Collections.emptyList(),
             QueryBuilderUtil.generateQueryBuilder(searchString, startTimeEpochMs, endTimeEpochMs),
             null,
@@ -973,9 +980,61 @@ public class IndexingChunkManagerTest {
     // this worked but was kinda flaky since it messes with shutdown and refresh intervals
     chunk.setLogSearcher(new AlreadyClosedLogIndexSearcherImpl());
 
-    testChunkManagerSearch(chunkManager, "Message18", 0, 2, 2, 1);
-    testChunkManagerSearch(chunkManager, "Message1", 1, 2, 2, 1);
-    testChunkManagerSearch(chunkManager, "Message25", 1, 2, 2, 1);
+    testChunkManagerSearch(chunkManager, "Message18", 0, 3, 2, 1);
+    testChunkManagerSearch(chunkManager, "Message1", 1, 3, 2, 1);
+    testChunkManagerSearch(chunkManager, "Message25", 1, 3, 2, 1);
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void testQueryRetainsCompletedChunkWhenAnotherTimesOut() throws Exception {
+    String previousConcurrency = System.setProperty("astra.concurrent.query", "2");
+    try {
+      initChunkManager(
+          new MessageSizeOrCountBasedRolloverStrategy(
+              metricsRegistry, Long.MAX_VALUE, Long.MAX_VALUE),
+          blobStore,
+          MoreExecutors.newDirectExecutorService());
+    } finally {
+      if (previousConcurrency == null) {
+        System.clearProperty("astra.concurrent.query");
+      } else {
+        System.setProperty("astra.concurrent.query", previousConcurrency);
+      }
+    }
+    SearchQuery query =
+        new SearchQuery(
+            MessageUtil.TEST_DATASET_NAME,
+            0,
+            MAX_TIME,
+            10,
+            0,
+            List.of("completed", "blocked"),
+            QueryBuilderUtil.generateQueryBuilder("*", 0L, MAX_TIME),
+            null,
+            null);
+    Chunk<LogMessage> completedChunk = mock(Chunk.class);
+    when(completedChunk.id()).thenReturn("completed");
+    when(completedChunk.query(query))
+        .thenReturn(new SearchResult<>(List.of(), 0, 0, 0, 1, 1, null));
+    Chunk<LogMessage> blockedChunk = mock(Chunk.class);
+    when(blockedChunk.id()).thenReturn("blocked");
+    when(blockedChunk.query(query))
+        .thenAnswer(
+            invocation -> {
+              new CountDownLatch(1).await();
+              return SearchResult.empty();
+            });
+    chunkManager.chunkMap.put("completed", completedChunk);
+    chunkManager.chunkMap.put("blocked", blockedChunk);
+    try {
+      SearchResult<LogMessage> result = chunkManager.query(query, Duration.ofSeconds(1));
+      assertThat(result.requestedSnapshots).isEqualTo(2);
+      assertThat(result.fulfilledSnapshots).isEqualTo(1);
+      assertThat(result.failedNodes).isEqualTo(1);
+    } finally {
+      chunkManager.chunkMap.clear();
+    }
   }
 
   @Test
@@ -1031,9 +1090,9 @@ public class IndexingChunkManagerTest {
                 ((ReadWriteChunk<LogMessage>) chunk)
                     .setLogSearcher(new AlreadyClosedLogIndexSearcherImpl()));
 
-    testChunkManagerSearch(chunkManager, "Message1", 0, 0, 0, 3);
-    testChunkManagerSearch(chunkManager, "Message11", 0, 0, 0, 3);
-    testChunkManagerSearch(chunkManager, "Message21", 0, 0, 0, 3);
+    testChunkManagerSearch(chunkManager, "Message1", 0, 3, 0, 3);
+    testChunkManagerSearch(chunkManager, "Message11", 0, 3, 0, 3);
+    testChunkManagerSearch(chunkManager, "Message21", 0, 3, 0, 3);
 
     // Query interface throws search exceptions.
     chunkManager

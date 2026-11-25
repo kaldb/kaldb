@@ -1081,6 +1081,12 @@ public class ManagerApiGrpcTest {
             List.of(new DatasetPartitionMetadata(1, MAX_TIME, List.of("1"))),
             "",
             true));
+    await()
+        .untilAsserted(
+            () ->
+                assertThat(datasetMetadataStore.listSync())
+                    .extracting(DatasetMetadata::getName)
+                    .containsExactlyInAnyOrder("dataset-a", "dataset-b"));
 
     StatusRuntimeException throwable =
         (StatusRuntimeException)
@@ -1706,10 +1712,14 @@ public class ManagerApiGrpcTest {
                 .build());
     assertThat(deletedExistingDataset.getName()).isEqualTo(existingDatasetName);
 
-    ManagerApi.ListDatasetMetadataResponse listAfterDeleteResponse =
-        managerApiStub.listDatasetMetadata(
-            ManagerApi.ListDatasetMetadataRequest.newBuilder().build());
-    assertThat(listAfterDeleteResponse.getDatasetMetadataList()).isEmpty();
+    await()
+        .untilAsserted(
+            () -> {
+              ManagerApi.ListDatasetMetadataResponse listAfterDeleteResponse =
+                  managerApiStub.listDatasetMetadata(
+                      ManagerApi.ListDatasetMetadataRequest.newBuilder().build());
+              assertThat(listAfterDeleteResponse.getDatasetMetadataList()).isEmpty();
+            });
   }
 
   @Test

@@ -16,6 +16,7 @@ KalDB is a cloud-native log search and analytics engine built for high-volume ob
 
 - Built for log-heavy workloads with spiky ingest patterns and long retention requirements.
 - OpenSearch-compatible ingest and query APIs reduce migration work for existing pipelines and dashboards.
+- OpenSearch analytics support covers all ClickBench queries, including `multi_terms` aggregations, sibling aggregations, sorts with filters, and bucket-level filtering and sorting.
 - Decoupled compute and storage lets you scale indexing and querying separately.
 - Native support for logs, traces, and audit-style event data.
 - Designed to work well with Grafana, Zipkin-compatible trace tooling, and cloud object storage.
@@ -88,7 +89,7 @@ KalDB can store and serve traces when the required span fields are indexed. See 
 
 ### OpenSearch-oriented migrations
 
-KalDB exposes OpenSearch-compatible APIs for query and ingest workflows, which helps reuse existing shippers, clients, and dashboards. See [Migrating.md](docs/topics/Migrating.md) and [API-opensearch.md](docs/topics/API-opensearch.md).
+KalDB exposes OpenSearch-compatible APIs for query and ingest workflows, which helps reuse existing shippers, clients, and dashboards. Its analytics support covers the full ClickBench query set, including `multi_terms` aggregations, sibling aggregations, hit sorting with filters, bucket sorting, `bucket_selector` HAVING-style filters, and empty-string field semantics. See [Migrating.md](docs/topics/Migrating.md), [API-opensearch.md](docs/topics/API-opensearch.md), and [Aggregations.md](docs/topics/Aggregations.md).
 
 ## Developer Setup
 
@@ -97,7 +98,9 @@ KalDB exposes OpenSearch-compatible APIs for query and ingest workflows, which h
 - Import the repository as a Maven project in IntelliJ.
 - The `.run/` directory contains run configurations for each node role.
 - Shared runtime defaults live in `config/config.yaml`.
-- CI builds with JDK 21.
+- Install JDK 25 LTS (Amazon Corretto is used in CI and Docker) and set `JAVA_HOME` to it.
+- Building and running KalDB requires Java 25; structured concurrency uses preview features,
+  so launch the server with `java --enable-preview -jar astra/target/astra.jar config/config.yaml`.
 
 ### Common commands
 

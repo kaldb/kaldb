@@ -2,6 +2,7 @@ package com.slack.astra.elasticsearchApi;
 
 import static com.slack.astra.server.ManagerApiGrpc.MAX_TIME;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -190,6 +191,100 @@ public class OpenSearchRequestTest {
 
     JsonNode parsedRequest = OBJECT_MAPPER.readTree(searchBody);
     assertThat(request.getAggregationJson()).isEqualTo(parsedRequest.get("aggs").toString());
+  }
+
+  /** Verifies array-form sort JSON is preserved and from maps to start_from. */
+  @Test
+  public void testGetSortJson() throws Exception {
+    String searchBody =
+        """
+        {
+          "size": 5,
+          "from": 2,
+          "sort": [
+            {
+              "WindowClientWidth": {
+                "order": "asc"
+              }
+            },
+            {
+              "_doc": {
+                "order": "desc"
+              }
+            }
+          ]
+        }
+        """;
+
+    OpenSearchRequest openSearchRequest = new OpenSearchRequest();
+    AstraSearch.SearchRequest request =
+        openSearchRequest.parseSingleSearchRequest("test", searchBody);
+
+    JsonNode parsedRequest = OBJECT_MAPPER.readTree(searchBody);
+    assertThat(request.getSortJson()).isEqualTo(parsedRequest.get("sort").toString());
+    assertThat(request.getStartFrom()).isEqualTo(2);
+  }
+
+  /** Verifies scalar-form sort clauses are preserved verbatim in sort JSON. */
+  @Test
+  public void testGetSortJsonPreservesScalarSortClause() throws Exception {
+    String searchBody =
+        """
+        {
+          "size": 5,
+          "sort": "SearchPhrase"
+        }
+        """;
+
+    OpenSearchRequest openSearchRequest = new OpenSearchRequest();
+    AstraSearch.SearchRequest request =
+        openSearchRequest.parseSingleSearchRequest("test", searchBody);
+
+    JsonNode parsedRequest = OBJECT_MAPPER.readTree(searchBody);
+    assertThat(request.getSortJson()).isEqualTo(parsedRequest.get("sort").toString());
+  }
+
+  /** Verifies search_after pagination is explicitly rejected. */
+  @Test
+  public void shouldRejectSearchAfterPagination() {
+    String searchBody =
+        """
+        {
+          "size": 5,
+          "search_after": [12345],
+          "sort": [
+            {
+              "@timestamp": {
+                "order": "desc"
+              }
+            }
+          ]
+        }
+        """;
+
+    OpenSearchRequest openSearchRequest = new OpenSearchRequest();
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> openSearchRequest.parseSingleSearchRequest("test", searchBody))
+        .withMessage("search_after is not supported");
+  }
+
+  /** Verifies malformed from pagination values fail instead of being coerced. */
+  @Test
+  public void shouldRejectInvalidFromPaginationValues() {
+    OpenSearchRequest openSearchRequest = new OpenSearchRequest();
+    List<String> invalidBodies =
+        List.of(
+            "{\"from\":-1,\"size\":1}",
+            "{\"from\":\"10\",\"size\":1}",
+            "{\"from\":1.5,\"size\":1}",
+            "{\"from\":{},\"size\":1}");
+
+    for (String searchBody : invalidBodies) {
+      assertThatIllegalArgumentException()
+          .isThrownBy(() -> openSearchRequest.parseSingleSearchRequest("test", searchBody))
+          .withMessage("'from' must be a non-negative integer");
+    }
   }
 
   @Test
