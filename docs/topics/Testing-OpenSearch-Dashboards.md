@@ -14,6 +14,24 @@ What is portable and repeatable from a clean checkout:
 - a precheck against Dashboards status and exact-name index resolution
 - full Dashboards E2E coverage for fixture ingest, data-view creation, Discover, and dashboard aggregations
 
+## Gateway base images
+
+`contrib/dashboards-gateway.Dockerfile` pins both Maven/Corretto and the Corretto runtime to
+multi-platform image digests. The runtime explicitly selects Amazon Linux 2023. Rebuilding the
+same Dockerfile therefore uses the same base images even when upstream tags move. This does not
+make the entire build byte-for-byte reproducible; Maven dependencies and the application source
+are separate inputs.
+
+The runtime already includes `curl-minimal`, which supports the HTTP healthcheck. Do not install
+the full `curl` package alongside it. The build checks that curl is available, and the gateway CI
+job verifies startup and the health endpoint using curl both outside and inside the container.
+
+Dependabot checks `/contrib` weekly for base-image updates. Review and merge those PRs to receive
+Java and OS fixes; pinned digests do not update automatically. For manual updates, use
+`docker buildx imagetools inspect <image>:<tag>` to obtain the multi-platform index digest, update
+the corresponding `FROM` line, and run the gateway image build and healthcheck before merging.
+Changes to the Java major version or Linux distribution should be deliberate.
+
 ## Preconditions
 
 This document assumes you already have the local stack running and reachable at:
