@@ -9,6 +9,21 @@ This file provides guidance to coding agents working in this repository.
 - Interpret "merge with main" as updating the PR's feature branch from the main/default branch, not as permission to merge the PR into main.
 - This policy takes precedence over skill workflows that suggest merging or finishing a branch.
 
+## Local Development Permissions
+
+- Routine local Docker/Compose commands, local read-only inspection, GitHub CLI (`gh`) commands, Maven builds/tests, and Git fetch are preapproved when needed for the current task. Use the local Docker context; remote or production operations need explicit authorization.
+- Project command rules live in `.codex/rules/development.rules`. Codex loads these rules for a trusted project on restart; they do not override managed security restrictions or authorize unrelated actions.
+- Keep permanent configuration in versioned files with checkout-relative paths. Store local tool output and scratch files under this repository's ignored `.superpowers/` directory instead of external temporary directories.
+- Permission to run `gh` does not authorize merging PRs, enabling auto-merge, or using `gh api` or another route to bypass the Pull Request Merge Policy.
+
+## Design Documentation and ADRs
+
+- Keep design documents and architecture decision records together in `docs/adr/`, using `docs/adr/adr_template.md`. Do not create another ADR or design-document folder.
+- The ADR is the design document: include the motivation, proposed design, alternatives, compatibility considerations, and validation approach in that one file. Update the existing ADR for the same decision instead of creating duplicates.
+- Do not create or commit separate implementation plans, implementation walkthroughs, execution logs, or task-tracking documents. Keep implementation planning in the conversation.
+- Local Superpowers artifacts belong in ignored `.superpowers/` or `docs/superpowers/` directories and must not be force-added to Git. Keep useful design decisions in `docs/adr/`.
+- These conventions override skill defaults that request separate design/implementation documents or commits of planning artifacts. Continue updating user-facing API, configuration, and operational documentation when behavior changes.
+
 ## Building and Running
 
 ### Building the Project
