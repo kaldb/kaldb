@@ -107,7 +107,14 @@ public class SearchResultUtils {
     return valueBuilder.build();
   }
 
-  public static SearchQuery fromSearchRequest(AstraSearch.SearchRequest searchRequest) {
+  /**
+   * Converts a wire request to a local query using a server-selected dataset-isolation policy.
+   *
+   * @param applyDatasetFilter whether local Lucene execution should add Astra's dataset-isolation
+   *     filter
+   */
+  public static SearchQuery fromSearchRequest(
+      AstraSearch.SearchRequest searchRequest, boolean applyDatasetFilter) {
     QueryBuilder queryBuilder = null;
 
     if (!searchRequest.getQuery().isEmpty()) {
@@ -141,6 +148,7 @@ public class SearchResultUtils {
 
     return new SearchQuery(
         searchRequest.getDataset(),
+        applyDatasetFilter,
         searchRequest.getStartTimeEpochMs(),
         searchRequest.getEndTimeEpochMs(),
         searchRequest.getHowMany(),

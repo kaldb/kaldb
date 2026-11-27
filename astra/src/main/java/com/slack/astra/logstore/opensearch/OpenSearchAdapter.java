@@ -121,16 +121,21 @@ public class OpenSearchAdapter {
   }
 
   /**
-   * Builds a Lucene query using the provided arguments, and the currently loaded schema. Uses
-   * Opensearch QueryBuilder's.
+   * Builds a Lucene query using the provided arguments and the currently loaded schema.
    *
+   * @param applyDatasetFilter whether to add Astra's dataset-isolation filter to concrete dataset
+   *     searches
    * @see <a href="https://opensearch.org/docs/latest/query-dsl/full-text/query-string/">Query
    *     parsing OpenSearch docs</a>
    * @see <a
    *     href="https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-query-string-query.html">Query
    *     parsing ES docs</a>
    */
-  public Query buildQuery(IndexSearcher indexSearcher, String dataset, QueryBuilder queryBuilder)
+  public Query buildQuery(
+      IndexSearcher indexSearcher,
+      String dataset,
+      QueryBuilder queryBuilder,
+      boolean applyDatasetFilter)
       throws IOException {
     QueryShardContext queryShardContext =
         buildQueryShardContext(AstraBigArrays.getInstance(), indexSearcher, mapperService);
@@ -138,16 +143,17 @@ public class OpenSearchAdapter {
     QueryBuilder scopedQueryBuilder = queryBuilder;
     if (dataset != null && !dataset.isBlank() && !dataset.equals("_all") && !dataset.equals("*")) {
       validateDatasetSelector(dataset);
-      BoolQueryBuilder datasetScopedQuery = new BoolQueryBuilder();
-      // Astra stores multiple logical indices in the same chunk today. The ingest path derives
-      // the logical index name from service_name, so scoped index searches must currently filter
-      // on service_name at query time to avoid cross-index leakage within a chunk.
-      datasetScopedQuery.filter(
-          new TermQueryBuilder(LogMessage.ReservedField.SERVICE_NAME.fieldName, dataset));
-      if (queryBuilder != null) {
-        datasetScopedQuery.must(queryBuilder);
+      if (applyDatasetFilter) {
+        BoolQueryBuilder datasetScopedQuery = new BoolQueryBuilder();
+        // Shared clusters store multiple logical indices in one chunk, so concrete index searches
+        // must filter on service_name to avoid cross-index leakage.
+        datasetScopedQuery.filter(
+            new TermQueryBuilder(LogMessage.ReservedField.SERVICE_NAME.fieldName, dataset));
+        if (queryBuilder != null) {
+          datasetScopedQuery.must(queryBuilder);
+        }
+        scopedQueryBuilder = datasetScopedQuery;
       }
-      scopedQueryBuilder = datasetScopedQuery;
     }
 
     if (scopedQueryBuilder != null) {

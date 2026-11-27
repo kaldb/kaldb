@@ -174,6 +174,7 @@ public class IndexingChunkImplTest {
       chunk.query(
           new SearchQuery(
               MessageUtil.TEST_DATASET_NAME,
+              true,
               0L,
               MAX_TIME,
               10,
@@ -186,6 +187,7 @@ public class IndexingChunkImplTest {
       chunk.query(
           new SearchQuery(
               MessageUtil.TEST_DATASET_NAME,
+              true,
               0L,
               MAX_TIME,
               10,
@@ -199,6 +201,7 @@ public class IndexingChunkImplTest {
           chunk.query(
               new SearchQuery(
                   MessageUtil.TEST_DATASET_NAME,
+                  true,
                   0L,
                   MAX_TIME,
                   10,
@@ -321,6 +324,7 @@ public class IndexingChunkImplTest {
                   .query(
                       new SearchQuery(
                           MessageUtil.TEST_DATASET_NAME,
+                          true,
                           startTimeMs,
                           endTimeMs,
                           10,
@@ -354,6 +358,7 @@ public class IndexingChunkImplTest {
           chunk.query(
               new SearchQuery(
                   MessageUtil.TEST_DATASET_NAME,
+                  true,
                   0L,
                   MAX_TIME,
                   10,
@@ -425,6 +430,7 @@ public class IndexingChunkImplTest {
           chunk.query(
               new SearchQuery(
                   MessageUtil.TEST_DATASET_NAME,
+                  true,
                   0L,
                   MAX_TIME,
                   10,
@@ -442,6 +448,7 @@ public class IndexingChunkImplTest {
           chunk.query(
               new SearchQuery(
                   MessageUtil.TEST_DATASET_NAME,
+                  true,
                   0L,
                   MAX_TIME,
                   10,
@@ -638,6 +645,7 @@ public class IndexingChunkImplTest {
       SearchQuery searchQuery =
           new SearchQuery(
               MessageUtil.TEST_DATASET_NAME,
+              true,
               0L,
               MAX_TIME,
               10,
@@ -816,6 +824,7 @@ public class IndexingChunkImplTest {
       SearchQuery searchQuery =
           new SearchQuery(
               MessageUtil.TEST_DATASET_NAME,
+              true,
               0L,
               MAX_TIME,
               10,

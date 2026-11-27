@@ -38,6 +38,10 @@ message ClusterConfig {
   string cluster_name = 1;
   // A string representing the environment the cluster is running in.
   string env = 2;
+  // If true, every partition is dedicated and every live and persisted searchable chunk contains
+  // data only for the dataset whose assignment selects it. This allows data nodes to omit Astra's
+  // injected service_name filter. Leave false unless this covers all retained searchable data.
+  bool all_partitions_dedicated = 3;
 }
 
 // Configuration for Kafka consumer.

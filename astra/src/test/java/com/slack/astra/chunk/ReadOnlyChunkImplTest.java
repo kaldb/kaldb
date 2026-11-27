@@ -188,6 +188,7 @@ public class ReadOnlyChunkImplTest {
         readOnlyChunk.query(
             new SearchQuery(
                 MessageUtil.TEST_DATASET_NAME,
+                true,
                 Instant.now().minus(1, ChronoUnit.MINUTES).toEpochMilli(),
                 Instant.now().toEpochMilli(),
                 500,
@@ -243,6 +244,7 @@ public class ReadOnlyChunkImplTest {
         readOnlyChunk.query(
             new SearchQuery(
                 MessageUtil.TEST_DATASET_NAME,
+                true,
                 Instant.now().minus(1, ChronoUnit.MINUTES).toEpochMilli(),
                 Instant.now().toEpochMilli(),
                 500,
@@ -339,6 +341,7 @@ public class ReadOnlyChunkImplTest {
         readOnlyChunk.query(
             new SearchQuery(
                 MessageUtil.TEST_DATASET_NAME,
+                true,
                 Instant.now().minus(1, ChronoUnit.MINUTES).toEpochMilli(),
                 Instant.now().toEpochMilli(),
                 500,
@@ -379,6 +382,7 @@ public class ReadOnlyChunkImplTest {
         readOnlyChunk.query(
             new SearchQuery(
                 MessageUtil.TEST_DATASET_NAME,
+                true,
                 Instant.now().minus(1, ChronoUnit.MINUTES).toEpochMilli(),
                 Instant.now().toEpochMilli(),
                 500,
@@ -646,6 +650,7 @@ public class ReadOnlyChunkImplTest {
     SearchQuery query =
         new SearchQuery(
             MessageUtil.TEST_DATASET_NAME,
+            true,
             Instant.now().minus(1, ChronoUnit.MINUTES).toEpochMilli(),
             Instant.now().toEpochMilli(),
             500,
@@ -785,6 +790,7 @@ public class ReadOnlyChunkImplTest {
         readOnlyChunk.query(
             new SearchQuery(
                 MessageUtil.TEST_DATASET_NAME,
+                true,
                 Instant.now().minus(1, ChronoUnit.MINUTES).toEpochMilli(),
                 Instant.now().toEpochMilli(),
                 500,

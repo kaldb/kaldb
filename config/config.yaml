@@ -125,6 +125,7 @@ redactionUpdateServiceConfig:
 clusterConfig:
   clusterName: ${ASTRA_CLUSTER_NAME:-ASTRA_local}
   env: ${ASTRA_CLUSTER_ENV:-local}
+  allPartitionsDedicated: ${ASTRA_ALL_PARTITIONS_DEDICATED:-false}
 
 recoveryConfig:
   serverConfig:

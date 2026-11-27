@@ -195,7 +195,8 @@ public class Astra {
       AstraLocalQueryService<LogMessage> searcher =
           new AstraLocalQueryService<>(
               chunkManager,
-              Duration.ofMillis(astraConfig.getIndexerConfig().getDefaultQueryTimeoutMs()));
+              Duration.ofMillis(astraConfig.getIndexerConfig().getDefaultQueryTimeoutMs()),
+              astraConfig.getClusterConfig().getAllPartitionsDedicated());
       final int serverPort = astraConfig.getIndexerConfig().getServerConfig().getServerPort();
       Duration requestTimeout =
           Duration.ofMillis(astraConfig.getIndexerConfig().getServerConfig().getRequestTimeoutMs());
@@ -316,7 +317,8 @@ public class Astra {
       AstraLocalQueryService<LogMessage> searcher =
           new AstraLocalQueryService<>(
               chunkManager,
-              Duration.ofMillis(astraConfig.getCacheConfig().getDefaultQueryTimeoutMs()));
+              Duration.ofMillis(astraConfig.getCacheConfig().getDefaultQueryTimeoutMs()),
+              astraConfig.getClusterConfig().getAllPartitionsDedicated());
       final int serverPort = astraConfig.getCacheConfig().getServerConfig().getServerPort();
       Duration requestTimeout =
           Duration.ofMillis(astraConfig.getCacheConfig().getServerConfig().getRequestTimeoutMs());

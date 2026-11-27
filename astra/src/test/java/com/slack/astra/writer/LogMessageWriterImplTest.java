@@ -92,6 +92,7 @@ public class LogMessageWriterImplTest {
     return chunkManagerUtil.chunkManager.query(
         new SearchQuery(
             indexName,
+            true,
             0L,
             MAX_TIME,
             10,
@@ -175,6 +176,7 @@ public class LogMessageWriterImplTest {
                 .query(
                     new SearchQuery(
                         serviceName,
+                        true,
                         0L,
                         MAX_TIME,
                         100,

@@ -82,6 +82,7 @@ public class TemporaryLogStoreAndSearcherExtension implements AfterEachCallback 
     return searcher.search(
         new SearchQuery(
             dataset,
+            true,
             0L,
             MAX_TIME,
             howMany,

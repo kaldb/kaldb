@@ -101,7 +101,7 @@ public class ElasticsearchApiServiceTest {
     chunkManagerUtil.chunkManager.startAsync();
     chunkManagerUtil.chunkManager.awaitRunning(DEFAULT_START_STOP_DURATION);
     AstraLocalQueryService<LogMessage> searcher =
-        new AstraLocalQueryService<>(chunkManagerUtil.chunkManager, Duration.ofSeconds(3));
+        new AstraLocalQueryService<>(chunkManagerUtil.chunkManager, Duration.ofSeconds(3), false);
     elasticsearchApiService =
         new ElasticsearchApiService(
             searcher,
@@ -1768,7 +1768,9 @@ public class ElasticsearchApiServiceTest {
     addMessagesToChunkManager(SpanUtil.makeSpansWithTimeDifference(1, 100, 1, Instant.now()));
     String postBody = readResource("elasticsearchApi/multisearch_query_10results.ndjson");
     AstraLocalQueryService<LogMessage> slowSearcher =
-        spy(new AstraLocalQueryService<>(chunkManagerUtil.chunkManager, Duration.ofSeconds(5)));
+        spy(
+            new AstraLocalQueryService<>(
+                chunkManagerUtil.chunkManager, Duration.ofSeconds(5), false));
 
     // warmup to load OpenSearch plugins
     ElasticsearchApiService slowElasticsearchApiService =

@@ -152,7 +152,8 @@ public class DiskOrMessageCountBasedRolloverStrategyTest {
     chunkManager.startAsync();
     chunkManager.awaitRunning(DEFAULT_START_STOP_DURATION);
 
-    astraLocalQueryService = new AstraLocalQueryService<>(chunkManager, Duration.ofSeconds(3));
+    astraLocalQueryService =
+        new AstraLocalQueryService<>(chunkManager, Duration.ofSeconds(3), false);
   }
 
   private static String buildQueryFromQueryString(

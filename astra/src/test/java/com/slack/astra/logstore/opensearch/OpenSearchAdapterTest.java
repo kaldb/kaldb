@@ -31,6 +31,7 @@ import org.opensearch.index.query.BoolQueryBuilder;
 import org.opensearch.index.query.MatchAllQueryBuilder;
 import org.opensearch.index.query.QueryStringQueryBuilder;
 import org.opensearch.index.query.RangeQueryBuilder;
+import org.opensearch.index.query.TermQueryBuilder;
 import org.opensearch.search.aggregations.AggregatorFactories;
 import org.opensearch.search.aggregations.InternalAggregations;
 import org.opensearch.search.aggregations.metrics.AvgAggregationBuilder;
@@ -132,7 +133,7 @@ public class OpenSearchAdapterTest {
             .getLuceneSearcherManager()
             .acquire();
 
-    Query rangeQuery = openSearchAdapter.buildQuery(indexSearcher, "_all", boolQueryBuilder);
+    Query rangeQuery = openSearchAdapter.buildQuery(indexSearcher, "_all", boolQueryBuilder, true);
     assertThat(rangeQuery).isNotNull();
     assertThat(rangeQuery.toString()).isEqualTo("#_timesinceepoch:[1 TO 100]");
   }
@@ -148,10 +149,44 @@ public class OpenSearchAdapterTest {
             .getLuceneSearcherManager()
             .acquire();
 
-    Query scopedQuery = openSearchAdapter.buildQuery(indexSearcher, "test", boolQueryBuilder);
+    Query scopedQuery = openSearchAdapter.buildQuery(indexSearcher, "test", boolQueryBuilder, true);
 
     assertThat(scopedQuery.toString()).contains("service_name:test");
     assertThat(scopedQuery.toString()).contains("_timesinceepoch:[1 TO 100]");
+  }
+
+  @Test
+  public void shouldOmitInjectedDatasetFilterWhenPolicyIsDisabled() throws Exception {
+    BoolQueryBuilder boolQueryBuilder =
+        new BoolQueryBuilder().filter(new RangeQueryBuilder("_timesinceepoch").gte(1).lte(100));
+    IndexSearcher indexSearcher =
+        logStoreAndSearcherRule
+            .logStore
+            .getAstraSearcherManager()
+            .getLuceneSearcherManager()
+            .acquire();
+
+    Query unscopedQuery =
+        openSearchAdapter.buildQuery(indexSearcher, "test", boolQueryBuilder, false);
+
+    assertThat(unscopedQuery.toString()).isEqualTo("#_timesinceepoch:[1 TO 100]");
+  }
+
+  @Test
+  public void shouldRetainUserAuthoredServiceNameFilterWhenPolicyIsDisabled() throws Exception {
+    BoolQueryBuilder boolQueryBuilder =
+        new BoolQueryBuilder().filter(new TermQueryBuilder("service_name", "explicit"));
+    IndexSearcher indexSearcher =
+        logStoreAndSearcherRule
+            .logStore
+            .getAstraSearcherManager()
+            .getLuceneSearcherManager()
+            .acquire();
+
+    Query explicitServiceNameQuery =
+        openSearchAdapter.buildQuery(indexSearcher, "test", boolQueryBuilder, false);
+
+    assertThat(explicitServiceNameQuery.toString()).isEqualTo("#service_name:explicit");
   }
 
   @Test
@@ -165,8 +200,10 @@ public class OpenSearchAdapterTest {
             .getLuceneSearcherManager()
             .acquire();
 
-    Query allDatasetQuery = openSearchAdapter.buildQuery(indexSearcher, "_all", boolQueryBuilder);
-    Query wildcardDatasetQuery = openSearchAdapter.buildQuery(indexSearcher, "*", boolQueryBuilder);
+    Query allDatasetQuery =
+        openSearchAdapter.buildQuery(indexSearcher, "_all", boolQueryBuilder, true);
+    Query wildcardDatasetQuery =
+        openSearchAdapter.buildQuery(indexSearcher, "*", boolQueryBuilder, true);
 
     assertThat(allDatasetQuery.toString()).isEqualTo("#_timesinceepoch:[1 TO 100]");
     assertThat(wildcardDatasetQuery.toString()).isEqualTo("#_timesinceepoch:[1 TO 100]");
@@ -184,7 +221,8 @@ public class OpenSearchAdapterTest {
 
     assertThatThrownBy(
             () ->
-                openSearchAdapter.buildQuery(indexSearcher, "foo,bar", new MatchAllQueryBuilder()))
+                openSearchAdapter.buildQuery(
+                    indexSearcher, "foo,bar", new MatchAllQueryBuilder(), false))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Multi-index dataset selectors are not supported");
   }
@@ -199,7 +237,9 @@ public class OpenSearchAdapterTest {
             .acquire();
 
     assertThatThrownBy(
-            () -> openSearchAdapter.buildQuery(indexSearcher, "foo*", new MatchAllQueryBuilder()))
+            () ->
+                openSearchAdapter.buildQuery(
+                    indexSearcher, "foo*", new MatchAllQueryBuilder(), false))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Wildcard dataset selectors are not supported");
   }
@@ -237,7 +277,8 @@ public class OpenSearchAdapterTest {
         openSearchAdapter.buildQuery(
             indexSearcher,
             "_all",
-            new QueryStringQueryBuilder(String.format("%s:%s", idField, idValue)));
+            new QueryStringQueryBuilder(String.format("%s:%s", idField, idValue)),
+            true);
     BytesRef queryStrBytes = new BytesRef(Uid.encodeId("1").bytes);
     // idQuery.toString="#_id:([fe 1f])"
     // queryStrBytes.toString="[fe 1f]"
@@ -254,13 +295,13 @@ public class OpenSearchAdapterTest {
             .acquire();
     Query nullBothTimestamps =
         openSearchAdapter.buildQuery(
-            indexSearcher, "_all", QueryBuilderUtil.generateQueryBuilder("", null, null));
+            indexSearcher, "_all", QueryBuilderUtil.generateQueryBuilder("", null, null), true);
     // null for both timestamps with no query string should be optimized into a matchall
     assertThat(nullBothTimestamps).isInstanceOf(MatchAllDocsQuery.class);
 
     Query nullStartTimestamp =
         openSearchAdapter.buildQuery(
-            indexSearcher, "_all", QueryBuilderUtil.generateQueryBuilder("a", null, 100L));
+            indexSearcher, "_all", QueryBuilderUtil.generateQueryBuilder("a", null, 100L), true);
     assertThat(nullStartTimestamp).isInstanceOf(BooleanQuery.class);
 
     Optional<IndexSortSortedNumericDocValuesRangeQuery> filterNullStartQuery =
@@ -282,7 +323,7 @@ public class OpenSearchAdapterTest {
 
     Query nullEndTimestamp =
         openSearchAdapter.buildQuery(
-            indexSearcher, "_all", QueryBuilderUtil.generateQueryBuilder("", 100L, null));
+            indexSearcher, "_all", QueryBuilderUtil.generateQueryBuilder("", 100L, null), true);
     Optional<IndexSortSortedNumericDocValuesRangeQuery> filterNullEndQuery =
         ((BooleanQuery) nullEndTimestamp)
             .clauses().stream()

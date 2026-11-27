@@ -133,6 +133,7 @@ public class ObjectMapperTest {
       throws IOException {
     return new SearchQuery(
         MessageUtil.TEST_DATASET_NAME,
+        true,
         0,
         MAX_TIME,
         10,

@@ -113,7 +113,11 @@ public class LogIndexSearcherImpl implements LogIndexSearcher<LogMessage> {
         List<SearchResultHit<LogMessage>> results;
         InternalAggregations internalAggregations = null;
         Query query =
-            openSearchAdapter.buildQuery(searcher, searchQuery.dataset, searchQuery.queryBuilder);
+            openSearchAdapter.buildQuery(
+                searcher,
+                searchQuery.dataset,
+                searchQuery.queryBuilder,
+                searchQuery.applyDatasetFilter);
         OpenSearchAdapter.AggregationExecution aggregationExecution =
             searchQuery.aggregatorFactoriesBuilder == null
                 ? null

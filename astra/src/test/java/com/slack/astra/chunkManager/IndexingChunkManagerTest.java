@@ -421,6 +421,7 @@ public class IndexingChunkManagerTest {
     SearchQuery searchQuery =
         new SearchQuery(
             MessageUtil.TEST_DATASET_NAME,
+            true,
             0,
             MAX_TIME,
             10,
@@ -481,6 +482,7 @@ public class IndexingChunkManagerTest {
                 .query(
                     new SearchQuery(
                         MessageUtil.TEST_DATASET_NAME,
+                        true,
                         0,
                         MAX_TIME,
                         10,
@@ -512,6 +514,7 @@ public class IndexingChunkManagerTest {
                 .query(
                     new SearchQuery(
                         MessageUtil.TEST_DATASET_NAME,
+                        true,
                         0,
                         MAX_TIME,
                         10,
@@ -547,7 +550,7 @@ public class IndexingChunkManagerTest {
       int expectedFailedNodes) {
 
     AstraLocalQueryService<LogMessage> astraLocalQueryService =
-        new AstraLocalQueryService<>(chunkManager, Duration.ofSeconds(3));
+        new AstraLocalQueryService<>(chunkManager, Duration.ofSeconds(3), false);
     AstraSearch.SearchRequest.Builder searchRequestBuilder = AstraSearch.SearchRequest.newBuilder();
     AstraSearch.SearchResult response =
         astraLocalQueryService.doSearch(
@@ -596,6 +599,7 @@ public class IndexingChunkManagerTest {
     SearchQuery searchQuery =
         new SearchQuery(
             MessageUtil.TEST_DATASET_NAME,
+            true,
             startTimeEpochMs,
             endTimeEpochMs,
             10,
